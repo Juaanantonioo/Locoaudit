@@ -1,0 +1,13 @@
+{
+  "name": "node-red-contrib-minodo",
+  "version": "1.0.0",
+  "description": "Mi primer nodo de Node-RED",
+  "main": "minodo.js",
+  "keywords": ["node-red"],
+  "license": "MIT",
+  "node-red": {
+    "nodes": {
+      "minodo": "minodo.js"
+    }
+  }
+}
