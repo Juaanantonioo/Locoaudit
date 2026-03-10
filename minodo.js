@@ -5,8 +5,14 @@
  * - Auditoría sistema (CPU/memoria)
  * - Auditoría red
  * - Escaneo de puertos (Nmap)
- * - Escaneo vulnerabilidades (Trivy)
- * - Fingerprinting HTTP/HTTPS (headers, title, señales tecnológicas)
+ * - Escaneo vulnerabilidades de software (Trivy)
+ * - Fingerprinting HTTP/HTTPS
+ * - Escaneo de vulnerabilidades remotas/web (Nuclei)
+ *
+ * Modelo actual:
+ * - targetType = "host"           -> Nmap / HTTP FP / Nuclei
+ * - targetType = "docker-image"   -> Trivy image
+ * - targetType = "filesystem"     -> Trivy fs
  */
 
 module.exports = function (RED) {
@@ -17,7 +23,6 @@ module.exports = function (RED) {
   const http = require("http");
   const https = require("https");
   const { generateDashboard } = require("./reportGenerator");
-
 
   // ========== HELPERS ==========
 
@@ -35,14 +40,9 @@ module.exports = function (RED) {
 
   function severityRank(s) {
     const map = { INFO: 0, LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
-    if (map[s] !== undefined) return map[s];
-    return 0;
+    return map[s] ?? 0;
   }
 
-  /**
-   * Mapea severidad de Trivy a severidad interna del nodo.
-   * UNKNOWN/NEGLIGIBLE/NONE => INFO (como pediste).
-   */
   function mapTrivySeverityToNodeSeverity(trivySeverity) {
     const s = String(trivySeverity || "").trim().toUpperCase();
     if (s === "CRITICAL") return "CRITICAL";
@@ -52,22 +52,55 @@ module.exports = function (RED) {
     return "INFO";
   }
 
+  function mapNucleiSeverityToNodeSeverity(nucleiSeverity) {
+    const s = String(nucleiSeverity || "").trim().toUpperCase();
+    if (s === "CRITICAL") return "CRITICAL";
+    if (s === "HIGH") return "HIGH";
+    if (s === "MEDIUM") return "MEDIUM";
+    if (s === "LOW") return "LOW";
+    if (s === "INFO") return "INFO";
+    return "INFO";
+  }
+
   function summarize(findings) {
-    const counts = { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 };
+    const empty = { INFO: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 };
+
+    const counts = { ...empty };
+    const hostCounts = { ...empty };
+    const imageCounts = { ...empty };
+
     let max = "INFO";
+    let hostMax = "INFO";
+    let imageMax = "INFO";
 
     for (const f of findings) {
       counts[f.severity] = (counts[f.severity] || 0) + 1;
 
-      // Ignorar performance en el riesgo global
       if (f.category !== "performance") {
         if (severityRank(f.severity) > severityRank(max)) {
           max = f.severity;
         }
       }
+
+      if (f.scope === "image") {
+        imageCounts[f.severity] = (imageCounts[f.severity] || 0) + 1;
+        if (severityRank(f.severity) > severityRank(imageMax)) {
+          imageMax = f.severity;
+        }
+      } else {
+        hostCounts[f.severity] = (hostCounts[f.severity] || 0) + 1;
+        if (severityRank(f.severity) > severityRank(hostMax)) {
+          hostMax = f.severity;
+        }
+      }
     }
 
-    return { maxSeverity: max, counts };
+    return {
+      maxSeverity: max,
+      counts,
+      host: { maxSeverity: hostMax, counts: hostCounts },
+      image: { maxSeverity: imageMax, counts: imageCounts },
+    };
   }
 
   function which(cmd) {
@@ -84,15 +117,20 @@ module.exports = function (RED) {
 
   function execFilePromise(file, args, opts = {}) {
     return new Promise((resolve, reject) => {
-      execFile(file, args, { ...opts, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-        if (err) {
-          err.stdout = stdout;
-          err.stderr = stderr;
-          reject(err);
-        } else {
-          resolve({ stdout, stderr });
+      execFile(
+        file,
+        args,
+        { ...opts, maxBuffer: 10 * 1024 * 1024 },
+        (err, stdout, stderr) => {
+          if (err) {
+            err.stdout = stdout;
+            err.stderr = stderr;
+            reject(err);
+          } else {
+            resolve({ stdout, stderr });
+          }
         }
-      });
+      );
     });
   }
 
@@ -118,12 +156,27 @@ module.exports = function (RED) {
     return Array.from(ports).sort((x, y) => x - y);
   }
 
+  function parseTargets(input) {
+    const raw = String(input || "")
+      .split(/[\n,;]/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+    return Array.from(new Set(raw));
+  }
+
   function isLocalTarget(t) {
     const target = (t || "").trim().toLowerCase();
     return target === "127.0.0.1" || target === "localhost" || target === "::1";
   }
 
-  // ========== MÓDULOS ==========
+  function toBaseUrl(protocol, host, port) {
+    const defaultPort = protocol === "https" ? 443 : 80;
+    const showPort = port !== defaultPort;
+    return `${protocol}://${host}${showPort ? ":" + port : ""}`;
+  }
+
+  // ========== MÓDULOS BÁSICOS ==========
 
   function runSystemModule() {
     const cpus = os.cpus() || [];
@@ -177,13 +230,14 @@ module.exports = function (RED) {
     return { primaryIPv4, externalIPv4 };
   }
 
-  // ========== PUERTOS (NMAP) ==========
+  // ========== NMAP ==========
 
   const DEFAULT_PORTS = [22, 53, 80, 443, 445, 1880, 3389, 5900, 8080, 3306, 5432, 6379, 27017];
 
   function parseNmapGrepable(output) {
     const openPorts = [];
     const lines = output.split("\n");
+
     for (const line of lines) {
       const idx = line.indexOf("Ports:");
       if (idx === -1) continue;
@@ -204,6 +258,7 @@ module.exports = function (RED) {
         }
       }
     }
+
     return openPorts;
   }
 
@@ -237,13 +292,13 @@ module.exports = function (RED) {
     };
   }
 
-  async function runPortsModule(target, mode, portsToTest, serviceDetect) {
-    return await runPortsNmap(target, portsToTest, serviceDetect);
+  async function runPortsModule(target, portsToTest, serviceDetect) {
+    return runPortsNmap(target, portsToTest, serviceDetect);
   }
 
   // ========== TRIVY ==========
 
-  async function runVulnTrivy(target) {
+  async function runVulnTrivy(mode, target) {
     const trivyPath = which("trivy");
 
     if (!trivyPath) {
@@ -256,7 +311,14 @@ module.exports = function (RED) {
       };
     }
 
-    const args = ["fs", "--quiet", "-f", "json", target];
+    const m = (mode || "fs").trim();
+    let args;
+
+    if (m === "image") {
+      args = ["image", "--quiet", "-f", "json", target];
+    } else {
+      args = ["fs", "--quiet", "-f", "json", target];
+    }
 
     try {
       const { stdout } = await execFilePromise(trivyPath, args, { timeout: 60000 });
@@ -272,6 +334,7 @@ module.exports = function (RED) {
         mode: "trivy",
         available: true,
         target,
+        scanMode: m,
         raw: parsed,
       };
     } catch (err) {
@@ -279,6 +342,7 @@ module.exports = function (RED) {
         mode: "trivy",
         available: true,
         target,
+        scanMode: m,
         error: err.message,
       };
     }
@@ -286,16 +350,14 @@ module.exports = function (RED) {
 
   function parseTrivyFindings(trivyReport) {
     const vulns = [];
-
     if (!trivyReport) return vulns;
     if (!trivyReport.raw) return vulns;
     if (!trivyReport.raw.Results) return vulns;
 
-    const results = trivyReport.raw.Results;
-    for (const result of results) {
+    for (const result of trivyReport.raw.Results) {
       const vulnerabilities = result.Vulnerabilities || [];
       for (const v of vulnerabilities) {
-        const vulnerability = {
+        vulns.push({
           id: v.VulnerabilityID,
           severity: v.Severity || "UNKNOWN",
           package: v.PkgName,
@@ -303,8 +365,8 @@ module.exports = function (RED) {
           fixedVersion: v.FixedVersion || null,
           title: v.Title || null,
           description: v.Description || null,
-        };
-        vulns.push(vulnerability);
+          target: trivyReport.target,
+        });
       }
     }
 
@@ -312,12 +374,6 @@ module.exports = function (RED) {
   }
 
   // ========== HTTP FINGERPRINTING ==========
-
-  function toBaseUrl(protocol, host, port) {
-    const defaultPort = protocol === "https" ? 443 : 80;
-    const showPort = port !== defaultPort;
-    return `${protocol}://${host}${showPort ? ":" + port : ""}`;
-  }
 
   function extractTitle(html) {
     if (!html) return null;
@@ -341,7 +397,6 @@ module.exports = function (RED) {
 
     const body = (bodyText || "").toLowerCase();
 
-    // Señales comunes
     if (body.includes("node-red") || body.includes("nodered")) hints.add("node-red");
     if (body.includes("express")) hints.add("express");
     if (body.includes("nginx")) hints.add("nginx");
@@ -349,7 +404,6 @@ module.exports = function (RED) {
     if (body.includes("grafana")) hints.add("grafana");
     if (body.includes("prometheus")) hints.add("prometheus");
 
-    // Headers también pueden indicar Node-RED / Express
     if (powered.toLowerCase().includes("express")) hints.add("express");
     if (server.toLowerCase().includes("nginx")) hints.add("nginx");
     if (server.toLowerCase().includes("apache")) hints.add("apache");
@@ -364,21 +418,14 @@ module.exports = function (RED) {
     const t = String(title || "").toLowerCase();
     const b = String(bodyText || "").toLowerCase();
 
-    // Señales típicas (heurísticas)
     if (b.includes("node-red")) return true;
     if (t.includes("node-red")) return true;
-    if (powered.includes("express") && (b.includes("red") && b.includes("flows"))) return true;
-
-    // Algunas instalaciones de Node-RED pueden ir detrás de nginx/apache
+    if (powered.includes("express") && b.includes("red") && b.includes("flows")) return true;
     if ((server.includes("nginx") || server.includes("apache")) && b.includes("node-red")) return true;
 
     return false;
   }
 
-  /**
-   * Hace GET / con límite de bytes y timeout.
-   * allowInsecure: si true, permite https self-signed (útil en LAN/lab).
-   */
   function httpGetWithLimit(url, { timeoutMs = 2500, maxBytes = 256 * 1024, allowInsecure = false } = {}) {
     return new Promise((resolve) => {
       let finished = false;
@@ -415,7 +462,6 @@ module.exports = function (RED) {
 
               if (received <= maxBytes) chunks.push(chunk);
 
-              // Si nos pasamos, cortamos (fingerprint no necesita el body entero)
               if (received > maxBytes) {
                 try { req.destroy(); } catch (_) {}
               }
@@ -445,10 +491,6 @@ module.exports = function (RED) {
     });
   }
 
-  /**
-   * Ejecuta fingerprinting HTTP/HTTPS en puertos web abiertos.
-   * Solo usa los puertos abiertos del reporte de puertos.
-   */
   async function runHttpFingerprintModule(portsReport, options = {}) {
     const {
       allowInsecure = false,
@@ -469,8 +511,6 @@ module.exports = function (RED) {
     const target = portsReport.target;
     const openPorts = (portsReport.openPorts || []).map((p) => p.port);
     const openSet = new Set(openPorts);
-
-    // Solo puertos candidatos que estén abiertos
     const portsToProbe = portsCandidate.filter((p) => openSet.has(p));
 
     const endpoints = [];
@@ -482,14 +522,7 @@ module.exports = function (RED) {
       const r = await httpGetWithLimit(url, { timeoutMs, maxBytes, allowInsecure });
 
       if (!r.ok) {
-        endpoints.push({
-          target,
-          port,
-          protocol,
-          url,
-          ok: false,
-          error: r.error,
-        });
+        endpoints.push({ target, port, protocol, url, ok: false, error: r.error });
         continue;
       }
 
@@ -515,12 +548,131 @@ module.exports = function (RED) {
     return {
       mode: "httpfp",
       available: true,
-      target: portsReport.target,
+      target,
       endpoints,
     };
   }
 
+  // ========== NUCLEI ==========
+
+  function parseNucleiJsonLines(stdout) {
+    const lines = String(stdout || "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const results = [];
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        results.push(obj);
+      } catch (_) {}
+    }
+    return results;
+  }
+
+  function buildNucleiUrlsFromPortsReport(portsReport) {
+    if (!portsReport || portsReport.available === false) return [];
+
+    const webPorts = new Set([80, 443, 8080, 8443, 1880]);
+    const urls = [];
+
+    for (const p of portsReport.openPorts || []) {
+      if (!webPorts.has(p.port)) continue;
+      const protocol = p.port === 443 || p.port === 8443 ? "https" : "http";
+      urls.push(toBaseUrl(protocol, portsReport.target, p.port));
+    }
+
+    return urls;
+  }
+
+  async function runNucleiForUrl(url, options = {}) {
+  const nucleiPath = which("nuclei");
+
+  if (!nucleiPath) {
+    return {
+      mode: "nuclei",
+      available: false,
+      target: url,
+      results: [],
+      note: "nuclei no está instalado o no está en PATH",
+    };
+  }
+
+  const args = ["-u", url, "-jsonl", "-silent"];
+
+  const sev = String(options.severity || "").trim();
+  if (sev) args.push("-severity", sev);
+
+  const tpl = String(options.templates || "").trim();
+  if (tpl) args.push("-t", tpl);
+
+  try {
+    const { stdout, stderr } = await execFilePromise(nucleiPath, args, { timeout: 180000 });
+
+    return {
+      mode: "nuclei",
+      available: true,
+      target: url,
+      stderr: stderr || "",
+      results: parseNucleiJsonLines(stdout),
+    };
+  } catch (err) {
+    return {
+      mode: "nuclei",
+      available: true,
+      target: url,
+      error: err.message,
+      stderr: err.stderr || "",
+      stdout: err.stdout || "",
+      timedOut: !!err.killed,
+      results: parseNucleiJsonLines(err.stdout || ""),
+    };
+  }
+}
+
+  async function runNucleiModule(portsReport, options = {}) {
+    const urls = buildNucleiUrlsFromPortsReport(portsReport);
+    const executions = [];
+
+    if (urls.length === 0) {
+      return {
+        mode: "nuclei",
+        available: true,
+        targets: [],
+        executions: [],
+        note: "no hay endpoints web derivados de puertos abiertos",
+      };
+    }
+
+    for (const url of urls) {
+      const result = await runNucleiForUrl(url, options);
+      executions.push(result);
+    }
+
+    return {
+      mode: "nuclei",
+      available: executions.every((e) => e.available !== false),
+      targets: urls,
+      executions,
+    };
+  }
+
   // ========== FINDINGS ==========
+
+  function addConfigWarnings(findings, warnings) {
+    for (const w of warnings || []) {
+      findings.push({
+        id: "CONFIG_WARNING",
+        severity: "LOW",
+        category: "system",
+        scope: "host",
+        title: w.title || "Configuración incompatible",
+        evidence: w.evidence || {},
+        recommendation: w.recommendation || "Revisar la configuración del nodo.",
+      });
+    }
+  }
 
   function addPortFindings(findings, portsReport, network) {
     if (!portsReport) return;
@@ -529,6 +681,8 @@ module.exports = function (RED) {
       findings.push({
         id: "NMAP_NOT_AVAILABLE",
         severity: "LOW",
+        category: "ports",
+        scope: "host",
         title: "Nmap no disponible",
         evidence: { target: portsReport.target },
         recommendation: "Instalar nmap y volver a ejecutar para un escaneo de puertos más completo.",
@@ -541,7 +695,9 @@ module.exports = function (RED) {
       findings.push({
         id: "NO_OPEN_PORTS_DETECTED",
         severity: "INFO",
-        title: "No se detectaron puertos abiertos en el objetivo",
+        category: "ports",
+        scope: "host",
+        title: `No se detectaron puertos abiertos en el objetivo (${portsReport.target})`,
         evidence: { target: portsReport.target, portsTested: portsReport.portsTested || DEFAULT_PORTS },
         recommendation: "Sin acción requerida.",
       });
@@ -551,7 +707,9 @@ module.exports = function (RED) {
     findings.push({
       id: "OPEN_PORTS_DETECTED",
       severity: "INFO",
-      title: "Puertos abiertos detectados",
+      category: "ports",
+      scope: "host",
+      title: `Puertos abiertos detectados en ${portsReport.target}`,
       evidence: { target: portsReport.target, openPorts: open },
       recommendation: "Revisar que los servicios expuestos sean necesarios y estén restringidos.",
     });
@@ -569,15 +727,16 @@ module.exports = function (RED) {
     let severity = local ? "INFO" : (isLanTarget ? "MEDIUM" : "LOW");
     if (!local) {
       if (openSensitiveHigh.length > 0) severity = "HIGH";
-      else if (openSensitiveMed.length > 0 && !isLanTarget) severity = "MEDIUM";
-      else if (openSensitiveMed.length > 0 && isLanTarget) severity = "MEDIUM";
+      else if (openSensitiveMed.length > 0) severity = "MEDIUM";
     }
 
     const scope = local ? "localhost" : (isLanTarget ? "lan" : "non-localhost");
     const title =
       scope === "localhost"
-        ? "Servicios expuestos solo en localhost"
-        : (scope === "lan" ? "Servicios expuestos en red local (LAN)" : "Servicios expuestos fuera de localhost");
+        ? `Servicios expuestos solo en localhost (${portsReport.target})`
+        : (scope === "lan"
+            ? `Servicios expuestos en red local (LAN) (${portsReport.target})`
+            : `Servicios expuestos fuera de localhost (${portsReport.target})`);
 
     const recommendation =
       scope === "localhost"
@@ -589,6 +748,8 @@ module.exports = function (RED) {
     findings.push({
       id: "EXPOSURE_CONTEXT",
       severity,
+      category: "ports",
+      scope: "host",
       title,
       evidence: {
         target: portsReport.target,
@@ -605,7 +766,11 @@ module.exports = function (RED) {
       findings.push({
         id: "NODE_RED_PORT_1880_OPEN",
         severity: local1880 ? "LOW" : "MEDIUM",
-        title: local1880 ? "Node-RED accesible en localhost (1880)" : "Node-RED expuesto en red (1880)",
+        category: "ports",
+        scope: "host",
+        title: local1880
+          ? `Node-RED accesible en localhost (${portsReport.target}:1880)`
+          : `Node-RED expuesto en red (${portsReport.target}:1880)`,
         evidence: { target: portsReport.target, port: 1880, primaryIPv4: network?.primaryIPv4 || null },
         recommendation: local1880
           ? "Riesgo bajo si solo está accesible localmente. Si no es necesario, restringir el binding a localhost."
@@ -623,7 +788,9 @@ module.exports = function (RED) {
       findings.push({
         id: "HTTPFP_NO_ENDPOINTS",
         severity: "INFO",
-        title: "Fingerprinting HTTP: no hay endpoints web abiertos para analizar",
+        category: "web",
+        scope: "host",
+        title: `Fingerprinting HTTP: no hay endpoints web abiertos para analizar (${httpFpReport.target || "?"})`,
         evidence: { target: httpFpReport.target || null },
         recommendation: "Sin acción requerida.",
       });
@@ -635,19 +802,23 @@ module.exports = function (RED) {
         findings.push({
           id: `HTTPFP_FAILED_${ep.port}`,
           severity: "INFO",
-          title: `Fingerprinting HTTP falló en ${ep.protocol.toUpperCase()} puerto ${ep.port}`,
+          category: "web",
+          scope: "host",
+          title: `Fingerprinting HTTP falló en ${ep.protocol.toUpperCase()} ${ep.target}:${ep.port}`,
           evidence: { url: ep.url, error: ep.error },
-          recommendation: "Puede ser normal (servicio no HTTP, redirecciones raras, TLS, etc.).",
+          recommendation: "Puede ser normal (servicio no HTTP, redirecciones, TLS, etc.).",
         });
         continue;
       }
 
-      // Finding informativo base
       findings.push({
         id: `HTTPFP_${ep.port}`,
         severity: "INFO",
-        title: `Fingerprinting HTTP en ${ep.protocol.toUpperCase()} puerto ${ep.port}`,
+        category: "web",
+        scope: "host",
+        title: `Servicio web identificado en ${ep.target}:${ep.port}`,
         evidence: {
+          target: ep.target,
           url: ep.url,
           statusCode: ep.statusCode,
           title: ep.title,
@@ -658,13 +829,16 @@ module.exports = function (RED) {
         recommendation: "Usar esta información para identificar software expuesto y endurecer configuración si aplica.",
       });
 
-      // Finding específico si parece Node-RED
       if (ep.nodeRedDetected) {
         const local = isLocalTarget(ep.target);
         findings.push({
           id: `HTTPFP_NODE_RED_${ep.port}`,
           severity: local ? "LOW" : "MEDIUM",
-          title: local ? "Node-RED detectado (solo localhost)" : "Node-RED detectado y expuesto por red",
+          category: "web",
+          scope: "host",
+          title: local
+            ? `Node-RED detectado solo en localhost (${ep.target}:${ep.port})`
+            : `Node-RED detectado y expuesto por red (${ep.target}:${ep.port})`,
           evidence: { url: ep.url, title: ep.title, techHints: ep.techHints },
           recommendation: local
             ? "Si no es necesario, mantenerlo en localhost y habilitar autenticación si procede."
@@ -674,8 +848,116 @@ module.exports = function (RED) {
     }
   }
 
+  function addNucleiFindings(findings, nucleiReport) {
+    if (!nucleiReport) return;
+
+    if (nucleiReport.available === false) {
+      findings.push({
+        id: "NUCLEI_NOT_AVAILABLE",
+        severity: "LOW",
+        category: "vulnerability",
+        scope: "host",
+        title: "Nuclei no disponible",
+        evidence: {},
+        recommendation: "Instalar nuclei para habilitar el escaneo de vulnerabilidades remotas.",
+      });
+      return;
+    }
+
+    const executions = nucleiReport.executions || [];
+    if (executions.length === 0) {
+      findings.push({
+        id: "NUCLEI_NO_TARGETS",
+        severity: "INFO",
+        category: "vulnerability",
+        scope: "host",
+        title: "Nuclei no encontró objetivos web para analizar",
+        evidence: { note: nucleiReport.note || null },
+        recommendation: "Abrir puertos web o ejecutar primero Nmap para que el nodo derive URLs a analizar.",
+      });
+      return;
+    }
+
+    let totalMatches = 0;
+
+    for (const exec of executions) {
+      if (exec.error && (!exec.results || exec.results.length === 0)) {
+        findings.push({
+          id: "NUCLEI_SCAN_ERROR",
+          severity: "MEDIUM",
+          category: "vulnerability",
+          scope: "host",
+          title: `Error al ejecutar Nuclei sobre ${exec.target}`,
+          evidence: {
+            target: exec.target,
+            error: exec.error,
+            stderr: exec.stderr || null,
+            timedOut: exec.timedOut || false,
+          },
+          recommendation: "Revisar conectividad, plantillas seleccionadas y la instalación de Nuclei.",
+        });
+        continue;
+      }
+
+      const results = exec.results || [];
+      if (results.length === 0) {
+        findings.push({
+          id: "NUCLEI_NO_FINDINGS",
+          severity: "INFO",
+          category: "vulnerability",
+          scope: "host",
+          title: `Nuclei no detectó vulnerabilidades remotas en ${exec.target}`,
+          evidence: { target: exec.target },
+          recommendation: "Sin acción requerida.",
+        });
+        continue;
+      }
+
+      totalMatches += results.length;
+
+      for (const r of results) {
+        const severity = mapNucleiSeverityToNodeSeverity(r.info?.severity);
+        findings.push({
+          id: `NUCLEI_${r["template-id"] || "match"}`,
+          severity,
+          category: "vulnerability",
+          scope: "host",
+          title: r.info?.name || `Hallazgo Nuclei en ${exec.target}`,
+          evidence: {
+            target: exec.target,
+            templateId: r["template-id"] || null,
+            matcherName: r["matcher-name"] || null,
+            type: r.type || null,
+            severity: r.info?.severity || null,
+            description: r.info?.description || null,
+            matchedAt: r["matched-at"] || null,
+            extractedResults: r["extracted-results"] || null,
+            tags: r.info?.tags || null,
+            reference: r.info?.reference || null,
+          },
+          recommendation: "Revisar el hallazgo detectado por Nuclei y aplicar mitigaciones según la tecnología expuesta.",
+        });
+      }
+    }
+
+    if (totalMatches > 0) {
+      findings.push({
+        id: "NUCLEI_MATCHES_DETECTED",
+        severity: "MEDIUM",
+        category: "vulnerability",
+        scope: "host",
+        title: `Nuclei detectó ${totalMatches} posible(s) vulnerabilidad(es) remota(s)`,
+        evidence: { totalMatches, targets: nucleiReport.targets || [] },
+        recommendation: "Priorizar la revisión de los hallazgos remotos detectados por Nuclei.",
+      });
+    }
+  }
+
   function buildFindings(report) {
     const findings = [];
+
+    // ===== CONFIG WARNINGS =====
+    addConfigWarnings(findings, report.configWarnings);
 
     // ===== MEMORIA =====
     const mem = report.system?.memory;
@@ -698,6 +980,7 @@ module.exports = function (RED) {
         id: "MEMORY_FREE_RATIO",
         severity: sev,
         category: "performance",
+        scope: "host",
         title: sev === "INFO" ? "Memoria libre dentro de umbral" : "Memoria libre baja",
         evidence: { freeRatio: mem.freeRatio, freeMiB: mem.freeMiB, totalGiB: mem.totalGiB, threshold, platform },
         recommendation: sev === "INFO" ? "Sin acción requerida." : "Cerrar aplicaciones/procesos no necesarios y revisar consumo de memoria.",
@@ -710,6 +993,8 @@ module.exports = function (RED) {
       findings.push({
         id: "NO_EXTERNAL_IPV4",
         severity: "LOW",
+        category: "network",
+        scope: "host",
         title: "No se detectó IPv4 externa",
         evidence: {},
         recommendation: "Revisar conectividad de red o configuración de interfaces.",
@@ -718,6 +1003,8 @@ module.exports = function (RED) {
       findings.push({
         id: "EXTERNAL_IPV4_DETECTED",
         severity: "INFO",
+        category: "network",
+        scope: "host",
         title: "IPv4 externa detectada",
         evidence: { interfaces: ext, primaryIPv4: report.network?.primaryIPv4 || null },
         recommendation: "Sin acción requerida.",
@@ -725,56 +1012,90 @@ module.exports = function (RED) {
     }
 
     // ===== PUERTOS =====
-    addPortFindings(findings, report.ports, report.network);
+    for (const portsReport of report.portsResults || []) {
+      addPortFindings(findings, portsReport, report.network);
+    }
 
     // ===== HTTP FP =====
-    addHttpFpFindings(findings, report.httpFingerprint);
+    for (const httpFpReport of report.httpFingerprintResults || []) {
+      addHttpFpFindings(findings, httpFpReport);
+    }
+
+    // ===== NUCLEI =====
+    for (const nucleiReport of report.nucleiResults || []) {
+      addNucleiFindings(findings, nucleiReport);
+    }
 
     // ===== TRIVY =====
-    const vulnReport = report.vulnerabilities;
-    if (!vulnReport) return findings;
+    for (const vulnReport of report.vulnerabilitiesResults || []) {
+      if (!vulnReport) continue;
 
-    if (vulnReport.available === false) {
-      findings.push({
-        id: "TRIVY_NOT_AVAILABLE",
-        severity: "LOW",
-        title: "Trivy no disponible",
-        evidence: { target: vulnReport.target || "unknown" },
-        recommendation: "Instalar Trivy para habilitar el escaneo de vulnerabilidades del sistema.",
-      });
-      return findings;
-    }
+      if (vulnReport.available === false) {
+        findings.push({
+          id: "TRIVY_NOT_AVAILABLE",
+          severity: "LOW",
+          category: "vulnerability",
+          scope: "image",
+          title: "Trivy no disponible",
+          evidence: { target: vulnReport.target || "unknown" },
+          recommendation: "Instalar Trivy para habilitar el escaneo de vulnerabilidades del sistema.",
+        });
+        continue;
+      }
 
-    const vulnerabilities = Array.isArray(vulnReport.parsed) ? vulnReport.parsed : [];
-    if (vulnerabilities.length === 0) {
-      findings.push({
-        id: "NO_VULNERABILITIES_DETECTED",
-        severity: "INFO",
-        title: "No se detectaron vulnerabilidades",
-        evidence: { target: vulnReport.target || "unknown" },
-        recommendation: "Sin acción requerida. Mantener el sistema actualizado.",
-      });
-      return findings;
-    }
+      if (vulnReport.error) {
+        findings.push({
+          id: "TRIVY_SCAN_ERROR",
+          severity: "MEDIUM",
+          category: "vulnerability",
+          scope: "image",
+          title: `Error al ejecutar Trivy sobre ${vulnReport.target}`,
+          evidence: {
+            target: vulnReport.target || "unknown",
+            scanMode: vulnReport.scanMode || "unknown",
+            error: vulnReport.error,
+          },
+          recommendation: "Revisar el objetivo indicado y el modo de escaneo de Trivy.",
+        });
+        continue;
+      }
 
-    for (const vuln of vulnerabilities) {
-      const severity = mapTrivySeverityToNodeSeverity(vuln.severity);
-      findings.push({
-        id: `VULN_${vuln.id}`,
-        severity,
-        category: "vulnerability",
-        title: vuln.title || `Vulnerabilidad detectada: ${vuln.id}`,
-        evidence: {
-          vulnerabilityId: vuln.id,
-          package: vuln.package,
-          installedVersion: vuln.installedVersion,
-          fixedVersion: vuln.fixedVersion,
-          description: vuln.description,
-        },
-        recommendation: vuln.fixedVersion
-          ? `Actualizar ${vuln.package} de versión ${vuln.installedVersion} a ${vuln.fixedVersion} o superior.`
-          : "Revisar la vulnerabilidad en bases de datos públicas y aplicar mitigaciones recomendadas.",
-      });
+      const vulnerabilities = Array.isArray(vulnReport.parsed) ? vulnReport.parsed : [];
+
+      if (vulnerabilities.length === 0) {
+        findings.push({
+          id: "NO_VULNERABILITIES_DETECTED",
+          severity: "INFO",
+          category: "vulnerability",
+          scope: "image",
+          title: `No se detectaron vulnerabilidades en ${vulnReport.target}`,
+          evidence: { target: vulnReport.target || "unknown" },
+          recommendation: "Sin acción requerida. Mantener el sistema actualizado.",
+        });
+        continue;
+      }
+
+      for (const vuln of vulnerabilities) {
+        const severity = mapTrivySeverityToNodeSeverity(vuln.severity);
+        findings.push({
+          id: `VULN_${vuln.id}`,
+          severity,
+          category: "vulnerability",
+          scope: "image",
+          title: vuln.title || `Vulnerabilidad detectada: ${vuln.id}`,
+          evidence: {
+            target: vuln.target || vulnReport.target,
+            vulnerabilityId: vuln.id,
+            package: vuln.package,
+            installedVersion: vuln.installedVersion,
+            fixedVersion: vuln.fixedVersion,
+            description: vuln.description,
+          },
+          recommendation: vuln.fixedVersion
+            ? `Actualizar ${vuln.package} de versión ${vuln.installedVersion} a ${vuln.fixedVersion} o superior.`
+            : "Revisar la vulnerabilidad en bases de datos públicas y aplicar mitigaciones recomendadas.",
+        });
+      }
     }
 
     return findings;
@@ -796,6 +1117,14 @@ module.exports = function (RED) {
         node.status({ fill: "blue", shape: "dot", text: "auditando..." });
 
         const scanId = new Date().toISOString();
+        const targetType = (config.targetType || "host").trim();
+        let targets = parseTargets(config.targets);
+
+        if (targets.length === 0) {
+          if (targetType === "host") targets = ["127.0.0.1"];
+          else if (targetType === "docker-image") targets = ["cuentaatras"];
+          else targets = ["."];
+        }
 
         const report = {
           scanId,
@@ -806,13 +1135,17 @@ module.exports = function (RED) {
             arch: os.arch(),
             uptimeSec: os.uptime(),
           },
+          targetType,
+          targets,
           system: null,
           network: null,
-          ports: null,
-          vulnerabilities: null,
-          httpFingerprint: null,
+          portsResults: [],
+          httpFingerprintResults: [],
+          nucleiResults: [],
+          vulnerabilitiesResults: [],
           findings: [],
           summary: null,
+          configWarnings: [],
           scanMeta: {
             modulesRun: [],
             durationMs: null,
@@ -821,9 +1154,49 @@ module.exports = function (RED) {
 
         const runSystem = config.runSystem !== false;
         const runNetwork = config.runNetwork !== false;
-        const runPorts = config.runPorts === true;
-        const runVuln = config.runVuln === true;
-        const runHttpFp = config.runHttpFp === true;
+        let runPorts = config.runPorts === true;
+        let runVuln = config.runVuln === true;
+        let runHttpFp = config.runHttpFp === true;
+        let runNuclei = config.runNuclei === true;
+
+        // ===== coherencia backend =====
+        if (targetType === "host") {
+          if (runVuln) {
+            report.configWarnings.push({
+              title: "Trivy no se aplica sobre objetivos de tipo Host/IP",
+              evidence: { targetType, targets },
+              recommendation: "Usa Trivy con objetivos de tipo Imagen Docker o Ruta del sistema de archivos.",
+            });
+            runVuln = false;
+          }
+        }
+
+        if (targetType === "docker-image" || targetType === "filesystem") {
+          if (runPorts) {
+            report.configWarnings.push({
+              title: "Nmap no se aplica sobre imágenes Docker o rutas del sistema de archivos",
+              evidence: { targetType, targets },
+              recommendation: "Usa Nmap solo con objetivos de tipo Host/IP.",
+            });
+            runPorts = false;
+          }
+          if (runHttpFp) {
+            report.configWarnings.push({
+              title: "La identificación de servicios web no se aplica sobre imágenes o rutas",
+              evidence: { targetType, targets },
+              recommendation: "Usa la identificación web solo con objetivos de tipo Host/IP.",
+            });
+            runHttpFp = false;
+          }
+          if (runNuclei) {
+            report.configWarnings.push({
+              title: "Nuclei no se aplica sobre imágenes Docker o rutas del sistema de archivos",
+              evidence: { targetType, targets },
+              recommendation: "Usa Nuclei solo con objetivos de tipo Host/IP.",
+            });
+            runNuclei = false;
+          }
+        }
 
         if (runSystem) {
           report.system = runSystemModule();
@@ -835,45 +1208,67 @@ module.exports = function (RED) {
           report.scanMeta.modulesRun.push("network");
         }
 
-        if (runPorts) {
-          const target = (config.portsTarget || "127.0.0.1").trim() || "127.0.0.1";
-          const mode = (config.portsMode || "auto").trim();
-
+        // ===== HOST/IP =====
+        if (targetType === "host") {
           const customPorts = parsePortsList(config.portsList);
           const portsToTest = customPorts && customPorts.length ? customPorts : DEFAULT_PORTS;
-
           const serviceDetect = config.nmapServiceDetect === true;
 
-          report.ports = await runPortsModule(target, mode, portsToTest, serviceDetect);
-          report.scanMeta.modulesRun.push(`ports:${report.ports.mode}`);
-        }
+          for (const target of targets) {
+            let portsReport = null;
 
-        // HTTP Fingerprinting (requiere ports)
-        if (runHttpFp) {
-          const allowInsecure = config.httpFpAllowInsecure === true;
-          const timeoutMs = Number.isFinite(+config.httpFpTimeoutMs) ? +config.httpFpTimeoutMs : 2500;
+            if (runPorts) {
+              portsReport = await runPortsModule(target, portsToTest, serviceDetect);
+              report.portsResults.push(portsReport);
+            }
 
-          report.httpFingerprint = await runHttpFingerprintModule(report.ports, {
-            allowInsecure,
-            timeoutMs,
-          });
+            if (runHttpFp) {
+              const allowInsecure = config.httpFpAllowInsecure === true;
+              const timeoutMs = Number.isFinite(+config.httpFpTimeoutMs) ? +config.httpFpTimeoutMs : 2500;
 
-          report.scanMeta.modulesRun.push("httpfp");
-        }
+              const httpFpReport = await runHttpFingerprintModule(portsReport, {
+                allowInsecure,
+                timeoutMs,
+              });
 
-        if (runVuln) {
-          const target = (config.trivyTarget || ".").trim() || ".";
-          const vulnReport = await runVulnTrivy(target);
+              report.httpFingerprintResults.push(httpFpReport);
+            }
 
-          if (vulnReport.available) {
-            vulnReport.parsed = parseTrivyFindings(vulnReport);
-            // Si hubo error en ejecución, parsed quedará []
-            if (vulnReport.error) vulnReport.parsed = [];
+            if (runNuclei) {
+              const nucleiSeverity = (config.nucleiSeverity || "").trim();
+              const nucleiTemplates = (config.nucleiTemplates || "").trim();
+
+              const nucleiReport = await runNucleiModule(portsReport, {
+                severity: nucleiSeverity,
+                templates: nucleiTemplates,
+              });
+
+              report.nucleiResults.push(nucleiReport);
+            }
           }
 
+          if (runPorts) report.scanMeta.modulesRun.push("ports:nmap");
+          if (runHttpFp) report.scanMeta.modulesRun.push("httpfp");
+          if (runNuclei) report.scanMeta.modulesRun.push("nuclei");
+        }
 
-          report.vulnerabilities = vulnReport;
-          report.scanMeta.modulesRun.push("vulnerabilities:trivy");
+        // ===== DOCKER IMAGE / FILESYSTEM =====
+        if (targetType === "docker-image" || targetType === "filesystem") {
+          if (runVuln) {
+            const mode = targetType === "docker-image" ? "image" : "fs";
+
+            for (const target of targets) {
+              const vulnReport = await runVulnTrivy(mode, target);
+              if (vulnReport.available) {
+                vulnReport.parsed = parseTrivyFindings(vulnReport);
+              } else {
+                vulnReport.parsed = [];
+              }
+              report.vulnerabilitiesResults.push(vulnReport);
+            }
+
+            report.scanMeta.modulesRun.push(`vulnerabilities:trivy:${targetType}`);
+          }
         }
 
         report.findings = buildFindings(report);
@@ -902,8 +1297,8 @@ module.exports = function (RED) {
 
         msg.payload = report;
         msg.audit = { saved: saveReport, reportPath, dashboardPath };
+
         const max = report.summary?.maxSeverity || "INFO";
-        
         const statusColor =
           max === "CRITICAL" || max === "HIGH" ? "red" : max === "MEDIUM" ? "yellow" : "green";
 

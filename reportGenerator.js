@@ -97,22 +97,106 @@ function renderFinding(f, index) {
 function renderAuditPanel(report, auditIndex) {
   const summary = report.summary || {};
   const counts = summary.counts || {};
-  const max = summary.maxSeverity || "INFO";
+
+  const hostMax = summary.host?.maxSeverity || summary.maxSeverity || "INFO";
+  const hostCounts = summary.host?.counts || counts;
+
+  const imageMax = summary.image?.maxSeverity || null;
+  const imageCounts = summary.image?.counts || null;
+
+  const max = hostMax; // lo usamos para colores del banner
+
   const host = report.host || {};
   const meta = report.scanMeta || {};
   const findings = report.findings || [];
 
   const severities = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+  const severityOrder = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1, INFO: 0 };
+
+  const findingsSorted = [...findings].sort((a, b) => {
+    const sa = severityOrder[a.severity] || 0;
+    const sb = severityOrder[b.severity] || 0;
+    if (sa !== sb) return sb - sa;
+    return String(a.title || "").localeCompare(String(b.title || ""));
+  });
+
+  const groups = {};
+  for (const f of findingsSorted) {
+    const cat = f.category || "other";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(f);
+  }
+
+  const groupOrder = ["vulnerability", "ports", "web", "network", "system", "performance", "other"];
+
+  function labelForCategory(cat) {
+    if (cat === "vulnerability") return "Vulnerabilidades (Trivy)";
+    if (cat === "ports")        return "Puertos y exposición";
+    if (cat === "web")          return "Servicios web";
+    if (cat === "network")      return "Red";
+    if (cat === "system")       return "Sistema";
+    if (cat === "performance")  return "Rendimiento";
+    return "Otros";
+  }
+
+  const maxVisibleVulns = 10;
+
+  const findingsHtml = findingsSorted.length
+    ? groupOrder
+        .filter(cat => groups[cat] && groups[cat].length)
+        .map(cat => {
+          const all = groups[cat];
+          const label = labelForCategory(cat);
+
+          if (cat !== "vulnerability") {
+            const items = all.map((f, i) =>
+              renderFinding(f, `${auditIndex}-${cat}-${i}`)
+            ).join("");
+            return `
+            <details open>
+              <summary style="margin:12px 0 6px;font-weight:600;font-size:0.9rem;cursor:pointer;">
+                ${label} (${all.length})
+              </summary>
+              ${items}
+            </details>`;
+          }
+
+          const top = all.slice(0, maxVisibleVulns);
+          const extra = all.slice(maxVisibleVulns);
+          const topHtml = top.map((f, i) =>
+            renderFinding(f, `${auditIndex}-vuln-top-${i}`)
+          ).join("");
+          const extraHtml = extra.map((f, i) =>
+            renderFinding(f, `${auditIndex}-vuln-extra-${i}`)
+          ).join("");
+
+          return `
+          <details open>
+            <summary style="margin:12px 0 6px;font-weight:600;font-size:0.9rem;cursor:pointer;">
+              ${label} (${all.length})
+            </summary>
+            ${topHtml}
+            ${extra.length ? `
+              <div id="vuln-extra-wrapper-${auditIndex}" style="display:none;margin-top:8px;">
+                ${extraHtml}
+              </div>
+              <button type="button"
+                      onclick="toggleExtraVulns('${auditIndex}')"
+                      style="margin-top:8px;border:none;background:#ecf0f1;border-radius:16px;padding:6px 12px;font-size:0.8rem;cursor:pointer;">
+                Mostrar ${extra.length} vulnerabilidade(s) adicional(es)
+              </button>
+            ` : ""}
+          </details>`;
+        })
+        .join("")
+    : `<p style="color:#888;text-align:center;padding:20px;">No se generaron hallazgos.</p>`;
 
   const countersHtml = severities.map(s => `
-    <div style="text-align:center;background:#fff;border-radius:8px;padding:10px 18px;box-shadow:0 1px 4px rgba(0,0,0,0.08);">
-      <div style="font-size:1.6rem;font-weight:700;color:${severityColor(s)};">${counts[s] || 0}</div>
-      <div style="font-size:0.72rem;font-weight:600;color:#888;margin-top:2px;">${s}</div>
-    </div>`).join("");
+  <div style="text-align:center;background:#fff;border-radius:8px;padding:10px 18px;box-shadow:0 1px 4px rgba(0,0,0,0.08);">
+    <div style="font-size:1.6rem;font-weight:700;color:${severityColor(s)};">${hostCounts[s] || 0}</div>
+    <div style="font-size:0.72rem;font-weight:600;color:#888;margin-top:2px;">${s}</div>
+  </div>`).join("");
 
-  const findingsHtml = findings.length
-    ? findings.map((f, i) => renderFinding(f, `${auditIndex}-${i}`)).join("")
-    : `<p style="color:#888;text-align:center;padding:20px;">No se generaron hallazgos.</p>`;
 
   const modulesHtml = (meta.modulesRun || [])
     .map(m => `<span style="background:#dfe6e9;padding:2px 8px;border-radius:10px;font-size:0.75rem;">${m}</span>`)
@@ -126,8 +210,13 @@ function renderAuditPanel(report, auditIndex) {
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
         <div style="font-size:2rem;">${severityIcon(max)}</div>
         <div>
-          <div style="font-size:1rem;font-weight:700;color:${maxSeverityColor(max)};">Riesgo máximo: ${max}</div>
-          <div style="font-size:0.82rem;color:#666;margin-top:2px;">
+          <div style="font-size:1rem;font-weight:700;color:${maxSeverityColor(hostMax)};">Riesgo del sistema: ${hostMax}
+          </div>
+          ${imageMax ? `
+            <div style="font-size:0.9rem;font-weight:600;color:${maxSeverityColor(imageMax)};margin-top:2px;">
+              Riesgo en imágenes Docker: ${imageMax}
+            </div>` : ""}
+          <div style="font-size:0.82rem;color:#666;margin-top:4px;">
             ${host.hostname || "?"} · ${host.platform || "?"} · ${host.arch || ""} · uptime ${Math.round((host.uptimeSec || 0) / 3600)}h
           </div>
           <div style="font-size:0.78rem;color:#888;margin-top:2px;">
@@ -138,15 +227,22 @@ function renderAuditPanel(report, auditIndex) {
     </div>
 
     <!-- Contadores -->
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
       ${countersHtml}
     </div>
+
+    <p style="margin:0 0 12px;font-size:0.8rem;color:#666;">
+      Riesgo global (sistema + imágenes): ${summary.maxSeverity || hostMax}
+    </p>
 
     <!-- Hallazgos -->
     <h3 style="margin:0 0 12px;font-size:1rem;color:#2d3436;">Hallazgos</h3>
     ${findingsHtml}
+
   </div>`;
 }
+
+
 
 // ── Render del dashboard completo ───────────────────────────────────────────
 
@@ -328,6 +424,19 @@ function renderDashboard(reports) {
     var el = document.getElementById(uid);
     if (el) el.style.display = el.style.display === "none" ? "block" : "none";
   }
+  function toggleExtraVulns(auditIndex) {
+  var wrapper = document.getElementById("vuln-extra-wrapper-" + auditIndex);
+  if (!wrapper) return;
+  var btn = event.target;
+  var visible = wrapper.style.display === "block";
+  wrapper.style.display = visible ? "none" : "block";
+  if (btn) {
+    btn.textContent = visible
+      ? "Mostrar más vulnerabilidades"
+      : "Ocultar vulnerabilidades adicionales";
+  }
+}
+
 </script>
 </body>
 </html>`;
