@@ -1,0 +1,23 @@
+{
+    "name": "node-red-contrib-lcaudit",
+    "version": "2.0.0",
+    "description": "Framework modular de auditoría de seguridad para Node-RED — Host, Red e Imagen",
+    "keywords": [
+        "node-red",
+        "security",
+        "audit",
+        "nmap",
+        "trivy",
+        "nuclei",
+        "vulnerability"
+    ],
+    "license": "MIT",
+    "node-red": {
+        "nodes": {
+            "lcaudit-host": "nodes/lcaudit-host/lcaudit-host.js",
+            "lcaudit-network": "nodes/lcaudit-network/lcaudit-network.js",
+            "lcaudit-image": "nodes/lcaudit-image/lcaudit-image.js",
+            "lcaudit-dashboard": "nodes/lcaudit-dashboard/lcaudit-dashboard.js"
+        }
+    }
+}

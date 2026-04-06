@@ -1,0 +1,155 @@
+<script type="text/javascript">
+    RED.nodes.registerType("lcaudit-network", {
+        category: "LCAudit",
+        color: "#27AE60",
+        defaults: {
+            name: { value: "" },
+            outputPath: { value: "" },
+            saveReport: { value: true },
+
+            cidr: { value: "" },
+
+            runPorts: { value: true },
+            runHttpFp: { value: false },
+            runNuclei: { value: false },
+
+            portsList: { value: "" },
+            nmapServiceDetect: { value: false },
+
+            httpFpAllowInsecure: { value: false },
+            httpFpTimeoutMs: { value: 2500 },
+
+            nucleiSeverity: { value: "" },
+            nucleiTemplates: { value: "" }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "lcaudit-network.svg",
+        label: function () {
+            return this.name || "lcaudit-network";
+        },
+        paletteLabel: "Network Audit",
+        oneditprepare: function () {
+            function updateVisibility() {
+                var runPorts = $("#node-input-runPorts").is(":checked");
+                var runHttpFp = $("#node-input-runHttpFp").is(":checked");
+                var runNuclei = $("#node-input-runNuclei").is(":checked");
+
+                $("#ports-options").toggle(runPorts);
+                $("#httpfp-options").toggle(runHttpFp);
+                $("#nuclei-options").toggle(runNuclei);
+            }
+
+            $("#node-input-runPorts").on("change", updateVisibility);
+            $("#node-input-runHttpFp").on("change", updateVisibility);
+            $("#node-input-runNuclei").on("change", updateVisibility);
+
+            updateVisibility();
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="lcaudit-network">
+
+  <!-- NAME -->
+<div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Nombre</label>
+    <input type="text" id="node-input-name" placeholder="Nombre del nodo" />
+</div>
+
+<hr />
+
+<!-- CIDR / TARGET -->
+<div class="form-row">
+    <label for="node-input-cidr"><i class="fa fa-sitemap"></i> Red (CIDR o IPs)</label>
+    <input type="text" id="node-input-cidr" placeholder="192.168.1.0/24 o 192.168.1.10,192.168.1.20" />
+</div>
+<div class="form-row" style="margin-left: 105px; font-size: 12px; opacity: 0.8;">
+    CIDR para descubrimiento automático (nmap -sn) o lista de IPs separadas por comas.
+</div>
+
+<hr />
+
+<!-- SCANS PER HOST -->
+<div class="form-row">
+    <label><i class="fa fa-search"></i> Escaneos por host</label>
+    <div style="margin-left: 105px;">
+        <label style="display:block;">
+            <input type="checkbox" id="node-input-runPorts" style="width:auto; margin-right:6px;">
+            🔍 Escaneo de puertos (Nmap)
+        </label>
+        <label style="display:block;">
+            <input type="checkbox" id="node-input-runHttpFp" style="width:auto; margin-right:6px;">
+            🌐 Identificación de servicios web
+        </label>
+        <label style="display:block;">
+            <input type="checkbox" id="node-input-runNuclei" style="width:auto; margin-right:6px;">
+            ⚡ Vulnerabilidades web (Nuclei)
+        </label>
+    </div>
+</div>
+
+<!-- PORTS OPTIONS -->
+<div id="ports-options">
+    <div class="form-row" style="margin-left: 105px;">
+        <label for="node-input-portsList" style="width:180px;">Puertos a analizar</label>
+        <input type="text" id="node-input-portsList" placeholder="22,80,443,1880" style="width:calc(100% - 185px);" />
+    </div>
+    <div class="form-row" style="margin-left: 105px;">
+        <label style="width:180px;">Detectar servicio y versión</label>
+        <input type="checkbox" id="node-input-nmapServiceDetect" style="width:auto;" />
+    </div>
+</div>
+
+<!-- HTTP FP OPTIONS -->
+<div id="httpfp-options">
+    <div class="form-row" style="margin-left: 105px;">
+        <label style="width:200px;">Aceptar cert. autofirmados</label>
+        <input type="checkbox" id="node-input-httpFpAllowInsecure" style="width:auto;" />
+    </div>
+    <div class="form-row" style="margin-left: 105px;">
+        <label for="node-input-httpFpTimeoutMs" style="width:200px;">Timeout (ms)</label>
+        <input type="number" id="node-input-httpFpTimeoutMs" min="500" step="100" placeholder="2500"
+            style="width:100px;" />
+    </div>
+</div>
+
+<!-- NUCLEI OPTIONS -->
+<div id="nuclei-options">
+    <div class="form-row" style="margin-left: 105px;">
+        <label for="node-input-nucleiSeverity" style="width:180px;">Filtrar severidades</label>
+        <input type="text" id="node-input-nucleiSeverity" placeholder="critical,high,medium"
+            style="width:calc(100% - 185px);" />
+    </div>
+    <div class="form-row" style="margin-left: 105px;">
+        <label for="node-input-nucleiTemplates" style="width:180px;">Plantillas personalizadas</label>
+        <input type="text" id="node-input-nucleiTemplates" placeholder="/ruta/a/templates"
+            style="width:calc(100% - 185px);" />
+    </div>
+</div>
+
+<hr />
+
+<!-- OUTPUT -->
+<div class="form-row">
+    <label for="node-input-outputPath"><i class="fa fa-folder"></i> Ruta de salida</label>
+    <input type="text" id="node-input-outputPath" placeholder="~/audit-reports" />
+</div>
+<div class="form-row">
+    <label for="node-input-saveReport"><i class="fa fa-save"></i> Guardar reporte</label>
+    <input type="checkbox" id="node-input-saveReport" style="display:inline-block; width:auto;" />
+</div>
+
+</script>
+
+<script type="text/html" data-help-name="lcaudit-network">
+  <p>
+    <strong>LCAudit Network</strong> — Auditoría de seguridad de red completa.
+  </p>
+  <p>
+    Descubre automáticamente hosts activos en un rango CIDR usando <code>nmap -sn</code>,
+    y luego ejecuta escaneos de puertos, servicios web y vulnerabilidades en cada host detectado.
+  </p>
+  <h3>Salida</h3>
+  <p><code>msg.payload</code> contiene el reporte completo con descubrimiento y resultados por host.</p>
+</script>
