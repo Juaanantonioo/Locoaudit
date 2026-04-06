@@ -1,0 +1,186 @@
+<script type="text/javascript">
+  RED.nodes.registerType("lcaudit-host", {
+    category: "LCAudit",
+    color: "#4A90D9",
+    defaults: {
+      name: { value: "" },
+      outputPath: { value: "" },
+      saveReport: { value: true },
+
+      runSystem: { value: true },
+      runNetwork: { value: true },
+
+      runPorts: { value: true },
+      runHttpFp: { value: false },
+      runNuclei: { value: false },
+
+      targets: { value: "127.0.0.1" },
+
+      portsList: { value: "" },
+      nmapServiceDetect: { value: false },
+
+      httpFpAllowInsecure: { value: false },
+      httpFpTimeoutMs: { value: 2500 },
+
+      nucleiSeverity: { value: "" },
+      nucleiTemplates: { value: "" }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "lcaudit-host.svg",
+    label: function () {
+      return this.name || "lcaudit-host";
+    },
+    paletteLabel: "Host Audit",
+    oneditprepare: function () {
+      function updateVisibility() {
+        var runPorts = $("#node-input-runPorts").is(":checked");
+        var runHttpFp = $("#node-input-runHttpFp").is(":checked");
+        var runNuclei = $("#node-input-runNuclei").is(":checked");
+
+        $("#ports-options").toggle(runPorts);
+        $("#httpfp-options").toggle(runHttpFp);
+        $("#nuclei-options").toggle(runNuclei);
+      }
+
+      $("#node-input-runPorts").on("change", updateVisibility);
+      $("#node-input-runHttpFp").on("change", updateVisibility);
+      $("#node-input-runNuclei").on("change", updateVisibility);
+
+      updateVisibility();
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="lcaudit-host">
+
+  <!-- NAME -->
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Nombre</label>
+    <input type="text" id="node-input-name" placeholder="Nombre del nodo" />
+  </div>
+
+  <hr/>
+
+  <!-- TARGET -->
+  <div class="form-row">
+    <label for="node-input-targets"><i class="fa fa-crosshairs"></i> Objetivos (Host/IP)</label>
+    <input type="text" id="node-input-targets" placeholder="127.0.0.1 o 192.168.0.10,192.168.0.20" />
+  </div>
+  <div class="form-row" style="margin-left: 105px; font-size: 12px; opacity: 0.8;">
+    Separa múltiples IPs con comas. Ej: 127.0.0.1, 192.168.0.24, localhost
+  </div>
+
+  <hr/>
+
+  <!-- SCANS -->
+  <div class="form-row">
+    <label><i class="fa fa-search"></i> Escaneos</label>
+    <div style="margin-left: 105px;">
+      <label style="display:block;">
+        <input type="checkbox" id="node-input-runPorts" style="width:auto; margin-right:6px;">
+        🔍 Escaneo de puertos (Nmap)
+      </label>
+
+      <label style="display:block;">
+        <input type="checkbox" id="node-input-runHttpFp" style="width:auto; margin-right:6px;">
+        🌐 Identificación de servicios web
+      </label>
+
+      <label style="display:block;">
+        <input type="checkbox" id="node-input-runNuclei" style="width:auto; margin-right:6px;">
+        ⚡ Escaneo de vulnerabilidades web (Nuclei)
+      </label>
+    </div>
+  </div>
+
+  <!-- PORTS OPTIONS -->
+  <div id="ports-options">
+    <div class="form-row" style="margin-left: 105px;">
+      <label for="node-input-portsList" style="width:180px;">Puertos a analizar</label>
+      <input type="text" id="node-input-portsList" placeholder="22,80,443,1880 (vacío = por defecto)" style="width:calc(100% - 185px);" />
+    </div>
+
+    <div class="form-row" style="margin-left: 105px;">
+      <label style="width:180px;">Detectar servicio y versión</label>
+      <input type="checkbox" id="node-input-nmapServiceDetect" style="width:auto;" />
+    </div>
+  </div>
+
+  <!-- HTTP FP OPTIONS -->
+  <div id="httpfp-options">
+    <div class="form-row" style="margin-left: 105px;">
+      <label style="width:200px;">Aceptar certificados autofirmados</label>
+      <input type="checkbox" id="node-input-httpFpAllowInsecure" style="width:auto;" />
+    </div>
+
+    <div class="form-row" style="margin-left: 105px;">
+      <label for="node-input-httpFpTimeoutMs" style="width:200px;">Timeout (ms)</label>
+      <input type="number" id="node-input-httpFpTimeoutMs" min="500" step="100" placeholder="2500" style="width:100px;" />
+    </div>
+  </div>
+
+  <!-- NUCLEI OPTIONS -->
+  <div id="nuclei-options">
+    <div class="form-row" style="margin-left: 105px;">
+      <label for="node-input-nucleiSeverity" style="width:180px;">Filtrar severidades</label>
+      <input type="text" id="node-input-nucleiSeverity" placeholder="critical,high,medium" style="width:calc(100% - 185px);" />
+    </div>
+
+    <div class="form-row" style="margin-left: 105px;">
+      <label for="node-input-nucleiTemplates" style="width:180px;">Plantillas personalizadas</label>
+      <input type="text" id="node-input-nucleiTemplates" placeholder="/ruta/a/templates" style="width:calc(100% - 185px);" />
+    </div>
+  </div>
+
+  <hr/>
+
+  <!-- MODULES -->
+  <div class="form-row">
+    <label><i class="fa fa-sliders"></i> Módulos base</label>
+    <div style="margin-left: 105px;">
+      <label style="display:block;">
+        <input type="checkbox" id="node-input-runSystem" style="width:auto; margin-right:6px;">
+        💻 Info del sistema (CPU, RAM)
+      </label>
+      <label style="display:block;">
+        <input type="checkbox" id="node-input-runNetwork" style="width:auto; margin-right:6px;">
+        📡 Info de red (interfaces, IP)
+      </label>
+    </div>
+  </div>
+
+  <hr/>
+
+  <!-- OUTPUT -->
+  <div class="form-row">
+    <label for="node-input-outputPath"><i class="fa fa-folder"></i> Ruta de salida</label>
+    <input type="text" id="node-input-outputPath" placeholder="~/audit-reports" />
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-saveReport"><i class="fa fa-save"></i> Guardar reporte</label>
+    <input type="checkbox" id="node-input-saveReport" style="display:inline-block; width:auto;" />
+  </div>
+
+</script>
+
+<script type="text/html" data-help-name="lcaudit-host">
+  <p>
+    <strong>LCAudit Host</strong> — Nodo de auditoría de seguridad para hosts individuales.
+  </p>
+  <p>
+    Ejecuta escaneos de puertos (Nmap), identificación de servicios web (HTTP Fingerprint),
+    análisis de vulnerabilidades remotas (Nuclei), junto con información del sistema y red.
+  </p>
+  <h3>Configuración</h3>
+  <ul>
+    <li><strong>Objetivos:</strong> IPs o hostnames separados por comas</li>
+    <li><strong>Escaneo de puertos:</strong> Usa Nmap para detectar puertos abiertos</li>
+    <li><strong>Servicios web:</strong> Identifica tecnologías en puertos web</li>
+    <li><strong>Nuclei:</strong> Busca vulnerabilidades conocidas remotamente</li>
+  </ul>
+  <h3>Salida</h3>
+  <p><code>msg.payload</code> contiene el reporte completo con findings y summary.</p>
+  <p><code>msg.audit</code> contiene rutas del reporte JSON y dashboard HTML guardados.</p>
+</script>

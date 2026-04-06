@@ -1,0 +1,75 @@
+<script type="text/javascript">
+    RED.nodes.registerType("lcaudit-dashboard", {
+        category: "LCAudit",
+        color: "#8E44AD",
+        defaults: {
+            name: { value: "" },
+            outputPath: { value: "" },
+            group: { type: "ui_group", required: false },
+            width: { value: 0 },
+            height: { value: 0 },
+            templateScope: { value: "local" }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "lcaudit-dashboard.svg",
+        label: function () {
+            return this.name || "lcaudit-dashboard";
+        },
+        paletteLabel: "Audit Dashboard"
+    });
+</script>
+
+<script type="text/html" data-template-name="lcaudit-dashboard">
+
+  <!-- NAME -->
+<div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Nombre</label>
+    <input type="text" id="node-input-name" placeholder="Nombre del nodo" />
+</div>
+
+<hr />
+
+<!-- DASHBOARD GROUP (if node-red-dashboard is installed) -->
+<div class="form-row">
+    <label for="node-input-group"><i class="fa fa-table"></i> Dashboard Group</label>
+    <input type="text" id="node-input-group" />
+</div>
+
+<div class="form-row" style="margin-left: 105px; font-size: 12px; opacity: 0.8;">
+    Opcional. Si tienes node-red-dashboard instalado, selecciona el grupo donde aparecerá el dashboard.
+    Si no, el dashboard se generará como HTML estático.
+</div>
+
+<hr />
+
+<!-- OUTPUT PATH -->
+<div class="form-row">
+    <label for="node-input-outputPath"><i class="fa fa-folder"></i> Ruta HTML estático</label>
+    <input type="text" id="node-input-outputPath" placeholder="~/audit-reports" />
+</div>
+
+<div class="form-row" style="margin-left: 105px; font-size: 12px; opacity: 0.8;">
+    Directorio donde se guardarán los dashboards HTML. Se actualiza automáticamente con cada auditoría.
+</div>
+
+</script>
+
+<script type="text/html" data-help-name="lcaudit-dashboard">
+  <p>
+    <strong>LCAudit Dashboard</strong> — Visualiza los resultados de auditoría.
+  </p>
+  <p>
+    Recibe la salida de cualquier nodo LCAudit (Host, Network, Image) y genera
+    un dashboard interactivo. Compatible con <code>node-red-dashboard</code> via <code>ui_template</code>.
+  </p>
+  <h3>Uso</h3>
+  <ol>
+    <li>Conecta la salida de un nodo <code>lcaudit-host</code>, <code>lcaudit-network</code> o <code>lcaudit-image</code> a la entrada de este nodo.</li>
+    <li>Si tienes <code>node-red-dashboard</code> instalado, configura el grupo del dashboard.</li>
+    <li>El nodo envía el HTML del dashboard en <code>msg.template</code> (para ui_template) y genera un HTML estático en disco.</li>
+  </ol>
+  <h3>Salida</h3>
+  <p><code>msg.template</code> — HTML del dashboard para usar con ui_template.</p>
+  <p><code>msg.audit.dashboardPath</code> — Ruta del HTML estático generado.</p>
+</script>
