@@ -1,7 +1,7 @@
 "use strict";
 
 const os = require("os");
-const { bytesToMiB, bytesToGiB } = require("../core/helpers");
+const { bytesToMiB, bytesToGiB } = require("../../../lib/utils");
 
 /**
  * Recoge información del sistema: CPU, memoria, OS.
