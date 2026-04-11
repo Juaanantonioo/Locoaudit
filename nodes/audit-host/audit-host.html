@@ -1,0 +1,22 @@
+<!-- audit-host — panel de configuración Node-RED -->
+<!-- TODO: implementar -->
+
+<script type="text/javascript">
+    RED.nodes.registerType("audit-host", {
+        category: "locoaudit",
+        color: "#e05a5a",
+        defaults: {},
+        inputs: 1,
+        outputs: 1,
+        icon: "audit-host.svg",
+        label: function () { return "audit-host"; }
+    });
+</script>
+
+<script type="text/html" data-template-name="audit-host">
+    <!-- TODO: campos de configuración -->
+</script>
+
+<script type="text/html" data-help-name="audit-host">
+    <p>Auditoría de seguridad de host: sistema, red, puertos, HTTP fingerprint y vulnerabilidades.</p>
+</script>

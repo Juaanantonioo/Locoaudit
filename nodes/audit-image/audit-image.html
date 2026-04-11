@@ -1,0 +1,22 @@
+<!-- audit-image — panel de configuración Node-RED -->
+<!-- TODO: implementar -->
+
+<script type="text/javascript">
+    RED.nodes.registerType("audit-image", {
+        category: "locoaudit",
+        color: "#5ae08a",
+        defaults: {},
+        inputs: 1,
+        outputs: 1,
+        icon: "audit-image.svg",
+        label: function () { return "audit-image"; }
+    });
+</script>
+
+<script type="text/html" data-template-name="audit-image">
+    <!-- TODO: campos de configuración -->
+</script>
+
+<script type="text/html" data-help-name="audit-image">
+    <p>Auditoría de seguridad de imágenes de contenedor con Trivy: CVEs, misconfigs y secretos.</p>
+</script>

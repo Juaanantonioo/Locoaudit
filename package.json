@@ -1,7 +1,7 @@
 {
-    "name": "node-red-contrib-lcaudit",
-    "version": "2.0.0",
-    "description": "Framework modular de auditoría de seguridad para Node-RED — Host, Red e Imagen",
+    "name": "locoaudit",
+    "version": "1.0.0",
+    "description": "Framework modular de auditoría de seguridad para Node-RED — Host, Red, Imagen y Reporter",
     "keywords": [
         "node-red",
         "security",
@@ -12,12 +12,17 @@
         "vulnerability"
     ],
     "license": "MIT",
+    "engines": {
+        "node": ">=18.0.0"
+    },
     "node-red": {
+        "version": ">=3.0.0",
         "nodes": {
-            "lcaudit-host": "nodes/lcaudit-host/lcaudit-host.js",
-            "lcaudit-network": "nodes/lcaudit-network/lcaudit-network.js",
-            "lcaudit-image": "nodes/lcaudit-image/lcaudit-image.js",
-            "lcaudit-dashboard": "nodes/lcaudit-dashboard/lcaudit-dashboard.js"
+            "audit-host":     "nodes/audit-host/audit-host.js",
+            "audit-network":  "nodes/audit-network/audit-network.js",
+            "audit-image":    "nodes/audit-image/audit-image.js",
+            "audit-reporter": "nodes/audit-reporter/audit-reporter.js"
         }
-    }
+    },
+    "dependencies": {}
 }
