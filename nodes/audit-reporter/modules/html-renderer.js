@@ -1,8 +1,29 @@
 "use strict";
 
+/**
+ * html-renderer.js — Generador del dashboard HTML de LoCoAudit.
+ *
+ * Exporta:
+ *   generateDashboard(baseDir) → string  (ruta del dashboard.html generado)
+ *   renderDashboard(reports)   → string  (HTML completo)
+ *   renderAuditPanel(report, auditIndex) → string  (HTML de un panel)
+ *   severityColor(s)  → string
+ *   severityIcon(s)   → string
+ *   severityBadge(s)  → string
+ */
+
 const fs = require("fs");
 const path = require("path");
-const { escHtml } = require("./helpers");
+
+// ── Escape HTML (inlined para evitar dependencia circular) ──────────────────
+
+function escHtml(str) {
+    return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
 
 // ── Color y badges de severidad ─────────────────────────────────────────────
 
@@ -112,7 +133,7 @@ function renderFinding(f, index) {
         }
 
     <div id="${uid}" style="display:none; padding:12px 16px; border-top:1px solid #eee;">
-      <p style="margin:0 0 8px;font-size:0.85rem;"><strong>Recomendación técnica:</strong> ${escHtml(f.recommendation || "")}</p>
+      <p style="margin:0 0 8px;font-size:0.85rem;"><strong>Recomendación técnica:</strong> ${escHtml(f.fix || "")}</p>
       <details style="margin-top:8px;">
         <summary style="cursor:pointer;font-size:0.8rem;color:#666;">Ver evidencia técnica</summary>
         <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;font-size:0.75rem;overflow-x:auto;margin-top:8px;">${escHtml(evidenceJson)}</pre>
@@ -251,7 +272,6 @@ function renderAuditPanel(report, auditIndex) {
         )
         .join(" ");
 
-    // Tipo de auditoría
     const auditTypeMap = {
         host: "🖥️ Host",
         network: "🌐 Red",
@@ -263,7 +283,6 @@ function renderAuditPanel(report, auditIndex) {
     return `
   <div style="padding:20px;">
 
-    <!-- Tipo y resumen ejecutivo -->
     <div style="background:linear-gradient(135deg,${severityColor(max)}22,#fff);border:1px solid ${severityColor(max)}55;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
         <div style="font-size:2rem;">${severityIcon(max)}</div>
@@ -289,7 +308,6 @@ function renderAuditPanel(report, auditIndex) {
       </div>
     </div>
 
-    <!-- Contadores -->
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
       ${countersHtml}
     </div>
@@ -298,7 +316,6 @@ function renderAuditPanel(report, auditIndex) {
       Riesgo global: ${summary.maxSeverity || hostMax}
     </p>
 
-    <!-- Hallazgos -->
     <h3 style="margin:0 0 12px;font-size:1rem;color:#2d3436;">Hallazgos</h3>
     ${findingsHtml}
 
