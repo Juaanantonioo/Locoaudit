@@ -64,12 +64,14 @@ Lynis no funciona en Windows sin WSL. En Windows `audit-host` operará con `triv
 ```js
 // lib/finding-schema.js
 {
-  id: string,          // e.g. "HOST-LYN-SSH-001"
-  title: string,       // descripción breve del hallazgo
-  severity: string,    // "critical" | "high" | "medium" | "low" | "info"
-  evidence: string,    // dato concreto que justifica el hallazgo
-  fix: string | null,  // recomendación de mitigación (null si es informativo)
-  timestamp: string    // ISO 8601, generado automáticamente
+  id:        string,       // semántico: "HOST-CPU-001", "NET-PORT-001", "IMG-CVE-001"
+  title:     string,       // descripción breve del hallazgo
+  severity:  string,       // "critical" | "high" | "medium" | "low" | "info"
+  evidence:  string,       // dato concreto que justifica el hallazgo
+  fix:       string|null,  // recomendación de mitigación (null si es informativo)
+  category:  string,       // "cpu" | "memory" | "disk" | "network" | "image" | "system" | "vulnerability" | ...
+  source:    string,       // "native" | "nmap" | "lynis" | "trivy" | "nuclei"
+  timestamp: string        // ISO 8601, generado automáticamente por createFinding()
 }
 ```
 
@@ -124,9 +126,10 @@ module.exports = async function runLynis() {
 | Fichero | Responsabilidad |
 |---|---|
 | `executor.js` | `execCommand(cmd, timeoutMs)` y `commandExists(cmd)` — multiplataforma |
-| `normalizer.js` | `normalizeHost()`, `normalizeNetwork()`, `normalizeImage()` |
-| `finding-schema.js` | `createFinding({...})` — valida y construye un finding con timestamp |
-| `severity-map.js` | Umbrales: cuándo un uso de CPU es `high` vs `critical`, etc. |
+| `normalizer.js` | `normalizeHost()`, `normalizeNetwork()`, `normalizeImage()` — convierte raw data a findings[] |
+| `finding-schema.js` | `createFinding({...})` — valida y construye un finding con timestamp automático |
+| `severity-map.js` | `rank()`, `max()`, `fromTrivy()`, `fromLynis()`, `fromNuclei()`, `summarize()` |
+| `utils.js` | `bytesToMiB()`, `bytesToGiB()`, `safeFileName()`, `escHtml()` — utilidades genéricas |
 
 ---
 
@@ -209,17 +212,32 @@ Instrucciones de instalación por SO (macOS / Linux / Windows) en `INSTALL_GUIDE
 
 Ver `ROADMAP.md` para el plan completo y el estado de cada tarea.
 
-**Fase actual: Fase 0 — Reorganización y base**
+**Fase actual: Fase 1 — Nodo audit-host**
 
-Completado:
+### Fase 0 — Completada ✓
+
 - [x] CLAUDE.md y ROADMAP.md en el repo
 - [x] Stack de herramientas definitivo decidido y documentado
 - [x] Lanzador Python con comprobación de dependencias (Lynis, Trivy, Nmap, Docker)
+- [x] `lib/finding-schema.js` — esquema combinado definitivo con `createFinding()`
+- [x] `lib/executor.js` — `execCommand()` y `commandExists()` multiplataforma
+- [x] `lib/severity-map.js` — `rank()`, `max()`, `fromTrivy()`, `fromLynis()`, `fromNuclei()`, `summarize()`
+- [x] `lib/normalizer.js` — `normalizeHost()`, `normalizeNetwork()`, `normalizeImage()`
+- [x] `lib/utils.js` — utilidades genéricas (bytes, escHtml, safeFileName)
+- [x] `nodes/audit-reporter/modules/html-renderer.js` — dashboard HTML (movido de lib/)
+- [x] `nodes/audit-network/modules/network-utils.js` — utilidades de red (parsePortsList, etc.)
+- [x] `nodes/audit-host/modules/cpu-memory.js` — renombrado desde systemInfo.js, import corregido
 
-Pendiente Fase 0:
-- [ ] Limpiar duplicados `lcaudit-*` y mover `modules/` a cada nodo
-- [ ] Revisar `lib/` contra el patrón de CLAUDE.md
-- [ ] Actualizar `.gitignore` (node_modules, lynis.log, lynis-report.dat)
+### Fase 1 — Pendiente
+
+- [ ] `cpu-memory.js` — completar con datos de CPU usage (% por core)
+- [ ] `disk-storage.js` — uso de disco por partición
+- [ ] `sw-inventory.js` — software instalado (brew/dpkg/winget según SO)
+- [ ] `os-info.js` — versión SO, uptime, hostname, arch
+- [ ] `lynis.js` — wrapper Lynis con fallback
+- [ ] `trivy-fs.js` — wrapper Trivy fs con fallback
+- [ ] `audit-host.js` — registro del nodo en Node-RED
+- [ ] `audit-host.html` — UI de configuración del nodo
 
 ---
 
