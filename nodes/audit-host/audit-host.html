@@ -1,22 +1,155 @@
-<!-- audit-host — panel de configuración Node-RED -->
-<!-- TODO: implementar -->
+<!-- audit-host — Panel de configuración Node-RED -->
 
 <script type="text/javascript">
     RED.nodes.registerType("audit-host", {
         category: "locoaudit",
         color: "#e05a5a",
-        defaults: {},
+        defaults: {
+            name:         { value: "" },
+            enableCpu:    { value: true },
+            enableDisk:   { value: true },
+            enableSw:     { value: true },
+            enableLynis:  { value: true },
+            enableTrivy:  { value: true }
+        },
         inputs: 1,
         outputs: 1,
-        icon: "audit-host.svg",
-        label: function () { return "audit-host"; }
+        icon: "font-awesome/fa-shield",
+        paletteLabel: "audit-host",
+        label: function () {
+            return this.name || "audit-host";
+        },
+        labelStyle: function () {
+            return this.name ? "node_label_italic" : "";
+        }
     });
 </script>
 
 <script type="text/html" data-template-name="audit-host">
-    <!-- TODO: campos de configuración -->
+
+    <!-- Nombre del nodo -->
+    <div class="form-row">
+        <label for="node-input-name">
+            <i class="fa fa-tag"></i> Nombre
+        </label>
+        <input type="text" id="node-input-name" placeholder="audit-host">
+    </div>
+
+    <hr style="margin: 12px 0;">
+
+    <!-- Módulos a ejecutar -->
+    <div class="form-row">
+        <label style="width: 100%; font-weight: 600; margin-bottom: 8px;">
+            <i class="fa fa-cogs"></i> Módulos activos
+        </label>
+
+        <div style="padding-left: 16px; display: flex; flex-direction: column; gap: 8px;">
+
+            <div>
+                <input type="checkbox" id="node-input-enableCpu" style="width: auto; margin-right: 6px;">
+                <label for="node-input-enableCpu" style="width: auto; font-weight: normal;">
+                    <i class="fa fa-microchip"></i> CPU y memoria
+                    <span style="color: #888; font-size: 0.85em; margin-left: 4px;">(nativo)</span>
+                </label>
+            </div>
+
+            <div>
+                <input type="checkbox" id="node-input-enableDisk" style="width: auto; margin-right: 6px;">
+                <label for="node-input-enableDisk" style="width: auto; font-weight: normal;">
+                    <i class="fa fa-hdd-o"></i> Disco
+                    <span style="color: #888; font-size: 0.85em; margin-left: 4px;">(nativo)</span>
+                </label>
+            </div>
+
+            <div>
+                <input type="checkbox" id="node-input-enableSw" style="width: auto; margin-right: 6px;">
+                <label for="node-input-enableSw" style="width: auto; font-weight: normal;">
+                    <i class="fa fa-list-ul"></i> Software instalado
+                    <span style="color: #888; font-size: 0.85em; margin-left: 4px;">(brew / dpkg / rpm / wmic)</span>
+                </label>
+            </div>
+
+            <div>
+                <input type="checkbox" id="node-input-enableLynis" style="width: auto; margin-right: 6px;">
+                <label for="node-input-enableLynis" style="width: auto; font-weight: normal;">
+                    <i class="fa fa-lock"></i> Lynis — hardening del sistema
+                    <span style="color: #888; font-size: 0.85em; margin-left: 4px;">(opcional, ~2 min)</span>
+                </label>
+            </div>
+
+            <div>
+                <input type="checkbox" id="node-input-enableTrivy" style="width: auto; margin-right: 6px;">
+                <label for="node-input-enableTrivy" style="width: auto; font-weight: normal;">
+                    <i class="fa fa-bug"></i> Trivy — CVEs en el sistema de ficheros
+                    <span style="color: #888; font-size: 0.85em; margin-left: 4px;">(opcional, puede tardar)</span>
+                </label>
+            </div>
+
+        </div>
+    </div>
+
+    <hr style="margin: 12px 0;">
+
+    <!-- Nota informativa -->
+    <div class="form-row" style="color: #666; font-size: 0.85em; line-height: 1.5;">
+        <i class="fa fa-info-circle"></i>
+        Los módulos marcados como <em>opcional</em> se saltan automáticamente
+        si la herramienta no está instalada. El nodo emite siempre
+        <code>msg.payload.findings[]</code> aunque todos fallen.
+    </div>
+
 </script>
 
 <script type="text/html" data-help-name="audit-host">
-    <p>Auditoría de seguridad de host: sistema, red, puertos, HTTP fingerprint y vulnerabilidades.</p>
+    <p>
+        Auditoría de seguridad del host local. Recopila información de CPU, memoria,
+        disco, software instalado y ejecuta herramientas de seguridad opcionales
+        (Lynis, Trivy).
+    </p>
+
+    <h3>Entrada</h3>
+    <p>Cualquier mensaje dispara la auditoría. El contenido de <code>msg</code> no importa.</p>
+
+    <h3>Salida</h3>
+    <dl class="message-properties">
+        <dt>payload.findings <span class="property-type">array</span></dt>
+        <dd>Array de findings con schema <code>{ id, title, severity, evidence, fix, category, source, timestamp }</code>.</dd>
+
+        <dt>payload.summary <span class="property-type">object</span></dt>
+        <dd>Contadores por severidad y severidad máxima detectada.</dd>
+
+        <dt>payload.host <span class="property-type">object</span></dt>
+        <dd>Información del sistema operativo: hostname, platform, arch, uptime.</dd>
+
+        <dt>payload.scanMeta <span class="property-type">object</span></dt>
+        <dd>Módulos ejecutados y duración total en ms.</dd>
+
+        <dt>payload.raw <span class="property-type">object</span></dt>
+        <dd>Datos crudos de cada módulo para trazabilidad.</dd>
+
+        <dt>payload.timestamp <span class="property-type">string</span></dt>
+        <dd>Timestamp ISO 8601 del inicio de la auditoría.</dd>
+    </dl>
+
+    <h3>Severidades</h3>
+    <ul>
+        <li><strong>critical</strong> — disco &gt; 90%</li>
+        <li><strong>high</strong> — disco &gt; 75%, memoria &gt; 90%, Lynis index &lt; 50, CVE crítico</li>
+        <li><strong>medium</strong> — disco &gt; 60%, memoria &gt; 75%, Lynis index &lt; 70</li>
+        <li><strong>low</strong> — memoria &gt; 60%, sugerencias Lynis</li>
+        <li><strong>info</strong> — datos informativos sin riesgo detectado</li>
+    </ul>
+
+    <h3>Herramientas opcionales</h3>
+    <p>
+        Si <strong>Lynis</strong> o <strong>Trivy</strong> no están instalados,
+        el módulo devuelve <code>{ skipped: true }</code> y el nodo continúa
+        sin error. Instálalos para obtener más hallazgos.
+    </p>
+
+    <h3>Más información</h3>
+    <p>
+        <a href="https://cisofy.com/lynis/">Lynis</a> ·
+        <a href="https://trivy.dev/">Trivy</a>
+    </p>
 </script>
