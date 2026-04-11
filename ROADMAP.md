@@ -79,12 +79,12 @@ Niveles de severidad válidos: `critical` · `high` · `medium` · `low` · `inf
 ### Fase 0 — Reorganización y base (Sem 1–2)
 **Objetivo:** repo limpio con el núcleo `lib/` funcionando.
 
-- [ ] Auditar código existente y decidir qué conservar
-- [ ] Crear estructura de carpetas definitiva
-- [ ] Inicializar repo git + `package.json`
-- [ ] Implementar `finding-schema.js` y `severity-map.js`
-- [ ] Implementar `executor.js` multiplataforma (macOS primero)
-- [ ] Implementar `normalizer.js` base
+- [x] Auditar código existente y decidir qué conservar
+- [x] Crear estructura de carpetas definitiva
+- [x] Inicializar repo git + `package.json`
+- [x] Implementar `finding-schema.js` y `severity-map.js`
+- [x] Implementar `executor.js` multiplataforma (macOS primero)
+- [x] Implementar `normalizer.js` base
 
 **Entregable:** `lib/` completo con tests básicos pasando en macOS.
 
