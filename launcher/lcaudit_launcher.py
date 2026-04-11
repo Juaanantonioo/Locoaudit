@@ -1,444 +1,236 @@
-#!/usr/bin/env python3
-"""
-LCAudit Launcher — Menú interactivo para el framework de auditoría LCAudit.
+# launcher/lcaudit_launcher.py
 
-Verifica dependencias, lanza Node-RED y abre dashboards.
-"""
-
-import tkinter as tk
-from tkinter import ttk, messagebox
 import subprocess
-import shutil
-import webbrowser
-import platform
-import socket
-import os
-import threading
-import signal
 import sys
+import shutil
+import platform
+import os
 
-# ── Configuración ──────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  Colores ANSI
+# ─────────────────────────────────────────────
+GREEN  = "\033[92m"
+YELLOW = "\033[93m"
+RED    = "\033[91m"
+BLUE   = "\033[94m"
+BOLD   = "\033[1m"
+RESET  = "\033[0m"
 
-NODE_RED_URL = "http://localhost:1880"
-AUDIT_REPORTS_DIR = os.path.expanduser("~/audit-reports")
+def ok(msg):   print(f"  {GREEN}✓{RESET}  {msg}")
+def warn(msg): print(f"  {YELLOW}⚠{RESET}  {msg}")
+def fail(msg): print(f"  {RED}✗{RESET}  {msg}")
+def info(msg): print(f"  {BLUE}→{RESET}  {msg}")
+def sep():     print(f"  {'─' * 52}")
 
-TOOLS = [
-    {
-        "name": "Node.js",
-        "cmd": "node",
-        "check_args": ["--version"],
-        "install_hint": "https://nodejs.org/",
-        "required": True,
-    },
-    {
-        "name": "Node-RED",
-        "cmd": "node-red",
-        "check_args": ["--help"],
-        "install_hint": "npm install -g node-red",
-        "required": True,
-    },
-    {
-        "name": "Nmap",
-        "cmd": "nmap",
-        "check_args": ["--version"],
-        "install_hint": "brew install nmap / apt install nmap",
-        "required": False,
-    },
-    {
-        "name": "Trivy",
-        "cmd": "trivy",
-        "check_args": ["--version"],
-        "install_hint": "brew install trivy / https://trivy.dev",
-        "required": False,
-    },
-    {
-        "name": "Nuclei",
-        "cmd": "nuclei",
-        "check_args": ["-version"],
-        "install_hint": "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
-        "required": False,
-    },
-]
+# ─────────────────────────────────────────────
+#  Detección de plataforma
+# ─────────────────────────────────────────────
+OS = platform.system()  # 'Darwin' | 'Linux' | 'Windows'
 
-# ── Colores ────────────────────────────────────────────────────────────────
-
-COLORS = {
-    "bg": "#0f0f1a",
-    "bg_card": "#1a1a2e",
-    "bg_card_hover": "#24243e",
-    "accent": "#6c5ce7",
-    "accent_hover": "#7d6ff0",
-    "success": "#2ecc71",
-    "warning": "#f1c40f",
-    "danger": "#e74c3c",
-    "text": "#cdd6f4",
-    "text_dim": "#888",
-    "text_muted": "#555",
-    "border": "#2d2d44",
+# ─────────────────────────────────────────────
+#  Instrucciones de instalación por herramienta y SO
+# ─────────────────────────────────────────────
+INSTALL_GUIDE = {
+    "node": {
+        "Darwin":  "brew install node",
+        "Linux":   "sudo apt install nodejs npm   # o https://nodejs.org",
+        "Windows": "Descarga el instalador en https://nodejs.org",
+    },
+    "npm": {
+        "Darwin":  "Se instala junto con Node.js: brew install node",
+        "Linux":   "sudo apt install npm",
+        "Windows": "Se instala junto con Node.js desde https://nodejs.org",
+    },
+    "node-red": {
+        "Darwin":  "npm install -g --unsafe-perm node-red",
+        "Linux":   "sudo npm install -g --unsafe-perm node-red",
+        "Windows": "npm install -g --unsafe-perm node-red",
+    },
+    "docker": {
+        "Darwin":  "Descarga Docker Desktop en https://www.docker.com/products/docker-desktop",
+        "Linux":   "sudo apt install docker.io && sudo systemctl start docker",
+        "Windows": "Descarga Docker Desktop en https://www.docker.com/products/docker-desktop",
+    },
+    "nmap": {
+        "Darwin":  "brew install nmap",
+        "Linux":   "sudo apt install nmap",
+        "Windows": "Descarga el instalador en https://nmap.org/download.html",
+    },
+    "lynis": {
+        "Darwin":  "brew install lynis",
+        "Linux":   "sudo apt install lynis",
+        "Windows": "Lynis no está disponible en Windows sin WSL — instala WSL primero: https://learn.microsoft.com/en-us/windows/wsl/install",
+    },
+    "trivy": {
+        "Darwin":  "brew install aquasecurity/trivy/trivy",
+        "Linux":   "sudo apt install trivy   # o https://aquasecurity.github.io/trivy",
+        "Windows": "Consulta https://aquasecurity.github.io/trivy/latest/getting-started/installation",
+    },
 }
 
+# ─────────────────────────────────────────────
+#  Qué audita cada herramienta opcional
+# ─────────────────────────────────────────────
+TOOL_DESCRIPTION = {
+    "nmap":   "audit-network — escaneo avanzado de puertos y servicios",
+    "lynis":  "audit-host   — configuración insegura del SO y hardening (no disponible en Windows sin WSL)",
+    "trivy":  "audit-host + audit-image — CVEs en paquetes del SO e imágenes Docker",
+    "docker": "audit-image  — auditoría de imágenes y contenedores Docker",
+}
 
-class LCAuditLauncher:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("LCAudit — Framework de Auditoría")
-        self.root.geometry("700x620")
-        self.root.configure(bg=COLORS["bg"])
-        self.root.resizable(False, False)
+# ─────────────────────────────────────────────
+#  Dependencias
+#  (cmd, label, required, extra_check)
+# ─────────────────────────────────────────────
+DEPENDENCIES = [
+    # — Requeridas —
+    ("node",     "Node.js",   True,  lambda: check_min_version("node", "--version", 18)),
+    ("npm",      "npm",       True,  None),
+    ("node-red", "Node-RED",  True,  None),
+    # — Requerida para audit-image —
+    ("docker",   "Docker",    False, lambda: check_docker_running()),
+    # — Opcionales —
+    ("nmap",     "Nmap",      False, None),
+    ("lynis",    "Lynis",     False, lambda: check_lynis_windows()),
+    ("trivy",    "Trivy",     False, None),
+]
 
-        self.node_red_process = None
-        self.tool_status = {}
+# ─────────────────────────────────────────────
+#  Funciones de comprobación
+# ─────────────────────────────────────────────
+def command_exists(cmd):
+    return shutil.which(cmd) is not None
 
-        self._build_ui()
-        self._check_dependencies()
+def check_min_version(cmd, flag, min_major):
+    """Comprueba que la versión mayor sea >= min_major."""
+    try:
+        result = subprocess.run([cmd, flag], capture_output=True, text=True, timeout=5)
+        version_str = result.stdout.strip().lstrip('v')
+        major = int(version_str.split('.')[0])
+        if major < min_major:
+            return f"versión {version_str} detectada — se recomienda v{min_major} o superior"
+        return None
+    except Exception:
+        return "no se pudo determinar la versión"
 
-    def _build_ui(self):
-        # ── Header ──
-        header = tk.Frame(self.root, bg=COLORS["accent"], height=70)
-        header.pack(fill="x")
-        header.pack_propagate(False)
+def check_docker_running():
+    """Comprueba que el daemon de Docker esté activo."""
+    try:
+        result = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            return "Docker instalado pero el daemon no está en ejecución — ábrelo primero"
+        return None
+    except Exception:
+        return "no se pudo conectar con Docker"
 
-        tk.Label(
-            header,
-            text="🛡️  LCAudit Framework",
-            font=("Helvetica", 18, "bold"),
-            fg="#fff",
-            bg=COLORS["accent"],
-        ).pack(side="left", padx=20, pady=15)
+def check_lynis_windows():
+    """Avisa si se intenta usar Lynis en Windows sin WSL."""
+    if OS == "Windows":
+        return "Lynis no es compatible con Windows de forma nativa — usa WSL"
+    return None
 
-        tk.Label(
-            header,
-            text="v2.0",
-            font=("Helvetica", 10),
-            fg="#ddd",
-            bg=COLORS["accent"],
-        ).pack(side="right", padx=20)
+def get_install_cmd(tool):
+    return INSTALL_GUIDE.get(tool, {}).get(OS, "Consulta la documentación oficial")
 
-        # ── Info del sistema ──
-        sys_frame = tk.Frame(self.root, bg=COLORS["bg_card"], highlightbackground=COLORS["border"], highlightthickness=1)
-        sys_frame.pack(fill="x", padx=16, pady=(12, 6))
+# ─────────────────────────────────────────────
+#  Comprobación principal
+# ─────────────────────────────────────────────
+def check_dependencies():
+    print(f"\n{BOLD}  LoCoAudit — comprobación de dependencias{RESET}")
+    print(f"  Sistema: {OS} ({platform.machine()})\n")
 
-        hostname = socket.gethostname()
-        os_info = f"{platform.system()} {platform.release()}"
-        arch = platform.machine()
+    sep()
+    print(f"  {BOLD}Dependencias requeridas{RESET}")
+    sep()
 
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-        except Exception:
-            ip = "No disponible"
+    all_required_ok = True
+    missing_required = []
+    optional_missing = []
+    optional_warnings = []
 
-        info_text = f"💻 {hostname}  ·  📡 {ip}  ·  🖥️ {os_info}  ·  ⚙️ {arch}"
-        tk.Label(
-            sys_frame,
-            text=info_text,
-            font=("Helvetica", 11),
-            fg=COLORS["text"],
-            bg=COLORS["bg_card"],
-            pady=10,
-            padx=14,
-        ).pack(anchor="w")
-
-        # ── Dependencias ──
-        dep_label = tk.Label(
-            self.root,
-            text="DEPENDENCIAS",
-            font=("Helvetica", 10, "bold"),
-            fg=COLORS["text_dim"],
-            bg=COLORS["bg"],
-        )
-        dep_label.pack(anchor="w", padx=18, pady=(10, 4))
-
-        self.deps_frame = tk.Frame(self.root, bg=COLORS["bg"])
-        self.deps_frame.pack(fill="x", padx=16)
-
-        # ── Botones principales ──
-        btn_frame = tk.Frame(self.root, bg=COLORS["bg"])
-        btn_frame.pack(fill="x", padx=16, pady=(16, 8))
-
-        self._make_button(
-            btn_frame,
-            "🚀  Iniciar Node-RED",
-            self._start_node_red,
-            COLORS["accent"],
-            COLORS["accent_hover"],
-        ).pack(side="left", padx=(0, 8), expand=True, fill="x")
-
-        self._make_button(
-            btn_frame,
-            "🌐  Abrir Node-RED",
-            self._open_node_red,
-            "#2d6a4f",
-            "#369670",
-        ).pack(side="left", padx=(0, 8), expand=True, fill="x")
-
-        self._make_button(
-            btn_frame,
-            "🛑  Detener Node-RED",
-            self._stop_node_red,
-            COLORS["danger"],
-            "#c0392b",
-        ).pack(side="left", expand=True, fill="x")
-
-        # Fila 2
-        btn_frame2 = tk.Frame(self.root, bg=COLORS["bg"])
-        btn_frame2.pack(fill="x", padx=16, pady=(0, 8))
-
-        self._make_button(
-            btn_frame2,
-            "📊  Abrir Dashboard",
-            self._open_dashboard,
-            "#2d3436",
-            "#444",
-        ).pack(side="left", padx=(0, 8), expand=True, fill="x")
-
-        self._make_button(
-            btn_frame2,
-            "📂  Abrir Reportes",
-            self._open_reports_dir,
-            "#2d3436",
-            "#444",
-        ).pack(side="left", padx=(0, 8), expand=True, fill="x")
-
-        self._make_button(
-            btn_frame2,
-            "🔄  Verificar",
-            self._check_dependencies,
-            "#2d3436",
-            "#444",
-        ).pack(side="left", expand=True, fill="x")
-
-        # ── Log area ──
-        log_label = tk.Label(
-            self.root,
-            text="LOG",
-            font=("Helvetica", 10, "bold"),
-            fg=COLORS["text_dim"],
-            bg=COLORS["bg"],
-        )
-        log_label.pack(anchor="w", padx=18, pady=(10, 4))
-
-        log_frame = tk.Frame(
-            self.root,
-            bg=COLORS["bg_card"],
-            highlightbackground=COLORS["border"],
-            highlightthickness=1,
-        )
-        log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 16))
-
-        self.log_text = tk.Text(
-            log_frame,
-            bg=COLORS["bg_card"],
-            fg=COLORS["text"],
-            font=("Menlo", 10),
-            relief="flat",
-            borderwidth=0,
-            padx=10,
-            pady=8,
-            height=6,
-            state="disabled",
-        )
-        self.log_text.pack(fill="both", expand=True)
-
-        self._log("LCAudit Launcher iniciado")
-
-    def _make_button(self, parent, text, command, bg, hover_bg):
-        btn = tk.Button(
-            parent,
-            text=text,
-            command=command,
-            font=("Helvetica", 11, "bold"),
-            fg="#fff",
-            bg=bg,
-            activebackground=hover_bg,
-            activeforeground="#fff",
-            relief="flat",
-            bd=0,
-            padx=12,
-            pady=10,
-            cursor="hand2",
-        )
-        btn.bind("<Enter>", lambda e: btn.configure(bg=hover_bg))
-        btn.bind("<Leave>", lambda e: btn.configure(bg=bg))
-        return btn
-
-    def _log(self, message):
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", f"  {message}\n")
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
-
-    def _check_dependencies(self):
-        # Limpiar frame
-        for w in self.deps_frame.winfo_children():
-            w.destroy()
-
-        self._log("Verificando dependencias...")
-
-        for tool in TOOLS:
-            frame = tk.Frame(
-                self.deps_frame,
-                bg=COLORS["bg_card"],
-                highlightbackground=COLORS["border"],
-                highlightthickness=1,
-            )
-            frame.pack(fill="x", pady=2)
-
-            found = shutil.which(tool["cmd"]) is not None
-            version = ""
-
-            if found:
-                try:
-                    result = subprocess.run(
-                        [tool["cmd"]] + tool["check_args"],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-                    output = (result.stdout + result.stderr).strip()
-                    # Extraer primera línea con versión
-                    for line in output.split("\n"):
-                        line = line.strip()
-                        if line and ("version" in line.lower() or line.startswith("v") or any(c.isdigit() for c in line[:5])):
-                            version = line[:60]
-                            break
-                except Exception:
-                    version = "versión desconocida"
-
-            status_icon = "✅" if found else ("❌" if tool["required"] else "⚠️")
-            status_color = COLORS["success"] if found else (COLORS["danger"] if tool["required"] else COLORS["warning"])
-
-            tk.Label(
-                frame,
-                text=f"  {status_icon}  {tool['name']}",
-                font=("Helvetica", 11, "bold"),
-                fg=status_color,
-                bg=COLORS["bg_card"],
-                anchor="w",
-                padx=8,
-                pady=6,
-            ).pack(side="left")
-
-            if version:
-                tk.Label(
-                    frame,
-                    text=version,
-                    font=("Menlo", 9),
-                    fg=COLORS["text_dim"],
-                    bg=COLORS["bg_card"],
-                    padx=8,
-                ).pack(side="left")
-            elif not found:
-                tk.Label(
-                    frame,
-                    text=tool["install_hint"],
-                    font=("Menlo", 9),
-                    fg=COLORS["text_muted"],
-                    bg=COLORS["bg_card"],
-                    padx=8,
-                ).pack(side="left")
-
-            self.tool_status[tool["cmd"]] = found
-
-        self._log("Verificación completada")
-
-    def _start_node_red(self):
-        if self.node_red_process and self.node_red_process.poll() is None:
-            self._log("⚠️  Node-RED ya está ejecutándose")
-            return
-
-        if not self.tool_status.get("node-red", False):
-            messagebox.showerror(
-                "Error",
-                "Node-RED no está instalado.\nInstalar con: npm install -g node-red",
-            )
-            return
-
-        self._log("🚀 Iniciando Node-RED...")
-
-        def run():
-            try:
-                self.node_red_process = subprocess.Popen(
-                    ["node-red"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
-                self.root.after(100, lambda: self._log("✅ Node-RED iniciado en http://localhost:1880"))
-
-                for line in self.node_red_process.stdout:
-                    line = line.strip()
-                    if line:
-                        self.root.after(0, lambda l=line: self._log(f"  NR: {l[:80]}"))
-            except Exception as e:
-                self.root.after(0, lambda: self._log(f"❌ Error al iniciar Node-RED: {e}"))
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def _stop_node_red(self):
-        if self.node_red_process and self.node_red_process.poll() is None:
-            self.node_red_process.terminate()
-            self.node_red_process = None
-            self._log("🛑 Node-RED detenido")
+    for cmd, label, required, extra_check in DEPENDENCIES:
+        if not required:
+            continue
+        if not command_exists(cmd):
+            fail(f"{label} no encontrado")
+            info(f"Instálalo con: {BOLD}{get_install_cmd(cmd)}{RESET}")
+            missing_required.append(label)
+            all_required_ok = False
         else:
-            self._log("⚠️  Node-RED no está ejecutándose")
-
-    def _open_node_red(self):
-        self._log(f"🌐 Abriendo {NODE_RED_URL}")
-        webbrowser.open(NODE_RED_URL)
-
-    def _open_dashboard(self):
-        dashboard_path = os.path.join(AUDIT_REPORTS_DIR, "dashboard.html")
-        if os.path.exists(dashboard_path):
-            self._log(f"📊 Abriendo dashboard: {dashboard_path}")
-            webbrowser.open(f"file://{dashboard_path}")
-        else:
-            self._log("⚠️  No se encontró dashboard.html. Ejecuta una auditoría primero.")
-            messagebox.showinfo(
-                "Dashboard no encontrado",
-                f"No se encontró dashboard en:\n{dashboard_path}\n\nEjecuta una auditoría desde Node-RED primero.",
-            )
-
-    def _open_reports_dir(self):
-        if os.path.exists(AUDIT_REPORTS_DIR):
-            self._log(f"📂 Abriendo {AUDIT_REPORTS_DIR}")
-            if platform.system() == "Darwin":
-                subprocess.Popen(["open", AUDIT_REPORTS_DIR])
-            elif platform.system() == "Linux":
-                subprocess.Popen(["xdg-open", AUDIT_REPORTS_DIR])
+            warning = extra_check() if extra_check else None
+            if warning:
+                warn(f"{label} instalado — {warning}")
             else:
-                subprocess.Popen(["explorer", AUDIT_REPORTS_DIR])
+                ok(f"{label} instalado")
+
+    print()
+    sep()
+    print(f"  {BOLD}Herramientas opcionales{RESET}")
+    sep()
+
+    for cmd, label, required, extra_check in DEPENDENCIES:
+        if required:
+            continue
+        desc = TOOL_DESCRIPTION.get(cmd, "")
+        if not command_exists(cmd):
+            warn(f"{label} no encontrado — {desc}")
+            info(f"Instálalo con: {BOLD}{get_install_cmd(cmd)}{RESET}")
+            optional_missing.append(label)
         else:
-            self._log("⚠️  Directorio de reportes no existe todavía")
-            messagebox.showinfo(
-                "Directorio no encontrado",
-                f"El directorio {AUDIT_REPORTS_DIR} se creará automáticamente al ejecutar una auditoría.",
-            )
+            warning = extra_check() if extra_check else None
+            if warning:
+                warn(f"{label} instalado — {warning}")
+                optional_warnings.append(label)
+            else:
+                ok(f"{label} instalado — {desc}")
 
+    return all_required_ok, missing_required, optional_missing, optional_warnings
 
-def main():
-    root = tk.Tk()
+# ─────────────────────────────────────────────
+#  Resumen
+# ─────────────────────────────────────────────
+def print_summary(all_required_ok, missing_required, optional_missing, optional_warnings):
+    print()
+    sep()
 
-    # Centrar ventana
-    root.update_idletasks()
-    w = 700
-    h = 620
-    x = (root.winfo_screenwidth() // 2) - (w // 2)
-    y = (root.winfo_screenheight() // 2) - (h // 2)
-    root.geometry(f"{w}x{h}+{x}+{y}")
+    if missing_required:
+        print(f"  {RED}{BOLD}Faltan dependencias requeridas: {', '.join(missing_required)}{RESET}")
+        print(f"  Node-RED no se iniciará hasta que estén instaladas.\n")
+        return
 
-    app = LCAuditLauncher(root)
+    if optional_missing:
+        print(f"  {YELLOW}Herramientas opcionales no disponibles: {', '.join(optional_missing)}{RESET}")
+        print(f"  Algunos nodos tendrán funcionalidad limitada o desactivada.\n")
 
-    def on_close():
-        if app.node_red_process and app.node_red_process.poll() is None:
-            app.node_red_process.terminate()
-        root.destroy()
+    if not optional_missing and not optional_warnings:
+        print(f"  {GREEN}{BOLD}Todo listo. Iniciando Node-RED...{RESET}\n")
+    else:
+        print(f"  {YELLOW}{BOLD}Dependencias requeridas OK. Iniciando Node-RED con funcionalidad parcial...{RESET}\n")
 
-    root.protocol("WM_DELETE_WINDOW", on_close)
-    root.mainloop()
+# ─────────────────────────────────────────────
+#  Arranque de Node-RED
+# ─────────────────────────────────────────────
+def launch_node_red():
+    try:
+        cmd = ["node-red.cmd"] if OS == "Windows" else ["node-red"]
+        print(f"  {BLUE}Ejecutando:{RESET} {' '.join(cmd)}\n")
+        sep()
+        print()
+        subprocess.run(cmd)
+    except KeyboardInterrupt:
+        print(f"\n\n  {YELLOW}Node-RED detenido por el usuario.{RESET}\n")
+    except FileNotFoundError:
+        fail("No se pudo lanzar node-red. Comprueba que está en el PATH.")
+        sys.exit(1)
 
-
+# ─────────────────────────────────────────────
+#  Punto de entrada
+# ─────────────────────────────────────────────
 if __name__ == "__main__":
-    main()
+    all_ok, missing_req, opt_missing, opt_warn = check_dependencies()
+    print_summary(all_ok, missing_req, opt_missing, opt_warn)
+
+    if not all_ok:
+        sys.exit(1)
+
+    launch_node_red()

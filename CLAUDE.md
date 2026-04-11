@@ -9,12 +9,51 @@ Contiene las decisiones de arquitectura, convenciones y guías de desarrollo.
 
 **LoCoAudit** es un paquete npm para Node-RED que añade 4 nodos de auditoría:
 
-- `audit-host` — inventario de hardware/software y métricas del sistema
+- `audit-host` — inventario de hardware/software, métricas del sistema y vulnerabilidades del host
 - `audit-network` — escaneo de puertos y detección de servicios expuestos
 - `audit-image` — auditoría de imágenes Docker (capas, CVEs, configuración)
 - `audit-reporter` — generación de reportes HTML/JSON a partir de findings
 
-**Contexto académico:** TFG del Grado en Ingeniería Informática, Escuela Superior de Ingeniería. Director: Juan Boubeta Puig.
+**Contexto académico:** TFG del Grado en Ingeniería Informática, Escuela Superior de Ingeniería.
+Director: Juan Boubeta Puig. Codirector: Jesús Rosa Bilbao.
+
+---
+
+## Stack de herramientas externas — decisión definitiva
+
+Las herramientas **opcionales** funcionan con fallback nativo si no están instaladas.
+Las herramientas **requeridas** bloquean el nodo si faltan.
+
+| Nodo | Herramienta | Tipo | Qué aporta |
+|---|---|---|---|
+| `audit-host` | `os` + `child_process` | nativo | CPU, RAM, disco, SO — sin dependencias |
+| `audit-host` | `lynis` | opcional | Configuración insegura del host, hardening index, +300 comprobaciones |
+| `audit-host` | `trivy fs` | opcional | CVEs en paquetes del SO (apt, brew, rpm) contra NVD |
+| `audit-network` | `net` nativo | nativo | Escaneo de puertos — fallback siempre disponible |
+| `audit-network` | `nmap` | opcional | Puertos, servicios, versiones, OS fingerprint, NSE scripts |
+| `audit-image` | `docker` | requerida | Acceso a imágenes y contenedores — sin él el nodo no tiene sentido |
+| `audit-image` | `trivy image` | opcional | CVEs, secretos expuestos, misconfigs en imágenes Docker |
+| `audit-reporter` | Handlebars | nativo | Plantillas HTML/JSON — sin dependencias externas |
+
+### Herramientas evaluadas y descartadas
+
+| Herramienta | Motivo |
+|---|---|
+| OpenVAS / GVM | Solo Linux, requiere daemon + PostgreSQL + feed NVTs — demasiado complejo para el scope |
+| OWASP ZAP | Escáner DAST de aplicaciones web, no audita el SO — resuelve un problema diferente |
+| Nuclei | Alta curva de integración, gestión de plantillas YAML, no aporta sobre Nmap+Trivy |
+| Grype | Trivy ya cubre el caso de uso con más funciones (secretos, misconfigs, filesystem) |
+| Nessus | Propietario y de pago |
+
+### Líneas de trabajo futuro (mencionar en la memoria)
+
+- **`audit-webapp`** — nodo nuevo con OWASP ZAP para escanear servicios web expuestos por el host
+- **Integración con OpenVAS** — la arquitectura modular está diseñada para permitirlo
+- **Nuclei** — escaneo de vulnerabilidades de red con plantillas YAML personalizables
+
+### Limitación conocida en Windows
+
+Lynis no funciona en Windows sin WSL. En Windows `audit-host` operará con `trivy fs` y módulos nativos, pero sin el análisis de hardening de Lynis. Documentar en la memoria.
 
 ---
 
@@ -25,7 +64,7 @@ Contiene las decisiones de arquitectura, convenciones y guías de desarrollo.
 ```js
 // lib/finding-schema.js
 {
-  id: string,          // e.g. "HOST-CPU-001"
+  id: string,          // e.g. "HOST-LYN-SSH-001"
   title: string,       // descripción breve del hallazgo
   severity: string,    // "critical" | "high" | "medium" | "low" | "info"
   evidence: string,    // dato concreto que justifica el hallazgo
@@ -45,20 +84,38 @@ nodes/audit-host/
 ├── audit-host.js       ← registra el nodo en Node-RED, orquesta módulos
 ├── audit-host.html     ← UI de configuración del nodo (editor de flujos)
 └── modules/
-    ├── cpu-memory.js   ← recolecta datos crudos (raw)
-    ├── disk-storage.js ← recolecta datos crudos (raw)
-    └── ...
+    ├── cpu-memory.js   ← datos crudos de CPU y RAM (nativo)
+    ├── disk-storage.js ← datos crudos de disco (nativo)
+    ├── sw-inventory.js ← software instalado (nativo)
+    ├── os-info.js      ← versión SO, uptime, hostname (nativo)
+    ├── lynis.js        ← wrapper Lynis (opcional, con fallback)
+    └── trivy-fs.js     ← wrapper Trivy fs (opcional, con fallback)
 ```
 
 **Flujo de datos dentro de un nodo:**
 
 ```
-módulo.js → raw data → normalizer.js → findings[] → msg.payload → salida
+módulo.js → raw data → normalizer.js → findings[] → msg.payload → salida Node-RED
 ```
 
 - Los módulos solo recolectan datos crudos. No deciden severidad.
-- `normalizer.js` (en lib/) aplica las reglas de negocio y asigna severidad.
-- `executor.js` (en lib/) lanza todos los comandos del sistema.
+- `normalizer.js` (en `lib/`) aplica las reglas de negocio y asigna severidad.
+- `executor.js` (en `lib/`) lanza todos los comandos del sistema.
+
+### Patrón obligatorio para herramientas opcionales
+
+```js
+const { execCommand, commandExists } = require('../../../lib/executor');
+
+module.exports = async function runLynis() {
+  const available = await commandExists('lynis');
+  if (!available) {
+    return { skipped: true, reason: 'lynis not installed' };
+  }
+  const raw = await execCommand('lynis audit system --quiet --no-colors', 60000);
+  return parseLynisReport(raw);
+};
+```
 
 ---
 
@@ -66,17 +123,16 @@ módulo.js → raw data → normalizer.js → findings[] → msg.payload → sal
 
 | Fichero | Responsabilidad |
 |---|---|
-| `executor.js` | `execCommand(cmd, timeoutMs)` — lanza procesos con timeout y gestión de errores multiplataforma |
-| `normalizer.js` | Funciones `normalizeHost()`, `normalizeNetwork()`, `normalizeImage()` |
+| `executor.js` | `execCommand(cmd, timeoutMs)` y `commandExists(cmd)` — multiplataforma |
+| `normalizer.js` | `normalizeHost()`, `normalizeNetwork()`, `normalizeImage()` |
 | `finding-schema.js` | `createFinding({...})` — valida y construye un finding con timestamp |
-| `severity-map.js` | Constantes y umbrales: cuándo un uso de CPU es "high" vs "critical" |
+| `severity-map.js` | Umbrales: cuándo un uso de CPU es `high` vs `critical`, etc. |
 
 ---
 
 ## Cómo registrar un nodo en Node-RED
 
 ```js
-// Patrón mínimo obligatorio
 module.exports = function(RED) {
   function AuditHostNode(config) {
     RED.nodes.createNode(this, config);
@@ -107,15 +163,12 @@ module.exports = function(RED) {
 - **CommonJS** (`require`/`module.exports`), no ES modules — Node-RED lo requiere
 - **async/await** para todo lo asíncrono, sin callbacks anidados
 - **Un fichero = una responsabilidad** — si un módulo hace dos cosas, divídelo
-- **Multiplataforma desde el inicio:** detectar `process.platform` en cualquier comando del sistema
+- **Multiplataforma desde el inicio:**
   ```js
   const platform = process.platform; // 'darwin' | 'linux' | 'win32'
   ```
-- **Nmap es opcional:** siempre comprobar si está disponible antes de usarlo
-  ```js
-  const nmapAvailable = await checkCommand('nmap --version');
-  ```
-- **Timeouts obligatorios** en todos los `exec`: mínimo 5000ms, configurable por el usuario
+- **Todas las herramientas externas son opcionales** salvo Docker en audit-image — usar siempre `commandExists()` antes de ejecutar
+- **Timeouts obligatorios** en todos los `exec` — mínimo 5000ms, Lynis usa 60000ms
 
 ---
 
@@ -123,10 +176,32 @@ module.exports = function(RED) {
 
 | Nodo | Prefijo | Ejemplo |
 |---|---|---|
-| audit-host | `HOST-` | `HOST-CPU-001`, `HOST-MEM-002` |
+| audit-host (nativo) | `HOST-` | `HOST-CPU-001`, `HOST-MEM-002` |
+| audit-host (Lynis) | `HOST-LYN-` | `HOST-LYN-SSH-001`, `HOST-LYN-FW-001` |
+| audit-host (Trivy fs) | `HOST-CVE-` | `HOST-CVE-001` |
 | audit-network | `NET-` | `NET-PORT-001`, `NET-SVC-002` |
 | audit-image | `IMG-` | `IMG-CVE-001`, `IMG-CFG-002` |
 | informativo | sufijo `-INF` | `HOST-CPU-INF` |
+
+---
+
+## Lanzador — launcher/lcaudit_launcher.py
+
+El lanzador Python arranca Node-RED tras verificar todas las dependencias.
+
+**Dependencias que comprueba:**
+
+| Herramienta | Tipo | Acción si falta |
+|---|---|---|
+| `node` (v18+) | requerida | Bloquea el arranque |
+| `npm` | requerida | Bloquea el arranque |
+| `node-red` | requerida | Bloquea el arranque |
+| `docker` | requerida para audit-image | Avisa, no bloquea Node-RED |
+| `nmap` | opcional | Avisa con instrucción de instalación |
+| `lynis` | opcional | Avisa con instrucción de instalación |
+| `trivy` | opcional | Avisa con instrucción de instalación |
+
+Instrucciones de instalación por SO (macOS / Linux / Windows) en `INSTALL_GUIDE` del lanzador.
 
 ---
 
@@ -136,17 +211,24 @@ Ver `ROADMAP.md` para el plan completo y el estado de cada tarea.
 
 **Fase actual: Fase 0 — Reorganización y base**
 
-Próximos pasos:
-1. Crear `lib/finding-schema.js`
-2. Crear `lib/severity-map.js`
-3. Crear `lib/executor.js`
-4. Crear `lib/normalizer.js`
+Completado:
+- [x] CLAUDE.md y ROADMAP.md en el repo
+- [x] Stack de herramientas definitivo decidido y documentado
+- [x] Lanzador Python con comprobación de dependencias (Lynis, Trivy, Nmap, Docker)
+
+Pendiente Fase 0:
+- [ ] Limpiar duplicados `lcaudit-*` y mover `modules/` a cada nodo
+- [ ] Revisar `lib/` contra el patrón de CLAUDE.md
+- [ ] Actualizar `.gitignore` (node_modules, lynis.log, lynis-report.dat)
 
 ---
 
 ## Comandos útiles
 
 ```bash
+# Lanzar LoCoAudit (comprueba dependencias y arranca Node-RED)
+python3 launcher/lcaudit_launcher.py
+
 # Instalar el paquete localmente en Node-RED para desarrollo
 npm link
 cd ~/.node-red && npm link locoaudit
@@ -154,6 +236,12 @@ cd ~/.node-red && npm link locoaudit
 # Ejecutar tests
 npm test
 
-# Lanzar Node-RED en modo debug
+# Lanzar Node-RED directamente (sin lanzador)
 node-red --userDir ~/.node-red
+
+# Verificar herramientas opcionales manualmente
+lynis show version
+trivy --version
+nmap --version
+docker --version
 ```
