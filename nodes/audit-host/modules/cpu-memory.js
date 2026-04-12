@@ -28,6 +28,7 @@ function runSystemModule() {
             usedGiB: bytesToGiB(usedMem),
             freeRatio,
         },
+        platform: process.platform,
     };
 }
 

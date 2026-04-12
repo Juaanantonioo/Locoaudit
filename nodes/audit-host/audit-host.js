@@ -81,7 +81,7 @@ module.exports = function (RED) {
 
         // Normalizar todo a findings[]
         const raw = { cpuMemory, disk, swInventory, lynis, trivy };
-        const findings = normalizeHost(raw);
+        const findings = normalizeHost(raw, { platform: process.platform });
         const summary = summarize(findings);
         const durationMs = Date.now() - startTime;
 
