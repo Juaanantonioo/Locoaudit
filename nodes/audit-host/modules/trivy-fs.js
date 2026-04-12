@@ -33,19 +33,22 @@ async function runTrivyFs() {
     return { skipped: true, reason: "trivy not installed" };
   }
 
+  const scanTarget = process.env.HOME || process.env.USERPROFILE || "/";
+
   let stdout;
   try {
     stdout = await execCommand(
-      "trivy fs --format json --quiet /",
+      `trivy fs --format json --quiet --scanners vuln ${scanTarget}`,
       TIMEOUT_MS
     );
   } catch (err) {
     // trivy puede salir con código != 0 si encuentra CVEs — la salida sigue siendo JSON válido
     stdout = err.stdout || "";
     if (!stdout.trim()) {
+      const stderr = (err.stderr || err.message || "unknown error").trim();
       return {
         skipped: true,
-        reason: `trivy fs failed: ${err.message || "unknown error"}`,
+        reason: `trivy fs failed: ${stderr}`,
       };
     }
   }
