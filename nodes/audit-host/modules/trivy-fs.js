@@ -17,12 +17,46 @@
  *   }>
  */
 
+const { execSync } = require("child_process");
 const { execCommand, commandExists } = require("../../../lib/executor");
 
 const TIMEOUT_MS = 120000;
 
 /**
- * Ejecuta Trivy sobre el sistema de ficheros raíz y devuelve el JSON parseado.
+ * Determina el directorio a escanear según la plataforma.
+ *
+ * Se escanean rutas de software instalado a nivel de sistema, NO $HOME,
+ * para evitar que proyectos de desarrollo personales (node_modules, venvs,
+ * .cargo, etc.) inflen la severidad del informe con CVEs propios del
+ * entorno de desarrollo del usuario y no del sistema auditado.
+ *
+ * - win32  → "C:\Program Files"      (software instalado globalmente)
+ * - darwin → resultado de `brew --prefix` (Homebrew) o "/usr/local" si falla
+ * - linux  → "/usr/lib"              (paquetes del sistema)
+ *
+ * @returns {string} Ruta absoluta del target a escanear.
+ */
+function resolveScanTarget() {
+  if (process.platform === "win32") {
+    return "C:\\Program Files";
+  }
+
+  if (process.platform === "darwin") {
+    try {
+      const prefix = execSync("brew --prefix", { timeout: 5000 })
+        .toString()
+        .trim();
+      if (prefix) return prefix;
+    } catch (_) { /* brew no disponible o falla → usar fallback */ }
+    return "/usr/local";
+  }
+
+  // linux y cualquier otra plataforma unix
+  return "/usr/lib";
+}
+
+/**
+ * Ejecuta Trivy sobre el directorio de software del sistema y devuelve el JSON parseado.
  * Si Trivy no está instalado devuelve { skipped: true }.
  *
  * @returns {Promise<Object>}
@@ -33,7 +67,7 @@ async function runTrivyFs() {
     return { skipped: true, reason: "trivy not installed" };
   }
 
-  const scanTarget = process.env.HOME || process.env.USERPROFILE || "/";
+  const scanTarget = resolveScanTarget();
 
   let stdout;
   try {
