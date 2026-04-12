@@ -1,267 +1,164 @@
 "use strict";
 
-const { which, execFilePromise, isLocalTarget } = require("../core/helpers");
+/**
+ * nmap-wrapper.js — Wrapper opcional para Nmap (escáner de red avanzado).
+ *
+ * Este módulo es el complemento de port-scanner.js en la cadena de audit-network:
+ *
+ *   port-scanner.js   — Escaneo nativo con "net" de Node.js. Cubre un catálogo
+ *                       fijo de puertos conocidos sin ninguna dependencia externa.
+ *                       Siempre disponible, siempre ejecutable.
+ *
+ *   nmap-wrapper.js   — Cuando Nmap está instalado, realiza un escaneo completo
+ *                       (-sV para detectar versiones de servicio) que puede
+ *                       descubrir puertos no presentes en el catálogo y añadir
+ *                       información de versión al finding. Más lento pero más
+ *                       exhaustivo que el escáner nativo.
+ *
+ *   audit-network.js  — Decide cuál usar: intenta nmap primero y, si no está
+ *                       instalado o falla, cae en port-scanner como fallback.
+ *                       El usuario final ve siempre un resultado, independientemente
+ *                       de si Nmap está instalado.
+ *
+ * Sigue el patrón obligatorio de CLAUDE.md para herramientas opcionales:
+ *   si nmap no está instalado → { skipped: true, reason: "nmap not installed" }
+ *
+ * Comando: nmap -sV -T4 --open -oX - <target>
+ *   -sV      detecta versiones de servicios (interroga el banner del proceso)
+ *   -T4      timing agresivo — adecuado para localhost, no recomendado en red WAN
+ *   --open   filtra solo puertos abiertos en la salida
+ *   -oX -    salida XML por stdout (sin fichero temporal)
+ *
+ * Exporta:
+ *   runNmap(options?) → Promise<NmapResult>
+ *
+ * @typedef {{ port: number, protocol: string, state: string, service: string, version: string, severity: string, fix: string|null }} NmapPort
+ * @typedef {{ skipped: true, reason: string } | { skipped: false, ports: NmapPort[] }} NmapResult
+ */
 
-const DEFAULT_PORTS = [
-    22, 53, 80, 443, 445, 1880, 3389, 5900, 8080, 3306, 5432, 6379, 27017,
-];
+const { execCommand, commandExists } = require("../../../lib/executor");
+const { PORT_CATALOG }               = require("./port-scanner");
 
-// ── Parser de output grepable de Nmap ───────────────────────────────────────
+// ── Parser XML ────────────────────────────────────────────────────────────────
 
-function parseNmapGrepable(output) {
-    const openPorts = [];
-    const lines = output.split("\n");
-
-    for (const line of lines) {
-        const idx = line.indexOf("Ports:");
-        if (idx === -1) continue;
-
-        const portsPart = line.slice(idx + "Ports:".length).trim();
-        const entries = portsPart.split(",");
-
-        for (const e of entries) {
-            const part = e.trim();
-            const bits = part.split("/");
-            const port = parseInt(bits[0], 10);
-            const state = bits[1];
-            const proto = bits[2];
-            const service = bits[4] || null;
-
-            if (!Number.isNaN(port) && state === "open") {
-                openPorts.push({ port, protocol: proto || "tcp", service });
-            }
-        }
-    }
-
-    return openPorts;
+/**
+ * Extrae el valor de un atributo de una cadena de apertura de etiqueta XML.
+ * Ejemplo: attrValue('protocol="tcp" portid="22"', "portid") → "22"
+ *
+ * @param {string} tag   Contenido de atributos de una etiqueta XML
+ * @param {string} attr  Nombre del atributo a extraer
+ * @returns {string}     Valor del atributo o cadena vacía si no existe
+ */
+function attrValue(tag, attr) {
+  const re = new RegExp(`${attr}="([^"]*)"`, "i");
+  const m  = tag.match(re);
+  return m ? m[1] : "";
 }
 
-// ── Descubrimiento de hosts en red (ping scan) ─────────────────────────────
+/**
+ * Parsea la salida XML de nmap -oX y devuelve un array de puertos abiertos.
+ *
+ * Estructura XML relevante de nmap:
+ *   <port protocol="tcp" portid="22">
+ *     <state state="open" .../>
+ *     <service name="ssh" product="OpenSSH" version="8.9" .../>
+ *   </port>
+ *
+ * @param {string} xml  Salida completa de nmap -oX -
+ * @returns {Array<{ port: number, protocol: string, state: string, service: string, version: string }>}
+ */
+function parseNmapXml(xml) {
+  const results    = [];
+  const portBlockRe = /<port\s[^>]*>[\s\S]*?<\/port>/g;
+  let blockMatch;
 
-function parseNmapPingScan(output) {
-    const hosts = [];
-    const lines = output.split("\n");
+  while ((blockMatch = portBlockRe.exec(xml)) !== null) {
+    const block = blockMatch[0];
 
-    for (const line of lines) {
-        // Formato grepable: Host: 192.168.1.1 (hostname) Status: Up
-        const match = line.match(/^Host:\s+(\S+)\s+\(([^)]*)\)\s+Status:\s+Up/i);
-        if (match) {
-            hosts.push({
-                ip: match[1],
-                hostname: match[2] || null,
-            });
-        }
-    }
+    // Atributos de <port protocol="..." portid="...">
+    const portTagMatch = block.match(/^<port\s([^>]*)>/);
+    if (!portTagMatch) continue;
+    const portTag  = portTagMatch[1];
+    const port     = parseInt(attrValue(portTag, "portid"), 10);
+    const protocol = attrValue(portTag, "protocol") || "tcp";
+    if (isNaN(port)) continue;
 
-    return hosts;
+    // <state state="open" .../> — --open ya filtra en nmap, pero verificamos
+    const stateMatch = block.match(/<state\s([^/]*)\/?>/);
+    const state      = stateMatch ? attrValue(stateMatch[1], "state") : "open";
+    if (state !== "open") continue;
+
+    // <service name="..." product="..." version="..." .../>
+    const serviceMatch = block.match(/<service\s([^/]*)\/?>/);
+    const service      = serviceMatch ? attrValue(serviceMatch[1], "name")    : "unknown";
+    const product      = serviceMatch ? attrValue(serviceMatch[1], "product") : "";
+    const version      = serviceMatch ? attrValue(serviceMatch[1], "version") : "";
+    const versionStr   = [product, version].filter(Boolean).join(" ");
+
+    results.push({ port, protocol, state, service, version: versionStr });
+  }
+
+  return results;
 }
 
-async function runHostDiscovery(cidr) {
-    const nmapPath = which("nmap");
-    if (!nmapPath) {
-        return {
-            mode: "nmap-discovery",
-            available: false,
-            cidr,
-            hosts: [],
-            note: "nmap no está instalado o no está en PATH",
-        };
-    }
+// ── Asignación de severidad ───────────────────────────────────────────────────
 
-    const args = ["-sn", "-oG", "-", cidr];
-
-    try {
-        const { stdout } = await execFilePromise(nmapPath, args, {
-            timeout: 60000,
-        });
-        const hosts = parseNmapPingScan(stdout);
-
-        return {
-            mode: "nmap-discovery",
-            available: true,
-            cidr,
-            hosts,
-            totalFound: hosts.length,
-        };
-    } catch (err) {
-        return {
-            mode: "nmap-discovery",
-            available: true,
-            cidr,
-            hosts: [],
-            error: err.message,
-        };
-    }
+/**
+ * Enriquece un puerto parseado de nmap con severity y fix del PORT_CATALOG.
+ * Si el puerto no está en el catálogo usa severity "low" y un fix genérico.
+ *
+ * @param {{ port: number, protocol: string, state: string, service: string, version: string }} parsed
+ * @returns {NmapPort}
+ */
+function applyMeta(parsed) {
+  const meta = PORT_CATALOG[parsed.port];
+  return {
+    ...parsed,
+    severity: meta ? meta.severity : "low",
+    fix:      meta ? meta.fix      : `Investiga qué proceso usa el puerto ${parsed.port} con 'lsof -i :${parsed.port}'.`,
+  };
 }
 
-// ── Escaneo de puertos ─────────────────────────────────────────────────────
+// ── API pública ───────────────────────────────────────────────────────────────
 
-async function runPortsNmap(target, portsToTest, serviceDetect) {
-    const nmapPath = which("nmap");
-    if (!nmapPath) {
-        return {
-            mode: "nmap",
-            target,
-            available: false,
-            portsTested: portsToTest,
-            openPorts: [],
-            note: "nmap no está instalado o no está en PATH",
-        };
-    }
+/**
+ * Ejecuta Nmap sobre el target indicado y devuelve los puertos abiertos.
+ * Si Nmap no está instalado devuelve { skipped: true }.
+ *
+ * @param {{ target?: string, timeout?: number }} [options]
+ * @returns {Promise<NmapResult>}
+ */
+async function runNmap(options = {}) {
+  const target  = options.target  || "127.0.0.1";
+  const timeout = options.timeout || 30000;
 
-    const args = ["-Pn", "-sT"];
-    if (serviceDetect) args.push("-sV");
-    args.push(
-        "--host-timeout",
-        "20s",
-        "-p",
-        portsToTest.join(","),
-        "-oG",
-        "-",
-        target
+  const available = await commandExists("nmap");
+  if (!available) {
+    return { skipped: true, reason: "nmap not installed" };
+  }
+
+  let stdout;
+  try {
+    stdout = await execCommand(
+      `nmap -sV -T4 --open -oX - ${target}`,
+      timeout
     );
+  } catch (err) {
+    // nmap puede salir con código != 0 en algunos sistemas aunque haya producido
+    // XML válido (ej: advertencias de permisos en macOS sin sudo).
+    stdout = err.stdout || "";
+    if (!stdout.includes("<nmaprun")) {
+      return {
+        skipped: true,
+        reason: `nmap failed: ${(err.stderr || err.message || "unknown error").trim()}`,
+      };
+    }
+  }
 
-    const { stdout } = await execFilePromise(nmapPath, args, { timeout: 30000 });
-    const openPorts = parseNmapGrepable(stdout);
+  const parsed = parseNmapXml(stdout);
+  const ports  = parsed.map(applyMeta);
 
-    return {
-        mode: "nmap",
-        target,
-        available: true,
-        portsTested: portsToTest,
-        openPorts,
-        serviceDetect: !!serviceDetect,
-    };
+  return { skipped: false, ports };
 }
 
-// ── Findings de puertos ────────────────────────────────────────────────────
-
-function addPortFindings(findings, portsReport, network) {
-    if (!portsReport) return;
-
-    if (portsReport.mode === "nmap" && portsReport.available === false) {
-        findings.push({
-            id: "NMAP_NOT_AVAILABLE",
-            severity: "LOW",
-            category: "ports",
-            scope: "host",
-            title: "Nmap no disponible",
-            evidence: { target: portsReport.target },
-            recommendation:
-                "Instalar nmap y volver a ejecutar para un escaneo de puertos más completo.",
-        });
-        return;
-    }
-
-    const open = portsReport.openPorts || [];
-    if (open.length === 0) {
-        findings.push({
-            id: "NO_OPEN_PORTS_DETECTED",
-            severity: "INFO",
-            category: "ports",
-            scope: "host",
-            title: `No se detectaron puertos abiertos en el objetivo (${portsReport.target})`,
-            evidence: {
-                target: portsReport.target,
-                portsTested: portsReport.portsTested || DEFAULT_PORTS,
-            },
-            recommendation: "Sin acción requerida.",
-        });
-        return;
-    }
-
-    findings.push({
-        id: "OPEN_PORTS_DETECTED",
-        severity: "INFO",
-        category: "ports",
-        scope: "host",
-        title: `Puertos abiertos detectados en ${portsReport.target}`,
-        evidence: { target: portsReport.target, openPorts: open },
-        recommendation:
-            "Revisar que los servicios expuestos sean necesarios y estén restringidos.",
-    });
-
-    const openSet = new Set(open.map((p) => p.port));
-    const local = isLocalTarget(portsReport.target);
-    const isLanTarget =
-        !local &&
-        network?.primaryIPv4 &&
-        portsReport.target === network.primaryIPv4;
-
-    const sensitiveHigh = new Set([3389, 445, 5900, 3306, 5432, 6379, 27017]);
-    const sensitiveMed = new Set([22, 8080, 1880]);
-
-    const openSensitiveHigh = open
-        .filter((p) => sensitiveHigh.has(p.port))
-        .map((p) => p.port);
-    const openSensitiveMed = open
-        .filter((p) => sensitiveMed.has(p.port))
-        .map((p) => p.port);
-
-    let severity = local ? "INFO" : isLanTarget ? "MEDIUM" : "LOW";
-    if (!local) {
-        if (openSensitiveHigh.length > 0) severity = "HIGH";
-        else if (openSensitiveMed.length > 0) severity = "MEDIUM";
-    }
-
-    const scope = local ? "localhost" : isLanTarget ? "lan" : "non-localhost";
-    const title =
-        scope === "localhost"
-            ? `Servicios expuestos solo en localhost (${portsReport.target})`
-            : scope === "lan"
-                ? `Servicios expuestos en red local (LAN) (${portsReport.target})`
-                : `Servicios expuestos fuera de localhost (${portsReport.target})`;
-
-    const recommendation =
-        scope === "localhost"
-            ? "Riesgo reducido al estar accesible solo desde el propio equipo. Mantener restringido a localhost si es posible."
-            : severity === "HIGH"
-                ? "Riesgo alto por exposición de servicios sensibles. Restringir acceso (firewall/VPN), cerrar puertos no necesarios, limitar binding e imponer autenticación."
-                : "Restringir la exposición (firewall/VPN), limitar el binding a interfaces necesarias y habilitar autenticación.";
-
-    findings.push({
-        id: "EXPOSURE_CONTEXT",
-        severity,
-        category: "ports",
-        scope: "host",
-        title,
-        evidence: {
-            target: portsReport.target,
-            primaryIPv4: network?.primaryIPv4 || null,
-            openPorts: open,
-            scope,
-            sensitivePorts: { high: openSensitiveHigh, medium: openSensitiveMed },
-        },
-        recommendation,
-    });
-
-    if (openSet.has(1880)) {
-        const local1880 = isLocalTarget(portsReport.target);
-        findings.push({
-            id: "NODE_RED_PORT_1880_OPEN",
-            severity: local1880 ? "LOW" : "MEDIUM",
-            category: "ports",
-            scope: "host",
-            title: local1880
-                ? `Node-RED accesible en localhost (${portsReport.target}:1880)`
-                : `Node-RED expuesto en red (${portsReport.target}:1880)`,
-            evidence: {
-                target: portsReport.target,
-                port: 1880,
-                primaryIPv4: network?.primaryIPv4 || null,
-            },
-            recommendation: local1880
-                ? "Riesgo bajo si solo está accesible localmente. Si no es necesario, restringir el binding a localhost."
-                : "Restringir acceso (firewall/VPN), habilitar autenticación y evitar exposición innecesaria en la red.",
-        });
-    }
-}
-
-module.exports = {
-    DEFAULT_PORTS,
-    parseNmapGrepable,
-    parseNmapPingScan,
-    runHostDiscovery,
-    runPortsNmap,
-    addPortFindings,
-};
+module.exports = { runNmap };
