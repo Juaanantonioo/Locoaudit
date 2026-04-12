@@ -93,13 +93,13 @@ Niveles de severidad válidos: `critical` · `high` · `medium` · `low` · `inf
 ### Fase 1 — Nodo audit-host (Sem 3–5)
 **Objetivo:** primer nodo arrastrable en Node-RED que emite `findings[]`.
 
-- [ ] `cpu-memory.js` — CPU y RAM con módulo `os` nativo
-- [ ] `disk-storage.js` — uso de disco por partición
-- [ ] `sw-inventory.js` — software instalado (brew/dpkg/winget según SO)
-- [ ] `os-info.js` — versión SO, uptime, hostname
-- [ ] `normalizer.js` para hallazgos de host
-- [ ] `audit-host.js` — registro del nodo en Node-RED
-- [ ] `audit-host.html` — UI de configuración del nodo
+- [x] `cpu-memory.js` — CPU y RAM con módulo `os` nativo
+- [x] `disk-storage.js` — uso de disco por partición
+- [x] `sw-inventory.js` — software instalado (brew/dpkg/winget según SO)
+- [x] `os-info.js` — versión SO, uptime, hostname
+- [x] `normalizer.js` para hallazgos de host
+- [x] `audit-host.js` — registro del nodo en Node-RED
+- [x] `audit-host.html` — UI de configuración del nodo
 
 **Entregable:** nodo `audit-host` instalable via `npm link` en Node-RED local.
 
