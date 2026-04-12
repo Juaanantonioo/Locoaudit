@@ -45,12 +45,19 @@ function parseDfOutput(stdout) {
     if (isNaN(totalKB) || totalKB === 0) continue;
     // Ignorar pseudo-filesystems (devtmpfs, tmpfs, udev, etc.)
     if (!mount.startsWith("/")) continue;
+    // Ignorar pseudo-filesystems de macOS APFS y /dev
+    if (mount === "/dev") continue;
+    if (mount.startsWith("/System/Volumes/")) continue;
+
+    const totalGB = Math.round((totalKB * KB) / GB * 100) / 100;
+    // Ignorar volúmenes sin espacio real (< 1 GB: RAM disks, snapshots, etc.)
+    if (totalGB < 1) continue;
 
     const usedPercent = Math.round((usedKB / totalKB) * 100);
 
     results.push({
       mount,
-      totalGB: Math.round((totalKB * KB) / GB * 100) / 100,
+      totalGB,
       usedGB: Math.round((usedKB * KB) / GB * 100) / 100,
       freeGB: Math.round((freeKB * KB) / GB * 100) / 100,
       usedPercent,
