@@ -57,6 +57,28 @@ const net = require("net");
 /**
  * Puertos conocidos con su metadato de severidad para PC personal.
  * Estructura: port → { service, severity, fix }
+ *
+ * ── Servicios propios de macOS clasificados como "info" ──────────────────────
+ *
+ * Los puertos 7000 (AirPlay), 5353 (mDNS/Bonjour) y 548 (AFP) aparecen
+ * abiertos en cualquier Mac con la configuración por defecto del sistema.
+ * No representan un riesgo en sí mismos: son funcionalidades del SO que el
+ * usuario ha activado implícitamente al usar AirPlay, compartición de archivos
+ * o la resolución de nombres en red local.  Se clasifican como "info" para que
+ * el usuario sea consciente de que están activos, pero no se le alarma
+ * innecesariamente.
+ *
+ * El usuario debería desactivarlos únicamente si no usa esas funcionalidades:
+ *   - AirPlay receptor: Ajustes → General → AirDrop y Handoff → Receptor AirPlay
+ *   - Bonjour/mDNS:    No se puede desactivar de forma granular en macOS sin
+ *                      herramientas de terceros; forma parte de la red local.
+ *   - AFP (548):       Ajustes → General → Compartir → Compartir archivos (desactivar)
+ *
+ * Nota sobre el puerto 8021:
+ *   En macOS corresponde a un servicio interno del sistema (Control Center /
+ *   daemon del sistema) y se clasifica como "info".  En Linux este puerto no
+ *   tiene un uso estándar conocido y debería revisarse; si se amplía el soporte
+ *   a perfiles de servidor, considerar elevarlo a "medium" en ese contexto.
  */
 const PORT_CATALOG = {
   // ── HIGH — riesgo real e inmediato en PC personal ──────────────────────────
@@ -86,6 +108,13 @@ const PORT_CATALOG = {
   5000:  { service: "Dev-server", severity: "info",   fix: null },
   8000:  { service: "Dev-server", severity: "info",   fix: null },
   9000:  { service: "Dev-server", severity: "info",   fix: null },
+
+  // ── INFO — servicios propios de macOS, normales con configuración por defecto
+  88:    { service: "Kerberos",   severity: "info",   fix: null },
+  548:   { service: "AFP",        severity: "info",   fix: "Si no usas compartición de archivos macOS, desactívalo en Ajustes → General → Compartir." },
+  5353:  { service: "mDNS",       severity: "info",   fix: null },
+  7000:  { service: "AirPlay",    severity: "info",   fix: "Si no usas el receptor AirPlay, desactívalo en Ajustes → General → AirDrop y Handoff." },
+  8021:  { service: "macOS-svc",  severity: "info",   fix: null },
 };
 
 const ALL_PORTS = Object.keys(PORT_CATALOG).map(Number);
