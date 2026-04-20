@@ -50,6 +50,14 @@ Las herramientas **requeridas** bloquean el nodo si faltan.
 - **`audit-webapp`** — nodo nuevo con OWASP ZAP para escanear servicios web expuestos por el host
 - **Integración con OpenVAS** — la arquitectura modular está diseñada para permitirlo
 - **Nuclei** — escaneo de vulnerabilidades de red con plantillas YAML personalizables
+- **`audit-network` multi-dispositivo** — ampliar el nodo para permitir auditar
+  otros dispositivos de la red local además de localhost. Implicaría:
+  - Host discovery con `nmap -sn <rango CIDR>` para detectar IPs activas
+  - El usuario configura manualmente IPs o rangos en la UI del nodo
+  - `service-detect.js` se omite para IPs remotas (lsof solo funciona en localhost)
+  - Requiere sudo en macOS/Linux para detección de versiones con -sV
+  - Justificación arquitectónica: audit-host audita el propio equipo en profundidad,
+    audit-network audita la exposición de red (local y dispositivos domésticos)
 
 ### Limitación conocida en Windows
 
