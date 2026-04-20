@@ -109,18 +109,36 @@ Niveles de severidad válidos: `critical` · `high` · `medium` · `low` · `inf
 **Objetivo:** los tres nodos de auditoría encadenables en un flujo.
 
 **audit-network:**
-- [ ] `port-scanner.js` — puertos abiertos con `net` nativo (sin dependencias)
-- [ ] `nmap-wrapper.js` — integración opcional con Nmap si está instalado
-- [ ] `service-detect.js` — identificación de servicio por número de puerto
+- [x] `port-scanner.js` — puertos abiertos con `net` nativo (sin dependencias)
+- [x] `nmap-wrapper.js` — integración opcional con Nmap si está instalado
+- [x] `service-detect.js` — identificación de servicio por número de puerto
 - [ ] `vuln-check.js` — detección de servicios en versiones conocidas como inseguras
 
 **audit-image:**
-- [ ] `docker-api.js` — conexión a Docker Engine API vía socket local
+- [x] `docker-api.js` — conexión a Docker Engine vía CLI (docker images, docker ps)
 - [ ] `layer-scan.js` — análisis de capas de la imagen
-- [ ] `cve-checker.js` — comprobación básica contra lista de CVEs conocidos
-- [ ] `config-audit.js` — variables de entorno expuestas, usuario root, puertos expuestos
+- [x] `cve-checker.js` — CVEs en imágenes Docker con trivy image (opcional)
+- [x] `config-audit.js` — variables de entorno expuestas, usuario root, puertos expuestos
 
 **Entregable:** flujo Node-RED con los 3 nodos encadenados produciendo `findings[]` unificado.
+
+---
+
+### Decisiones tomadas en Fase 2
+
+- `port-scanner.js` usa escáner TCP nativo como fallback; `nmap-wrapper.js` hace escaneo
+  completo cuando nmap está disponible. `audit-network.js` elige automáticamente según
+  disponibilidad.
+- La severidad de puertos sigue el mismo criterio que `LYNIS_PERSONAL_SEVERITY`: calibrada
+  para PC personal, no para servidores.
+- `config-audit.js` inspecciona contenedores con `docker inspect` en paralelo (3 comandos
+  simultáneos por contenedor).
+- `cve-checker.js` usa `trivy image` por imagen con `Promise.allSettled`; una imagen que
+  falle no detiene el resto.
+- `layer-scan.js` y `vuln-check.js` quedan como trabajo futuro de la Fase 4.
+- Escaneo limitado a localhost en esta versión. El soporte multi-dispositivo
+  (host discovery + escaneo de rangos CIDR) queda documentado como trabajo futuro.
+  La arquitectura modular de nmap-wrapper.js permite añadirlo sin modificar el núcleo.
 
 ---
 

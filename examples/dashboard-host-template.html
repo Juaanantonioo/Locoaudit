@@ -1,0 +1,1198 @@
+<!--
+  LoCoAudit — Dashboard de Auditoría de Host
+  Template para nodo "ui_template" de @flowfuse/node-red-dashboard (Dashboard 2.0 · Vue 3)
+
+  CÓMO USAR:
+  1. Arrastra un nodo "ui_template" al lienzo
+  2. Conecta:  [inject] → [audit-host] → [ui_template]
+  3. Doble click en ui_template → campo "Template": pega TODO este fichero
+  4. En el nodo: Group → ancho 6 o más, tipo "Widget"
+  5. Despliega y abre http://127.0.0.1:1880/dashboard
+-->
+<template>
+  <div>
+
+    <!-- ── Sin datos ── -->
+    <div v-show="state === 'idle'" class="lca-state-center">
+      <div class="lca-state-ico">🔍</div>
+      <h3 class="lca-state-title">Esperando auditoría de tu equipo…</h3>
+      <p class="lca-state-desc">Pulsa el botón de inicio en Node-RED para analizar tu equipo.</p>
+    </div>
+
+    <!-- ── Escaneando ── -->
+    <div v-show="state === 'scanning'" class="lca-state-center">
+      <div class="lca-spinner"></div>
+      <p class="lca-state-desc">Analizando tu equipo…</p>
+    </div>
+
+    <!-- ── Resultados ── -->
+    <div v-if="state === 'done' && auditData">
+
+      <!-- ══ HEADER ══ -->
+      <div class="header-card">
+        <div class="host-info">
+          <div class="host-name">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+              <path d="M8 21h8M12 17v4"></path>
+            </svg>
+            {{ auditData.host && auditData.host.hostname }}
+            <span class="risk-badge" :class="riskClass">
+              <span class="risk-badge-dot"></span>
+              {{ riskLabel }}
+            </span>
+          </div>
+          <div class="host-os">
+            {{ auditData.host && auditData.host.release }}
+            — {{ auditData.host && auditData.host.platform }}
+            · {{ auditData.host && auditData.host.arch }}
+          </div>
+          <div class="pills-row">
+            <span class="pill"><span class="pill-label">Plataforma</span> {{ auditData.host && auditData.host.platform }}</span>
+            <span class="pill"><span class="pill-label">Activo</span> {{ uptimeHuman }}</span>
+            <span class="pill"><span class="pill-label">Análisis</span> {{ scanTime }}</span>
+            <span class="pill" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">
+              <span class="pill-label">Duración</span> {{ fmtDuration(auditData.scanMeta.durationMs) }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Gauge circular Lynis -->
+        <div class="gauge-wrap" v-if="lynisIdx !== null">
+          <span class="gauge-label-top">Hardening Index</span>
+          <svg class="gauge-svg" viewBox="0 0 110 110">
+            <defs>
+              <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" :stop-color="lynisColor"></stop>
+                <stop offset="100%" stop-color="#EA580C"></stop>
+              </linearGradient>
+            </defs>
+            <!-- track -->
+            <circle cx="55" cy="55" r="44" fill="none" stroke="#F1F5F9"
+                    stroke-width="10" stroke-dasharray="221 55"
+                    stroke-dashoffset="-27.5" stroke-linecap="round"></circle>
+            <!-- fill -->
+            <circle cx="55" cy="55" r="44" fill="none" stroke="url(#gaugeGrad)"
+                    stroke-width="10"
+                    :stroke-dasharray="gaugeStroke + ' ' + (276 - gaugeStroke)"
+                    stroke-dashoffset="-27.5" stroke-linecap="round"></circle>
+            <text x="55" y="51" text-anchor="middle" class="gauge-score">{{ lynisIdx }}</text>
+            <text x="55" y="63" text-anchor="middle" class="gauge-sub">de 100</text>
+          </svg>
+          <span style="font-size:11px;color:var(--text-secondary);">
+            Lynis · {{ lynisIdx >= 55 ? 'Aceptable' : lynisIdx >= 30 ? 'Mejorable' : 'Deficiente' }}
+          </span>
+        </div>
+      </div>
+
+      <!-- ══ SEVERITY COUNTERS ══ -->
+      <div class="counters-row">
+        <div class="counter-card critical">
+          <div class="counter-top">
+            <span class="counter-severity">Crítico</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2.5">
+              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path>
+              <line x1="12" y1="9" x2="12" y2="13"></line>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+          </div>
+          <div class="counter-num" :style="counts.critical === 0 ? {color:'#CBD5E1'} : {}">{{ counts.critical }}</div>
+          <div class="counter-sub">Acción inmediata</div>
+        </div>
+        <div class="counter-card high">
+          <div class="counter-top">
+            <span class="counter-severity">Alto</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EA580C" stroke-width="2.5">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+          </div>
+          <div class="counter-num" :style="counts.high === 0 ? {color:'#CBD5E1'} : {}">{{ counts.high }}</div>
+          <div class="counter-sub">Resolver esta semana</div>
+        </div>
+        <div class="counter-card medium">
+          <div class="counter-top">
+            <span class="counter-severity">Medio</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2.5">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+          </div>
+          <div class="counter-num" :style="counts.medium === 0 ? {color:'#CBD5E1'} : {}">{{ counts.medium }}</div>
+          <div class="counter-sub">Cuando puedas</div>
+        </div>
+        <div class="counter-card low">
+          <div class="counter-top">
+            <span class="counter-severity">Bajo</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#65A30D" stroke-width="2.5">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="8" y1="12" x2="16" y2="12"></line>
+            </svg>
+          </div>
+          <div class="counter-num" :style="counts.low === 0 ? {color:'#CBD5E1'} : {}">{{ counts.low }}</div>
+          <div class="counter-sub">Opcional</div>
+        </div>
+      </div>
+
+      <!-- ══ CHARTS ══ -->
+      <div class="charts-row" v-if="totalFindings > 0">
+
+        <!-- Donut SVG puro -->
+        <div class="chart-card">
+          <div class="chart-title">Distribución por Severidad</div>
+          <div class="donut-wrap">
+            <svg class="donut-svg" viewBox="0 0 140 140">
+              <!-- track -->
+              <circle cx="70" cy="70" r="54" fill="none" stroke="#F1F5F9" stroke-width="18"></circle>
+              <!-- segmentos calculados -->
+              <circle v-for="seg in donutSegments" :key="seg.key"
+                      cx="70" cy="70" r="54" fill="none"
+                      :stroke="seg.color" stroke-width="18"
+                      :stroke-dasharray="seg.dasharray"
+                      :stroke-dashoffset="seg.dashoffset"></circle>
+              <text x="70" y="65" text-anchor="middle" class="donut-total">{{ totalFindings }}</text>
+              <text x="70" y="79" text-anchor="middle" class="donut-sub">hallazgos</text>
+            </svg>
+            <div class="donut-legend">
+              <div class="legend-item" v-for="seg in donutSegments" :key="'leg-'+seg.key">
+                <span class="legend-dot" :style="{background: seg.color}"></span>
+                <span class="legend-name">{{ sevLabel(seg.key) }}</span>
+                <span class="legend-val">{{ seg.count }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Barras horizontales por categoría -->
+        <div class="chart-card">
+          <div class="chart-title">Hallazgos por Categoría</div>
+          <div class="hbar-list">
+            <div class="hbar-item" v-for="bar in catBars" :key="bar.key">
+              <span class="hbar-label">{{ bar.label }}</span>
+              <div class="hbar-track">
+                <div class="hbar-fill" :style="{width: bar.pct + '%', background: bar.color}"></div>
+              </div>
+              <span class="hbar-count" :style="{color: bar.color}">{{ bar.count }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ METRICS ══ -->
+      <div class="metrics-row">
+
+        <!-- RAM -->
+        <div class="metric-card" v-if="ramData">
+          <div class="metric-header">
+            <span class="metric-title">Memoria RAM</span>
+            <span class="metric-icon">{{ ramData.platform === 'darwin' ? '🍎' : '🧠' }}</span>
+          </div>
+          <div class="ram-macos-note" v-if="ramData.platform === 'darwin'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+            Gestión unificada macOS — memoria compartida
+          </div>
+          <div class="ram-usage-row">
+            <span class="ram-used">{{ ramData.usedGiB }}</span>
+            <span class="ram-of">GiB de</span>
+            <span class="ram-total">{{ ramData.totalGiB }} GiB</span>
+          </div>
+          <div class="progress-bar" v-if="ramData.pct !== null">
+            <div class="progress-fill" :style="{width: ramData.pct + '%', background: ramBarStyle(ramData.pct)}"></div>
+          </div>
+          <div class="progress-pct" v-if="ramData.pct !== null">{{ ramData.pct }}% en uso</div>
+        </div>
+
+        <!-- CPU -->
+        <div class="metric-card" v-if="cpuData">
+          <div class="metric-header">
+            <span class="metric-title">Carga de CPU</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2">
+              <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+              <rect x="9" y="9" width="6" height="6"></rect>
+              <path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"></path>
+            </svg>
+          </div>
+          <div class="cpu-loads" v-if="cpuData.loadAvg">
+            <div class="load-pill">
+              <span class="load-val">{{ cpuData.loadAvg[0] != null ? cpuData.loadAvg[0].toFixed(2) : '—' }}</span>
+              <span class="load-period">1 min</span>
+            </div>
+            <div class="load-pill">
+              <span class="load-val">{{ cpuData.loadAvg[1] != null ? cpuData.loadAvg[1].toFixed(2) : '—' }}</span>
+              <span class="load-period">5 min</span>
+            </div>
+            <div class="load-pill">
+              <span class="load-val">{{ cpuData.loadAvg[2] != null ? cpuData.loadAvg[2].toFixed(2) : '—' }}</span>
+              <span class="load-period">15 min</span>
+            </div>
+          </div>
+          <div class="cpu-bar-label" v-if="cpuData.loadAvg">
+            Utilización estimada (load avg 1m vs. {{ cpuData.cores }} cores)
+          </div>
+          <div class="progress-bar" v-if="cpuData.loadAvg">
+            <div class="progress-fill" :style="{
+              width: Math.min(100, cpuData.loadAvg[0] / cpuData.cores * 100).toFixed(0) + '%',
+              background: cpuBarColor(cpuData.loadAvg[0] / cpuData.cores)
+            }"></div>
+          </div>
+          <div class="progress-pct" v-if="cpuData.loadAvg">
+            ~{{ Math.min(100, Math.round(cpuData.loadAvg[0] / cpuData.cores * 100)) }}% · {{ cpuData.cores }} núcleos {{ cpuData.model }}
+          </div>
+          <div class="progress-pct" v-else>Load avg no disponible</div>
+        </div>
+
+        <!-- Disco -->
+        <div class="metric-card" v-if="diskData && diskData.length > 0">
+          <div class="metric-header">
+            <span class="metric-title">Almacenamiento</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+            </svg>
+          </div>
+          <div class="disk-part" v-for="(p, i) in diskData" :key="i">
+            <div class="disk-part-header">
+              <span class="disk-mount">{{ p.mount }}</span>
+              <span class="disk-pct">{{ p.usedPercent }}%</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" :style="{width: p.usedPercent + '%', background: p.sevColor}"></div>
+            </div>
+            <div class="disk-detail-row">
+              <span>{{ p.usedGB }} GB usados</span>
+              <span>{{ p.freeGB }} GB libres</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ FINDINGS ══ -->
+      <div class="findings-section">
+        <div class="section-header">
+          <span class="section-title">Hallazgos de Seguridad</span>
+          <span class="pill" style="background:#F1F5F9">
+            {{ totalFindings }} hallazgos · {{ groups.filter(function(g){ return g.items.length > 0; }).length }} categorías activas
+          </span>
+        </div>
+
+        <template v-for="g in groups" :key="g.key">
+          <div class="findings-group" v-if="g.items.length > 0">
+            <div class="group-header" @click="toggleGroup(g.key)">
+              <span class="group-icon">{{ g.icon }}</span>
+              <span class="group-name">{{ g.label }}</span>
+              <span class="group-count">{{ g.items.length }}</span>
+              <svg class="group-chevron" :class="{open: openGroups[g.key]}"
+                   viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2.5" stroke-linecap="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </div>
+            <div class="group-findings" v-show="openGroups[g.key]">
+              <div v-for="(f, fi) in g.items" :key="g.key + '-' + fi">
+                <div class="finding-row" @click="toggleFinding(g.key + '-' + fi)">
+                  <span class="sev-badge" :class="sevClass(f.severity)">{{ sevLabel(f.severity) }}</span>
+                  <span class="cat-badge">{{ catLabel(f.category) }}</span>
+                  <span class="finding-title">{{ f.title }}</span>
+                  <span class="finding-expand-icon">{{ openFindings[g.key + '-' + fi] ? '▲' : '▼' }}</span>
+                </div>
+                <div class="finding-detail" :class="{open: openFindings[g.key + '-' + fi]}">
+                  <div class="detail-grid" v-if="f.fix">
+                    <div class="detail-col">
+                      <div class="detail-col-title">Impacto (Evidencia)</div>
+                      <pre class="detail-evidence">{{ fmtEvidence(f.evidence) }}</pre>
+                    </div>
+                    <div class="detail-col">
+                      <div class="detail-col-title">Pasos de Resolución</div>
+                      <div class="fix-steps">
+                        <div class="fix-step" v-for="(step, si) in parseFixSteps(f.fix)" :key="si">
+                          <span class="fix-num">{{ si + 1 }}</span>{{ step }}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-else style="padding:12px 0;font-style:italic;color:#6B7280;font-size:12.5px;">
+                    Este hallazgo es informativo. No requiere acción inmediata.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Sin hallazgos -->
+        <div v-if="groups.filter(function(g){ return g.items.length > 0; }).length === 0"
+             class="lca-state-center" style="padding:40px 0">
+          <div class="lca-state-ico">✅</div>
+          <h3 class="lca-state-title">¡Sin hallazgos!</h3>
+          <p class="lca-state-desc">No se encontraron problemas en esta auditoría.</p>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text-secondary);"
+           v-if="auditData.scanMeta">
+        LoCoAudit · Módulos: {{ (auditData.scanMeta.modulesRun || []).join(', ') }} · {{ scanTime }}
+      </div>
+
+    </div>
+  </div>
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      state: 'idle',
+      auditData: null,
+      openGroups: {},
+      openFindings: {}
+    };
+  },
+
+  computed: {
+    maxSev() {
+      return ((this.auditData && this.auditData.summary && this.auditData.summary.maxSeverity) || 'info').toUpperCase();
+    },
+
+    counts() {
+      var c = (this.auditData && this.auditData.summary && this.auditData.summary.counts) || {};
+      return {
+        critical: c.critical || c.CRITICAL || 0,
+        high:     c.high     || c.HIGH     || 0,
+        medium:   c.medium   || c.MEDIUM   || 0,
+        low:      c.low      || c.LOW      || 0,
+        info:     c.info     || c.INFO     || 0
+      };
+    },
+
+    totalFindings() {
+      var c = this.counts;
+      return c.critical + c.high + c.medium + c.low + c.info;
+    },
+
+    riskLabel() {
+      var MAP = {
+        INFO: 'Todo en orden', LOW: 'Riesgo Bajo',
+        MEDIUM: 'Riesgo Moderado', HIGH: 'Riesgo Alto', CRITICAL: 'Riesgo Crítico'
+      };
+      return MAP[this.maxSev] || this.maxSev;
+    },
+
+    riskClass() {
+      var MAP = { CRITICAL: 'critical', HIGH: 'high', MEDIUM: 'medium', LOW: 'low', INFO: 'info' };
+      return MAP[this.maxSev] || 'info';
+    },
+
+    uptimeHuman() {
+      return this.fmtUptime(this.auditData && this.auditData.host && this.auditData.host.uptimeSec);
+    },
+
+    scanTime() {
+      var ts = this.auditData && this.auditData.timestamp;
+      if (!ts) return '—';
+      return new Date(ts).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+    },
+
+    lynisIdx() {
+      var findings = this.auditData && this.auditData.findings;
+      if (!findings) return null;
+      var f = null;
+      for (var i = 0; i < findings.length; i++) {
+        if (findings[i].id === 'HOST-LYN-IDX') { f = findings[i]; break; }
+      }
+      if (!f) return null;
+      var m = (f.evidence || '').match(/(\d+)\/100/);
+      return m ? parseInt(m[1], 10) : null;
+    },
+
+    lynisColor() {
+      if (this.lynisIdx === null) return '#22C55E';
+      if (this.lynisIdx < 30) return '#EF4444';
+      if (this.lynisIdx < 55) return '#F97316';
+      return '#22C55E';
+    },
+
+    // arc length = lynisIdx% of the visible 221-unit arc; total circumference r=44 ≈ 276
+    gaugeStroke() {
+      if (this.lynisIdx === null) return 0;
+      return Math.round(this.lynisIdx / 100 * 221);
+    },
+
+    ramData() {
+      var cm = this.auditData && this.auditData.raw && this.auditData.raw.cpuMemory;
+      if (!cm || !cm.memory) return null;
+      var pct = (cm.memory.usedGiB && cm.memory.totalGiB)
+        ? Math.round(cm.memory.usedGiB / cm.memory.totalGiB * 100) : null;
+      return {
+        totalGiB: cm.memory.totalGiB,
+        usedGiB:  cm.memory.usedGiB,
+        pct:      pct,
+        platform: cm.platform || (this.auditData.host && this.auditData.host.platform) || ''
+      };
+    },
+
+    cpuData() {
+      var cm = this.auditData && this.auditData.raw && this.auditData.raw.cpuMemory;
+      if (!cm || !cm.cpu) return null;
+      return {
+        model:   cm.cpu.model  || '—',
+        cores:   cm.cpu.cores  || 1,
+        loadAvg: Array.isArray(cm.cpu.loadAvg) ? cm.cpu.loadAvg : null
+      };
+    },
+
+    diskData() {
+      var disk = this.auditData && this.auditData.raw && this.auditData.raw.disk;
+      if (!Array.isArray(disk) || disk.length === 0) return [];
+      var platform = this.auditData.host && this.auditData.host.platform;
+      return disk.filter(function(d) {
+        // En macOS "/" es el volumen de solo lectura del sistema (~11 GB).
+        // /System/Volumes/Data es el volumen real con los datos del usuario.
+        return !(platform === 'darwin' && d.mount === '/');
+      }).map(function(d) {
+        var pct = d.usedPercent || 0;
+        return {
+          mount:       d.mount,
+          usedPercent: pct,
+          usedGB:      d.usedGB,
+          totalGB:     d.totalGB,
+          freeGB:      d.freeGB != null ? d.freeGB : Math.round((d.totalGB - d.usedGB) * 100) / 100,
+          sevColor:    pct >= 90 ? '#DC2626' : pct >= 75 ? '#EA580C' : pct >= 60 ? '#D97706' : '#65A30D'
+        };
+      });
+    },
+
+    groups() {
+      var findings = this.auditData && this.auditData.findings;
+      if (!findings) return [];
+      var CATS = {
+        vulnerability: { icon: '🔒', label: 'Vulnerabilidades',        order: 0 },
+        cpu:           { icon: '⚙️', label: 'Procesador (CPU)',         order: 1 },
+        memory:        { icon: '🧠', label: 'Memoria RAM',              order: 2 },
+        system:        { icon: '🖥️', label: 'Sistema & Actualizaciones', order: 3 },
+        network:       { icon: '🌐', label: 'Red & Firewall',           order: 4 },
+        other:         { icon: '📋', label: 'Otros',                    order: 99 }
+      };
+      var SEV_ORDER = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
+      var catMap = {};
+      findings.forEach(function(f) {
+        var c = (f.category || 'other').toLowerCase();
+        if (c === 'disk') return;
+        var key = CATS[c] ? c : 'other';
+        if (!catMap[key]) catMap[key] = [];
+        catMap[key].push(f);
+      });
+      Object.keys(catMap).forEach(function(c) {
+        catMap[c].sort(function(a, b) {
+          return (SEV_ORDER[(b.severity || '').toUpperCase()] || 0) -
+                 (SEV_ORDER[(a.severity || '').toUpperCase()] || 0);
+        });
+      });
+      return Object.keys(catMap).map(function(c) {
+        var meta = CATS[c] || { icon: '📋', label: c, order: 50 };
+        return { key: c, icon: meta.icon, label: meta.label, order: meta.order, items: catMap[c] };
+      }).sort(function(a, b) { return a.order - b.order; });
+    },
+
+    catBars() {
+      var SEV_ORDER = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
+      var SEV_COLOR = { CRITICAL: '#DC2626', HIGH: '#EA580C', MEDIUM: '#D97706', LOW: '#65A30D', INFO: '#0EA5E9' };
+      var nonEmpty = this.groups.filter(function(g) { return g.items.length > 0; });
+      if (!nonEmpty.length) return [];
+      var maxCount = Math.max.apply(null, nonEmpty.map(function(g) { return g.items.length; }));
+      return nonEmpty.map(function(g) {
+        var maxSev = 'INFO';
+        g.items.forEach(function(f) {
+          var s = (f.severity || '').toUpperCase();
+          if ((SEV_ORDER[s] || 0) > (SEV_ORDER[maxSev] || 0)) maxSev = s;
+        });
+        return {
+          key:   g.key,
+          label: g.label,
+          count: g.items.length,
+          pct:   maxCount > 0 ? Math.round(g.items.length / maxCount * 100) : 0,
+          color: SEV_COLOR[maxSev] || '#94a3b8'
+        };
+      });
+    },
+
+    donutSegments() {
+      var C = 339.3; // circumference r=54
+      var c = this.counts;
+      var total = c.critical + c.high + c.medium + c.low + c.info;
+      if (total === 0) return [];
+      var sevs = [
+        { key: 'info',     color: '#0EA5E9', count: c.info     },
+        { key: 'low',      color: '#65A30D', count: c.low      },
+        { key: 'medium',   color: '#D97706', count: c.medium   },
+        { key: 'high',     color: '#EA580C', count: c.high     },
+        { key: 'critical', color: '#DC2626', count: c.critical }
+      ].filter(function(s) { return s.count > 0; });
+
+      var offset = C / 4; // start at 12 o'clock
+      return sevs.map(function(s) {
+        var arc = (s.count / total) * C;
+        var seg = {
+          key:         s.key,
+          color:       s.color,
+          count:       s.count,
+          dasharray:   arc.toFixed(1) + ' ' + (C - arc).toFixed(1),
+          dashoffset:  offset.toFixed(2)
+        };
+        offset -= arc;
+        return seg;
+      });
+    }
+  },
+
+  watch: {
+    msg: {
+      deep: false,
+      handler(newMsg) {
+        if (!newMsg) return;
+        if (!newMsg.payload || !newMsg.payload.findings) {
+          this.state = 'scanning';
+          return;
+        }
+        this.auditData    = newMsg.payload;
+        this.state        = 'done';
+        this.openGroups   = {};
+        this.openFindings = {};
+      }
+    }
+  },
+
+  methods: {
+    toggleGroup(key) {
+      this.openGroups = Object.assign({}, this.openGroups, { [key]: !this.openGroups[key] });
+    },
+    toggleFinding(key) {
+      this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
+    },
+
+    parseFixSteps(fix) {
+      if (!fix) return [];
+      if (fix.indexOf('\n') >= 0) {
+        return fix.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      }
+      if (fix.indexOf('. ') >= 0) {
+        var parts = fix.split('. ').map(function(s) { return s.trim(); }).filter(Boolean);
+        return parts.map(function(s, i) { return i < parts.length - 1 ? s + '.' : s; });
+      }
+      return [fix];
+    },
+
+    sevClass(sev) {
+      return (sev || 'info').toLowerCase();
+    },
+
+    sevLabel(sev) {
+      var MAP = { critical: 'Crítico', high: 'Alto', medium: 'Medio', low: 'Bajo', info: 'Info' };
+      return MAP[(sev || '').toLowerCase()] || (sev || '').toUpperCase();
+    },
+
+    catLabel(cat) {
+      var MAP = {
+        vulnerability: 'Vulnerab.', cpu: 'CPU', memory: 'RAM',
+        system: 'Sistema', network: 'Red', disk: 'Disco', other: 'Otros'
+      };
+      return MAP[(cat || '').toLowerCase()] || cat || '?';
+    },
+
+    fmtEvidence(ev) {
+      if (typeof ev === 'object' && ev !== null) {
+        try { return JSON.stringify(ev, null, 2); } catch(e) { return String(ev); }
+      }
+      return String(ev || '');
+    },
+
+    fmtUptime(sec) {
+      if (!sec) return '—';
+      var d = Math.floor(sec / 86400);
+      var h = Math.floor((sec % 86400) / 3600);
+      var m = Math.floor((sec % 3600) / 60);
+      var r = '';
+      if (d > 0) r += d + 'd ';
+      if (h > 0) r += h + 'h ';
+      r += m + 'm';
+      return r.trim();
+    },
+
+    fmtDuration(ms) {
+      if (!ms) return '—';
+      var s = Math.floor(ms / 1000);
+      var m = Math.floor(s / 60);
+      return m > 0 ? m + ' min ' + (s % 60) + ' s' : s + ' s';
+    },
+
+    cpuBarColor(ratio) {
+      if (ratio >= 0.80) return '#DC2626';
+      if (ratio >= 0.50) return '#D97706';
+      return '#65A30D';
+    },
+
+    ramBarStyle(pct) {
+      if (pct >= 95) return 'linear-gradient(90deg,#65A30D,#D97706 70%,#EA580C)';
+      if (pct >= 85) return '#D97706';
+      return '#65A30D';
+    }
+  }
+};
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --critical: #DC2626;
+    --critical-bg: #FEF2F2;
+    --critical-border: #FECACA;
+    --high: #EA580C;
+    --high-bg: #FFF7ED;
+    --high-border: #FED7AA;
+    --medium: #D97706;
+    --medium-bg: #FFFBEB;
+    --medium-border: #FDE68A;
+    --low: #65A30D;
+    --low-bg: #F7FEE7;
+    --low-border: #D9F99D;
+    --info: #0EA5E9;
+    --info-bg: #F0F9FF;
+    --info-border: #BAE6FD;
+    --bg: #F8FAFC;
+    --card: #FFFFFF;
+    --text: #1E293B;
+    --text-secondary: #64748B;
+    --border: #E2E8F0;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.04);
+  }
+
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  /* ── HEADER ── */
+  .header-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    padding: 24px 28px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    margin-bottom: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .header-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--high) 0%, var(--medium) 60%, var(--low) 100%);
+  }
+
+  .host-info { flex: 1; min-width: 0; }
+  .host-name {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -.3px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .host-os {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+  .risk-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 14px;
+    border-radius: 100px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: .1px;
+  }
+  .risk-badge.critical { background: var(--critical-bg); color: var(--critical); border: 1.5px solid var(--critical-border); }
+  .risk-badge.high     { background: var(--high-bg);     color: var(--high);     border: 1.5px solid var(--high-border); }
+  .risk-badge.medium   { background: var(--medium-bg);   color: var(--medium);   border: 1.5px solid var(--medium-border); }
+  .risk-badge.low      { background: var(--low-bg);      color: var(--low);      border: 1.5px solid var(--low-border); }
+  .risk-badge.info     { background: var(--info-bg);     color: var(--info);     border: 1.5px solid var(--info-border); }
+  .risk-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+  .pills-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    background: #F1F5F9;
+    border-radius: 100px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  .pill-label { color: #94A3B8; font-size: 11px; }
+
+  /* Gauge circular */
+  .gauge-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .gauge-label-top {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: var(--text-secondary);
+  }
+  .gauge-svg { width: 110px; height: 110px; }
+  .gauge-score {
+    font-size: 28px;
+    font-weight: 800;
+    fill: var(--text);
+    letter-spacing: -1px;
+  }
+  .gauge-sub { font-size: 11px; fill: var(--text-secondary); }
+
+  /* ── SEVERITY COUNTERS ── */
+  .counters-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .counter-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    border: 1.5px solid var(--border);
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: transform .15s, box-shadow .15s;
+    cursor: default;
+  }
+  .counter-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+  .counter-card.critical { border-color: var(--critical-border); background: var(--critical-bg); }
+  .counter-card.high     { border-color: var(--high-border);     background: var(--high-bg); }
+  .counter-card.medium   { border-color: var(--medium-border);   background: var(--medium-bg); }
+  .counter-card.low      { border-color: var(--low-border);      background: var(--low-bg); }
+
+  .counter-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .counter-severity {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  .counter-card.critical .counter-severity { color: var(--critical); }
+  .counter-card.high     .counter-severity { color: var(--high); }
+  .counter-card.medium   .counter-severity { color: var(--medium); }
+  .counter-card.low      .counter-severity { color: var(--low); }
+
+  .counter-num {
+    font-size: 42px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -2px;
+  }
+  .counter-card.critical .counter-num { color: var(--critical); }
+  .counter-card.high     .counter-num { color: var(--high); }
+  .counter-card.medium   .counter-num { color: var(--medium); }
+  .counter-card.low      .counter-num { color: var(--low); }
+
+  .counter-sub {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+
+  /* ── CHARTS ROW ── */
+  .charts-row {
+    display: grid;
+    grid-template-columns: 1fr 1.6fr;
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .chart-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    padding: 20px 24px;
+  }
+  .chart-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+  }
+
+  .donut-wrap {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+  .donut-svg { width: 140px; height: 140px; flex-shrink: 0; }
+  .donut-total { font-size: 28px; font-weight: 800; fill: var(--text); }
+  .donut-sub   { font-size: 11px; fill: var(--text-secondary); }
+
+  .donut-legend { display: flex; flex-direction: column; gap: 8px; }
+  .legend-item  { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .legend-dot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .legend-name  { color: var(--text-secondary); flex: 1; }
+  .legend-val   { font-weight: 700; color: var(--text); }
+
+  /* Horizontal bars */
+  .hbar-list { display: flex; flex-direction: column; gap: 14px; }
+  .hbar-item { display: grid; grid-template-columns: 110px 1fr 28px; align-items: center; gap: 10px; }
+  .hbar-label { font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hbar-track {
+    height: 18px;
+    background: #F1F5F9;
+    border-radius: 100px;
+    overflow: hidden;
+  }
+  .hbar-fill { height: 100%; border-radius: 100px; transition: width .4s; }
+  .hbar-count { font-size: 13px; font-weight: 700; color: var(--text-secondary); text-align: right; }
+
+  /* ── METRICS ROW ── */
+  .metrics-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-bottom: 20px;
+    align-items: stretch;  /* todas las celdas adoptan la altura de la más alta */
+  }
+  .metric-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    height: 100%;  /* ocupa toda la altura de la celda del grid */
+  }
+  .metric-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .metric-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: var(--text-secondary);
+  }
+  .metric-icon { font-size: 18px; }
+
+  /* RAM */
+  .ram-macos-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #F0FDF4;
+    border: 1px solid #BBF7D0;
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    font-size: 13px;
+    color: #15803D;
+    margin-bottom: 14px;
+  }
+  .ram-usage-row {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+  .ram-used  { font-size: 26px; font-weight: 800; letter-spacing: -1px; color: var(--text); }
+  .ram-of    { font-size: 13px; color: var(--text-secondary); }
+  .ram-total { font-size: 18px; font-weight: 600; color: var(--text-secondary); }
+  .progress-bar {
+    height: 10px;
+    background: #F1F5F9;
+    border-radius: 100px;
+    overflow: hidden;
+    margin-bottom: 4px;
+  }
+  .progress-fill { height: 100%; border-radius: 100px; }
+  .progress-pct  { font-size: 11px; color: var(--text-secondary); }
+
+  /* CPU */
+  .cpu-loads {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .load-pill {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    background: #F8FAFC;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    flex: 1;
+  }
+  .load-val    { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; color: var(--text); }
+  .load-period { font-size: 11px; color: var(--text-secondary); }
+  .cpu-bar-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; }
+
+  /* Disco */
+  .disk-part { margin-bottom: 14px; flex: 1; }
+  .disk-part:last-child { margin-bottom: 0; }
+  .disk-part-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+  .disk-mount  { font-size: 14px; font-weight: 600; color: var(--text); font-family: "SF Mono", "Fira Code", monospace; }
+  .disk-pct    { font-size: 13px; font-weight: 700; color: #475569; }
+  .disk-detail { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+  .disk-detail-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  /* ── FINDINGS ── */
+  .findings-section { }
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: var(--text-secondary);
+  }
+
+  .findings-group {
+    background: var(--card);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .group-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 18px;
+    cursor: pointer;
+    user-select: none;
+    transition: background .12s;
+  }
+  .group-header:hover { background: #F8FAFC; }
+  .group-icon { font-size: 16px; }
+  .group-name { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
+  .group-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    background: #F1F5F9;
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    padding: 0 6px;
+  }
+  .group-chevron {
+    width: 16px;
+    height: 16px;
+    color: #94A3B8;
+    transition: transform .2s;
+    flex-shrink: 0;
+  }
+  .group-chevron.open { transform: rotate(180deg); }
+
+  .group-findings { border-top: 1px solid var(--border); }
+  .finding-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 18px;
+    border-bottom: 1px solid #F1F5F9;
+    cursor: pointer;
+    transition: background .1s;
+  }
+  .finding-row:last-child { border-bottom: none; }
+  .finding-row:hover { background: #F8FAFC; }
+
+  .sev-badge {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    flex-shrink: 0;
+  }
+  .sev-badge.critical { background: var(--critical-bg); color: var(--critical); border: 1px solid var(--critical-border); }
+  .sev-badge.high     { background: var(--high-bg);     color: var(--high);     border: 1px solid var(--high-border); }
+  .sev-badge.medium   { background: var(--medium-bg);   color: var(--medium);   border: 1px solid var(--medium-border); }
+  .sev-badge.low      { background: var(--low-bg);      color: var(--low);      border: 1px solid var(--low-border); }
+  .sev-badge.info     { background: var(--info-bg);     color: var(--info);     border: 1px solid var(--info-border); }
+
+  .cat-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 100px;
+    background: #F1F5F9;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .finding-title {
+    font-size: 13px;
+    color: var(--text);
+    flex: 1;
+    text-wrap: pretty;
+  }
+  .finding-expand-icon {
+    color: #94A3B8;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  /* Expanded detail */
+  .finding-detail {
+    display: none;
+    padding: 0 18px 16px 18px;
+    animation: slideDown .15s ease;
+  }
+  .finding-detail.open { display: block; }
+  @keyframes slideDown { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .detail-col {
+    background: #F8FAFC;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    padding: 14px;
+  }
+  .detail-col-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+  .detail-evidence {
+    font-size: 12px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    background: #1E293B;
+    color: #E2E8F0;
+    border-radius: 6px;
+    padding: 10px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: auto;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+  .fix-steps { display: flex; flex-direction: column; gap: 8px; }
+  .fix-step  { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--text); line-height: 1.5; }
+  .fix-num {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #1E293B;
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* ── Estados idle / scanning ── */
+  .lca-state-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-secondary);
+  }
+  .lca-state-ico {
+    font-size: 3rem;
+    margin-bottom: 14px;
+    animation: lcaPulse 2.2s ease-in-out infinite;
+  }
+  .lca-state-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #334155;
+    margin-bottom: 8px;
+  }
+  .lca-state-desc { font-size: .88rem; line-height: 1.4; }
+  .lca-spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid #e2e8f0;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: lcaSpin 1s linear infinite;
+    margin-bottom: 16px;
+  }
+  @keyframes lcaPulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+  @keyframes lcaSpin  { to { transform: rotate(360deg); } }
+</style>

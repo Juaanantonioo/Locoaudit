@@ -47,7 +47,11 @@ function parseDfOutput(stdout) {
     if (!mount.startsWith("/")) continue;
     // Ignorar pseudo-filesystems de macOS APFS y /dev
     if (mount === "/dev") continue;
-    if (mount.startsWith("/System/Volumes/")) continue;
+    // /System/Volumes/Data es el volumen de datos del usuario en macOS APFS
+    // (contiene /Users, /Applications, etc.) — debe mostrarse aunque sea un
+    // subvolumen de /System/Volumes/. Los demás subvolúmenes APFS son internos
+    // del sistema y no aportan información útil al usuario.
+    if (mount.startsWith("/System/Volumes/") && mount !== "/System/Volumes/Data") continue;
 
     const totalGB = Math.round((totalKB * KB) / GB * 100) / 100;
     // Ignorar volúmenes sin espacio real (< 1 GB: RAM disks, snapshots, etc.)
