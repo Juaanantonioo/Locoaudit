@@ -43,46 +43,71 @@
             <i class="fa fa-cogs"></i> Módulos activos
         </label>
 
-        <div style="padding-left: 16px; display: flex; flex-direction: column; gap: 8px;">
+        <div style="padding-left: 8px; display: flex; flex-direction: column; gap: 10px;">
 
-            <div>
-                <input type="checkbox" id="node-input-enableCpu" style="width: auto; margin-right: 6px;">
-                <label for="node-input-enableCpu" style="width: auto; font-weight: normal;">
-                    <i class="fa fa-microchip"></i> CPU y memoria
-                    <span style="color: #888; font-size: 0.85em; margin-left: 4px;">(nativo)</span>
-                </label>
+            <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <input type="checkbox" id="node-input-enableCpu" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                <div>
+                    <label for="node-input-enableCpu" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
+                        <i class="fa fa-microchip"></i> CPU y memoria
+                        <span style="color: #27ae60; font-size: 0.8em; font-weight: normal; margin-left: 4px;">● nativo</span>
+                    </label>
+                    <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
+                        Mide el uso actual de la CPU (carga media) y de la RAM. No requiere ninguna instalación adicional.
+                    </div>
+                </div>
             </div>
 
-            <div>
-                <input type="checkbox" id="node-input-enableDisk" style="width: auto; margin-right: 6px;">
-                <label for="node-input-enableDisk" style="width: auto; font-weight: normal;">
-                    <i class="fa fa-hdd-o"></i> Disco
-                    <span style="color: #888; font-size: 0.85em; margin-left: 4px;">(nativo)</span>
-                </label>
+            <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <input type="checkbox" id="node-input-enableDisk" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                <div>
+                    <label for="node-input-enableDisk" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
+                        <i class="fa fa-hdd-o"></i> Disco
+                        <span style="color: #27ae60; font-size: 0.8em; font-weight: normal; margin-left: 4px;">● nativo</span>
+                    </label>
+                    <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
+                        Analiza el espacio disponible y usado en cada partición del sistema. Alerta si el disco está por encima del 75 %. No requiere ninguna instalación adicional.
+                    </div>
+                </div>
             </div>
 
-            <div>
-                <input type="checkbox" id="node-input-enableSw" style="width: auto; margin-right: 6px;">
-                <label for="node-input-enableSw" style="width: auto; font-weight: normal;">
-                    <i class="fa fa-list-ul"></i> Software instalado
-                    <span style="color: #888; font-size: 0.85em; margin-left: 4px;">(brew / dpkg / rpm / wmic)</span>
-                </label>
+            <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <input type="checkbox" id="node-input-enableSw" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                <div>
+                    <label for="node-input-enableSw" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
+                        <i class="fa fa-list-ul"></i> Software instalado
+                        <span style="color: #27ae60; font-size: 0.8em; font-weight: normal; margin-left: 4px;">● nativo</span>
+                    </label>
+                    <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
+                        Enumera los paquetes y aplicaciones instalados en el sistema usando el gestor nativo (brew en macOS, dpkg/rpm en Linux, wmic en Windows). Útil para inventario de activos.
+                    </div>
+                </div>
             </div>
 
-            <div>
-                <input type="checkbox" id="node-input-enableLynis" style="width: auto; margin-right: 6px;">
-                <label for="node-input-enableLynis" style="width: auto; font-weight: normal;">
-                    <i class="fa fa-lock"></i> Lynis — hardening del sistema
-                    <span style="color: #888; font-size: 0.85em; margin-left: 4px;">(opcional, ~2 min)</span>
-                </label>
+            <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <input type="checkbox" id="node-input-enableLynis" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                <div>
+                    <label for="node-input-enableLynis" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
+                        <i class="fa fa-lock"></i> Lynis — hardening del sistema
+                        <span style="color: #e67e22; font-size: 0.8em; font-weight: normal; margin-left: 4px;">◌ opcional · ~2 min</span>
+                    </label>
+                    <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
+                        Realiza más de 300 comprobaciones de seguridad: configuración de SSH, firewall, permisos de ficheros, cuentas de usuario, etc. Genera un índice de endurecimiento del 0 al 100. Requiere tener <strong>Lynis</strong> instalado; si lo activas y no está disponible, el nodo fallará con un error.
+                    </div>
+                </div>
             </div>
 
-            <div>
-                <input type="checkbox" id="node-input-enableTrivy" style="width: auto; margin-right: 6px;">
-                <label for="node-input-enableTrivy" style="width: auto; font-weight: normal;">
-                    <i class="fa fa-bug"></i> Trivy — CVEs en el sistema de ficheros
-                    <span style="color: #888; font-size: 0.85em; margin-left: 4px;">(opcional, puede tardar)</span>
-                </label>
+            <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <input type="checkbox" id="node-input-enableTrivy" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                <div>
+                    <label for="node-input-enableTrivy" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
+                        <i class="fa fa-bug"></i> Trivy — vulnerabilidades (CVEs)
+                        <span style="color: #e67e22; font-size: 0.8em; font-weight: normal; margin-left: 4px;">◌ opcional · puede tardar</span>
+                    </label>
+                    <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
+                        Compara los paquetes instalados en el sistema contra bases de datos de vulnerabilidades conocidas (CVE). Detecta paquetes con fallos de seguridad sin parchear. Requiere tener <strong>Trivy</strong> instalado; si lo activas y no está disponible, el nodo fallará con un error.
+                    </div>
+                </div>
             </div>
 
         </div>
@@ -93,9 +118,9 @@
     <!-- Nota informativa -->
     <div class="form-row" style="color: #666; font-size: 0.85em; line-height: 1.5;">
         <i class="fa fa-info-circle"></i>
-        Los módulos marcados como <em>opcional</em> se saltan automáticamente
-        si la herramienta no está instalada. El nodo emite siempre
-        <code>msg.payload.findings[]</code> aunque todos fallen.
+        Los módulos <em>nativos</em> funcionan siempre sin instalación adicional.
+        Los módulos <em>opcionales</em> (Lynis, Trivy) requieren que la herramienta esté instalada en el sistema:
+        si están activados y la herramienta no se encuentra, el nodo emitirá un <strong>error</strong>. Desactívalos si no tienes la herramienta instalada.
     </div>
 
 </script>

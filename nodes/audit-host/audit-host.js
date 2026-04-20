@@ -59,6 +59,24 @@ module.exports = function (RED) {
         const lynis = lynisResult.status === "fulfilled" ? lynisResult.value : null;
         const trivy = trivyResult.status === "fulfilled" ? trivyResult.value : null;
 
+        // Si el usuario activó Lynis o Trivy y la herramienta no está instalada → error explícito
+        if (enableLynis && lynis && lynis.skipped) {
+          node.status({ fill: "red", shape: "ring", text: "Lynis no instalado" });
+          done(new Error(
+            "Lynis está activado en la configuración del nodo pero no se encontró instalado en el sistema. " +
+            "Instala Lynis (https://cisofy.com/lynis/) o desactiva el módulo en las opciones del nodo."
+          ));
+          return;
+        }
+        if (enableTrivy && trivy && trivy.skipped) {
+          node.status({ fill: "red", shape: "ring", text: "Trivy no instalado" });
+          done(new Error(
+            "Trivy está activado en la configuración del nodo pero no se encontró instalado en el sistema. " +
+            "Instala Trivy (https://trivy.dev/) o desactiva el módulo en las opciones del nodo."
+          ));
+          return;
+        }
+
         // os-info siempre se recoge (no tiene dependencias externas)
         const osInfo = getOsInfo();
 
