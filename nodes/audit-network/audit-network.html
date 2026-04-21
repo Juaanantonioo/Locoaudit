@@ -1,22 +1,264 @@
-<!-- audit-network — panel de configuración Node-RED -->
-<!-- TODO: implementar -->
+<!-- audit-network — Panel de configuración Node-RED -->
 
 <script type="text/javascript">
     RED.nodes.registerType("audit-network", {
         category: "locoaudit",
-        color: "#5a8fe0",
-        defaults: {},
+        color: "#5a8ae0",
+        defaults: {
+            name:         { value: "" },
+            scanMode:     { value: "standard" },
+            customPorts:  { value: "" },
+            scanTarget:   { value: "localhost" },
+            customTarget: { value: "" },
+            enableNmap:   { value: true },
+            enableEnrich: { value: true },
+            scanTimeout:  { value: 500 },
+            concurrency:  { value: 20 }
+        },
         inputs: 1,
         outputs: 1,
-        icon: "audit-network.svg",
-        label: function () { return "audit-network"; }
+        icon: "font-awesome/fa-sitemap",
+        paletteLabel: "audit-network",
+        label: function () {
+            return this.name || "audit-network";
+        },
+        labelStyle: function () {
+            return this.name ? "node_label_italic" : "";
+        },
+        oneditprepare: function () {
+            function updateCustomPortsVisibility() {
+                var mode = $("#node-input-scanMode").val();
+                if (mode === "custom") {
+                    $("#custom-ports-row").show();
+                } else {
+                    $("#custom-ports-row").hide();
+                }
+            }
+
+            function updateCustomTargetVisibility() {
+                var target = $("#node-input-scanTarget").val();
+                if (target === "custom") {
+                    $("#custom-target-row").show();
+                } else {
+                    $("#custom-target-row").hide();
+                }
+            }
+
+            $("#node-input-scanMode").on("change", updateCustomPortsVisibility);
+            $("#node-input-scanTarget").on("change", updateCustomTargetVisibility);
+
+            updateCustomPortsVisibility();
+            updateCustomTargetVisibility();
+        }
     });
 </script>
 
 <script type="text/html" data-template-name="audit-network">
-    <!-- TODO: campos de configuración -->
+
+    <!-- Nombre del nodo -->
+    <div class="form-row">
+        <label for="node-input-name">
+            <i class="fa fa-tag"></i> Nombre
+        </label>
+        <input type="text" id="node-input-name" placeholder="audit-network">
+    </div>
+
+    <hr style="margin: 12px 0;">
+
+    <!-- ── SECCIÓN 1: Escáner ────────────────────────────────────────────── -->
+    <div class="form-row">
+        <label style="width: 100%; font-weight: 600; margin-bottom: 8px;">
+            <i class="fa fa-search"></i> Escáner
+        </label>
+
+        <div style="padding-left: 8px; display: flex; flex-direction: column; gap: 10px;">
+
+            <!-- Modo de escaneo -->
+            <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <label for="node-input-scanMode" style="font-weight: 600; margin-bottom: 6px; display: block;">
+                    Modo de escaneo
+                </label>
+                <select id="node-input-scanMode" style="width: 100%;">
+                    <option value="standard">Estándar — Escanea ~27 puertos conocidos. Recomendado.</option>
+                    <option value="full">Completo 1-1024 — Escanea todos los puertos conocidos. Más lento.</option>
+                    <option value="custom">Personalizado — Define tú mismo qué puertos auditar.</option>
+                </select>
+            </div>
+
+            <!-- Puertos personalizados (solo visible en modo custom) -->
+            <div id="custom-ports-row" style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <label for="node-input-customPorts" style="font-weight: 600; margin-bottom: 6px; display: block;">
+                    Puertos a escanear
+                </label>
+                <input type="text" id="node-input-customPorts"
+                    placeholder="Ej: 22,80,443 o rangos como 1-500"
+                    style="width: 100%; box-sizing: border-box;">
+                <div style="color: #555; font-size: 0.82em; margin-top: 6px; line-height: 1.5;">
+                    Separa puertos con comas. Puedes usar rangos (1-1024).<br>
+                    Máximo recomendado: 500 puertos para no ralentizar el análisis.
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <hr style="margin: 12px 0;">
+
+    <!-- ── SECCIÓN 2: Objetivo ───────────────────────────────────────────── -->
+    <div class="form-row">
+        <label style="width: 100%; font-weight: 600; margin-bottom: 8px;">
+            <i class="fa fa-desktop"></i> Objetivo
+        </label>
+
+        <div style="padding-left: 8px; display: flex; flex-direction: column; gap: 10px;">
+
+            <!-- Qué equipo auditar -->
+            <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <label for="node-input-scanTarget" style="font-weight: 600; margin-bottom: 6px; display: block;">
+                    Qué equipo auditar
+                </label>
+                <select id="node-input-scanTarget" style="width: 100%;">
+                    <option value="localhost">Este equipo (recomendado)</option>
+                    <option value="custom">Otro equipo de mi red</option>
+                </select>
+            </div>
+
+            <!-- IP personalizada (solo visible cuando scanTarget === "custom") -->
+            <div id="custom-target-row" style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <label for="node-input-customTarget" style="font-weight: 600; margin-bottom: 6px; display: block;">
+                    Dirección IP del equipo
+                </label>
+                <input type="text" id="node-input-customTarget"
+                    placeholder="Ej: 192.168.1.100"
+                    style="width: 100%; box-sizing: border-box;">
+                <div style="color: #555; font-size: 0.82em; margin-top: 6px; line-height: 1.5;">
+                    Introduce la IP del equipo que quieres auditar.<br>
+                    Solo audita equipos de tu propiedad.
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <hr style="margin: 12px 0;">
+
+    <!-- ── SECCIÓN 3: Opciones avanzadas (colapsable) ────────────────────── -->
+    <div class="form-row">
+        <label style="width: 100%; font-weight: 600; margin-bottom: 4px; cursor: pointer;"
+               onclick="$('#advanced-options-body').toggle(); $(this).find('.fa-chevron-right, .fa-chevron-down').toggleClass('fa-chevron-right fa-chevron-down');">
+            <i class="fa fa-chevron-right" style="margin-right: 4px; font-size: 0.85em;"></i>
+            <i class="fa fa-sliders"></i> Opciones avanzadas
+        </label>
+
+        <div id="advanced-options-body" style="display: none; padding-left: 8px;">
+            <div style="display: flex; flex-direction: column; gap: 10px; padding-top: 8px;">
+
+                <!-- Checkbox: Nmap -->
+                <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                    <input type="checkbox" id="node-input-enableNmap" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                    <div>
+                        <label for="node-input-enableNmap" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
+                            <i class="fa fa-search-plus"></i> Usar Nmap si está disponible
+                            <span style="color: #e67e22; font-size: 0.8em; font-weight: normal; margin-left: 4px;">◌ opcional</span>
+                        </label>
+                        <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
+                            Si Nmap está instalado, se usa en lugar del escáner nativo. Detecta servicios y versiones con más detalle.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Checkbox: Enriquecimiento -->
+                <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                    <input type="checkbox" id="node-input-enableEnrich" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                    <div>
+                        <label for="node-input-enableEnrich" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
+                            <i class="fa fa-info-circle"></i> Identificar procesos por puerto
+                        </label>
+                        <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
+                            Usa <code>lsof</code> o <code>netstat</code> para identificar qué proceso tiene abierto cada puerto. Solo funciona en localhost.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Timeout -->
+                <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                    <label for="node-input-scanTimeout" style="font-weight: 600; margin-bottom: 6px; display: block;">
+                        Timeout por puerto (ms)
+                    </label>
+                    <input type="number" id="node-input-scanTimeout" min="100" max="5000" step="100"
+                        style="width: 120px;">
+                    <span style="color: #555; font-size: 0.82em; margin-left: 8px;">recomendado: 500 ms</span>
+                </div>
+
+                <!-- Concurrencia -->
+                <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                    <label for="node-input-concurrency" style="font-weight: 600; margin-bottom: 6px; display: block;">
+                        Puertos simultáneos
+                    </label>
+                    <input type="number" id="node-input-concurrency" min="1" max="100" step="1"
+                        style="width: 120px;">
+                    <span style="color: #555; font-size: 0.82em; margin-left: 8px;">workers paralelos (recomendado: 20)</span>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <hr style="margin: 12px 0;">
+
+    <!-- Nota informativa -->
+    <div class="form-row" style="color: #666; font-size: 0.85em; line-height: 1.5;">
+        <i class="fa fa-info-circle"></i>
+        El escáner nativo funciona siempre sin instalación adicional.
+        <strong>Nmap</strong> es opcional: si está activado y no está instalado, el nodo usa el escáner nativo como fallback sin error.
+    </div>
+
 </script>
 
 <script type="text/html" data-help-name="audit-network">
-    <p>Auditoría de seguridad de red: descubrimiento de hosts, escaneo de puertos y vulnerabilidades.</p>
+    <p>
+        Auditoría de red del host. Escanea puertos TCP abiertos, detecta servicios expuestos
+        e identifica los procesos que los usan.
+    </p>
+
+    <h3>Entrada</h3>
+    <p>Cualquier mensaje dispara la auditoría. El contenido de <code>msg</code> no importa.</p>
+
+    <h3>Salida</h3>
+    <dl class="message-properties">
+        <dt>payload.findings <span class="property-type">array</span></dt>
+        <dd>Array de findings con schema <code>{ id, title, severity, evidence, fix, category, source, timestamp }</code>.</dd>
+
+        <dt>payload.summary <span class="property-type">object</span></dt>
+        <dd>Contadores por severidad y severidad máxima detectada.</dd>
+
+        <dt>payload.scanMeta <span class="property-type">object</span></dt>
+        <dd>Módulos ejecutados, fuente del escáner, puertos analizados, duración en ms, modo de escaneo y target si es remoto.</dd>
+
+        <dt>payload.raw <span class="property-type">object</span></dt>
+        <dd>Lista de puertos abiertos con detalle de proceso si el enriquecimiento está activo.</dd>
+
+        <dt>payload.timestamp <span class="property-type">string</span></dt>
+        <dd>Timestamp ISO 8601 del inicio de la auditoría.</dd>
+    </dl>
+
+    <h3>Modos de escaneo</h3>
+    <ul>
+        <li><strong>Estándar</strong> — ~27 puertos del catálogo interno. Rápido y suficiente para uso doméstico.</li>
+        <li><strong>Completo 1-1024</strong> — todos los puertos privilegiados. Más lento.</li>
+        <li><strong>Personalizado</strong> — define exactamente qué puertos auditar. Formato: <code>22,80,443</code> o rangos <code>1-500</code>.</li>
+    </ul>
+
+    <h3>Severidades</h3>
+    <ul>
+        <li><strong>high</strong> — FTP, Telnet, RDP, VNC, puertos de backdoor</li>
+        <li><strong>medium</strong> — SSH, bases de datos expuestas, servidores de correo</li>
+        <li><strong>info</strong> — HTTP, HTTPS, servidores de desarrollo locales, servicios macOS</li>
+        <li><strong>low</strong> — puerto abierto no reconocido en el catálogo</li>
+    </ul>
+
+    <h3>Más información</h3>
+    <p>
+        <a href="https://nmap.org/">Nmap</a>
+    </p>
 </script>

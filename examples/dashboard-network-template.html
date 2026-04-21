@@ -1,0 +1,989 @@
+<!--
+  LoCoAudit — Dashboard de Auditoría de Red
+  Template para nodo "ui_template" de @flowfuse/node-red-dashboard (Dashboard 2.0 · Vue 3)
+
+  CÓMO USAR:
+  1. Arrastra un nodo "ui_template" al lienzo
+  2. Conecta:  [inject] → [audit-network] → [ui_template]
+  3. Doble click en ui_template → campo "Template": pega TODO este fichero
+  4. En el nodo: Group → ancho 6 o más, tipo "Widget"
+  5. Despliega y abre http://127.0.0.1:1880/dashboard
+
+  Diseño de referencia: LoCoAudit - Dashboard de Red.html
+-->
+<template>
+  <div>
+
+    <!-- ── Sin datos ── -->
+    <div v-show="state === 'idle'" class="lca-state-center">
+      <div class="lca-state-ico">🌐</div>
+      <h3 class="lca-state-title">Esperando auditoría de red...</h3>
+      <p class="lca-state-desc">Pulsa el botón de inicio en Node-RED para escanear los puertos de tu equipo.</p>
+    </div>
+
+    <!-- ── Escaneando ── -->
+    <div v-show="state === 'scanning'" class="lca-state-center">
+      <div class="lca-spinner"></div>
+      <p class="lca-state-desc">Escaneando puertos...</p>
+    </div>
+
+    <!-- ── Resultados ── -->
+    <div v-if="state === 'done' && auditData">
+
+      <!-- ══ HEADER ══ -->
+      <header class="header">
+        <div class="header-row1">
+          <div class="header-icon">
+            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4M3.5 3.5a14 14 0 0 0 0 17M20.5 3.5a14 14 0 0 1 0 17"/>
+            </svg>
+          </div>
+          <div class="header-title-block">
+            <div class="header-title">{{ auditData.host && auditData.host.hostname }}</div>
+            <div class="header-subtitle">Auditoría de Red &nbsp;·&nbsp; {{ auditData.host && auditData.host.platform }}</div>
+          </div>
+          <div class="header-right">
+            <div class="risk-badge" :class="riskClass">
+              <span class="dot"></span>
+              <span>{{ riskLabel }}</span>
+            </div>
+            <div class="port-count-block">
+              <div class="port-count-num" :class="{ 'all-info': allInfo }">{{ donutTotal }}</div>
+              <div class="port-count-label">puertos abiertos</div>
+            </div>
+          </div>
+        </div>
+        <div class="header-row2">
+          <span class="pill"><span class="pill-label">Fuente</span><span class="pill-sep">·</span>{{ srcLabel }}</span>
+          <span class="pill"><span class="pill-label">Modo</span><span class="pill-sep">·</span>{{ modeLabel }}</span>
+          <span class="pill" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">
+            <span class="pill-label">Duración</span><span class="pill-sep">·</span>{{ durLabel }}
+          </span>
+          <span class="pill"><span class="pill-label">Fecha</span><span class="pill-sep">·</span>{{ scanTime }}</span>
+        </div>
+      </header>
+
+      <!-- ══ MAIN ══ -->
+      <main class="main">
+
+        <!-- 1 · MAPA DE PUERTOS -->
+        <section>
+          <div class="section-title">Mapa de puertos</div>
+          <div class="port-grid" v-if="sortedPorts.length > 0">
+            <div v-for="(p, i) in sortedPorts" :key="'pg-'+i"
+                 class="port-card" :class="'sev-' + (p.severity || 'info').toLowerCase()">
+              <span class="port-sev-badge" :class="(p.severity || 'info').toLowerCase()">
+                {{ sevLabel(p.severity) }}
+              </span>
+              <div class="port-number">{{ p.port }}</div>
+              <div class="port-service">{{ p.service || 'unknown' }}</div>
+              <div class="port-meta" v-if="p.process || p.version">
+                <div class="port-meta-item" v-if="p.process">
+                  <span class="meta-key">Proceso</span>
+                  <code>{{ p.process }}{{ p.pid != null ? ' (' + p.pid + ')' : '' }}</code>
+                </div>
+                <div class="port-meta-item" v-if="p.version">
+                  <span class="meta-key">Versión</span>
+                  <code>{{ p.version }}</code>
+                </div>
+                <div class="port-meta-item" v-if="p.protocol">
+                  <span class="meta-key">Proto</span>
+                  <code>{{ p.protocol }}</code>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="empty-state" v-else>
+            <div class="check">✅</div>
+            <div class="empty-title">Sin puertos expuestos</div>
+            <div class="empty-sub">El escaneo no encontró puertos abiertos.<br>Tu equipo no tiene servicios de red visibles.</div>
+          </div>
+        </section>
+
+        <!-- 2 · BARRA DE SEVERIDAD + TABLA DE PUERTOS -->
+        <div class="two-col" v-if="sortedPorts.length > 0">
+
+          <!-- Gráfico de barras -->
+          <div class="card">
+            <div class="section-title" style="margin-bottom:0">Exposición por severidad</div>
+            <div class="bar-chart">
+              <div class="bar-col" v-for="col in barCols" :key="col.sev">
+                <div class="bar-count" :style="{ color: col.count > 0 ? col.color : 'var(--text-subtle)' }">{{ col.count }}</div>
+                <div class="bar-fill"
+                     :style="{ background: col.color, height: col.height + 'px', opacity: col.count > 0 ? '1' : '0.18' }">
+                  <div class="bar-ports">
+                    <div class="bar-port-num" v-for="p in col.ports" :key="p">{{ p }}</div>
+                  </div>
+                </div>
+                <div class="bar-label">{{ col.label }}</div>
+              </div>
+            </div>
+            <div class="bar-axis"></div>
+            <div class="bar-total-label">
+              <strong>{{ donutTotal }}</strong> puerto{{ donutTotal !== 1 ? 's' : '' }} abierto{{ donutTotal !== 1 ? 's' : '' }}
+            </div>
+          </div>
+
+          <!-- Tabla resumen -->
+          <div class="card" style="padding:18px">
+            <div class="section-title" style="margin-bottom:12px">Resumen de puertos</div>
+            <table class="port-table">
+              <thead>
+                <tr>
+                  <th>Puerto</th>
+                  <th>Servicio</th>
+                  <th>Proceso</th>
+                  <th>Severidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(p, i) in sortedPorts" :key="'tr-'+i">
+                  <td class="td-port">{{ p.port }}</td>
+                  <td class="td-service">{{ p.service || 'unknown' }}</td>
+                  <td class="td-process">{{ p.process || '—' }}</td>
+                  <td>
+                    <span class="badge" :class="(p.severity || 'info').toLowerCase()">{{ sevLabel(p.severity) }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 3 · HALLAZGOS -->
+        <section v-if="sortedFindings.length > 0">
+          <div class="section-title">Hallazgos</div>
+          <div class="findings-list">
+            <div class="finding-item" v-for="(f, fi) in sortedFindings" :key="'f-'+fi">
+              <div class="finding-header" @click="toggleFinding('f-' + fi)">
+                <div class="finding-badges">
+                  <span class="badge" :class="(f.severity || 'info').toLowerCase()">{{ sevLabel(f.severity) }}</span>
+                  <span class="badge cat" v-if="f.category">{{ f.category }}</span>
+                </div>
+                <div class="finding-title">{{ f.title }}</div>
+                <svg class="finding-chevron" :class="{ open: openFindings['f-' + fi] }"
+                     viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="4,6 8,10 12,6"/>
+                </svg>
+              </div>
+              <div class="finding-body" :class="{ open: openFindings['f-' + fi] }">
+                <div class="detail-grid" v-if="f.fix">
+                  <div class="detail-col">
+                    <div class="detail-col-title">Impacto (Evidencia)</div>
+                    <pre class="detail-evidence">{{ f.evidence }}</pre>
+                  </div>
+                  <div class="detail-col">
+                    <div class="detail-col-title">Pasos de Resolución</div>
+                    <div class="fix-steps">
+                      <div class="fix-step" v-for="(step, si) in parseFixSteps(f.fix)" :key="si">
+                        <span class="fix-num">{{ si + 1 }}</span>{{ step }}
+                      </div>
+                    </div>
+                    <button v-if="f.fix && f.isCommand"
+                            class="copy-cmd-btn"
+                            @click.stop="copyCommand(f.fix)"
+                            :class="{ copied: copiedKey === f.fix }">
+                      {{ copiedKey === f.fix ? '✓ Copiado' : '⧉ Copiar comando' }}
+                    </button>
+                  </div>
+                </div>
+                <div v-else style="padding:12px 0;font-style:italic;color:#6B7280;font-size:12.5px;">
+                  Este hallazgo es informativo. No requiere acción inmediata.
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Sin hallazgos -->
+        <div v-if="sortedPorts.length === 0 && sortedFindings.length === 0"
+             class="lca-state-center" style="padding:40px 0">
+          <div class="lca-state-ico">✅</div>
+          <h3 class="lca-state-title">¡Sin hallazgos!</h3>
+          <p class="lca-state-desc">No se encontraron puertos de riesgo en esta auditoría.</p>
+        </div>
+
+        <!-- Footer -->
+        <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text-subtle);"
+             v-if="auditData.scanMeta">
+          LoCoAudit · Escáner: {{ srcLabel }} · Modo: {{ modeLabel }} · {{ scanTime }}
+        </div>
+
+      </main>
+    </div>
+  </div>
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      state: 'idle',
+      auditData: null,
+      openFindings: {},
+      copiedKey: null
+    };
+  },
+
+  computed: {
+    maxSev() {
+      return (this.auditData && this.auditData.summary && this.auditData.summary.maxSeverity) || 'info';
+    },
+
+    counts() {
+      var c = (this.auditData && this.auditData.summary && this.auditData.summary.counts) || {};
+      return {
+        critical: c.critical || 0,
+        high:     c.high     || 0,
+        medium:   c.medium   || 0,
+        low:      c.low      || 0,
+        info:     c.info     || 0
+      };
+    },
+
+    allInfo() {
+      var c = this.counts;
+      return c.critical === 0 && c.high === 0 && c.medium === 0 && c.low === 0;
+    },
+
+    riskClass() {
+      return this.maxSev;
+    },
+
+    riskLabel() {
+      var MAP = {
+        critical: 'Riesgo Crítico', high: 'Riesgo Alto',
+        medium: 'Riesgo Moderado', low: 'Riesgo Bajo', info: 'Sin Riesgo'
+      };
+      return MAP[this.maxSev] || this.maxSev;
+    },
+
+    scanTime() {
+      var ts = this.auditData && this.auditData.timestamp;
+      if (!ts) return '—';
+      return new Date(ts).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+    },
+
+    durLabel() {
+      var ms = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.durationMs;
+      if (!ms) return '—';
+      return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+    },
+
+    srcLabel() {
+      var src = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.portSource;
+      return src === 'nmap' ? 'Nmap' : 'Nativo';
+    },
+
+    modeLabel() {
+      var MAP = { standard: 'Estándar', full: 'Completo', custom: 'Personalizado' };
+      var mode = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.scanMode;
+      return MAP[mode] || mode || 'Estándar';
+    },
+
+    sortedPorts() {
+      var ports = this.auditData && this.auditData.raw && this.auditData.raw.ports;
+      if (!Array.isArray(ports)) return [];
+      var SEV_ORDER = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+      return ports.slice().sort(function(a, b) {
+        return (SEV_ORDER[(b.severity || 'info').toLowerCase()] || 0) -
+               (SEV_ORDER[(a.severity || 'info').toLowerCase()] || 0);
+      });
+    },
+
+    sortedFindings() {
+      var findings = this.auditData && this.auditData.findings;
+      if (!Array.isArray(findings)) return [];
+      var SEV_ORDER = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+      return findings.slice().sort(function(a, b) {
+        return (SEV_ORDER[(b.severity || 'info').toLowerCase()] || 0) -
+               (SEV_ORDER[(a.severity || 'info').toLowerCase()] || 0);
+      });
+    },
+
+    barCols() {
+      var ports = this.sortedPorts;
+      var defs = [
+        { sev: 'high',   label: 'Alto',  color: '#EA580C' },
+        { sev: 'medium', label: 'Medio', color: '#D97706' },
+        { sev: 'info',   label: 'Info',  color: '#06B6D4' },
+        { sev: 'low',    label: 'Bajo',  color: '#94A3B8' }
+      ];
+      var cols = defs.map(function(d) {
+        var matching = ports.filter(function(p) {
+          return (p.severity || 'info').toLowerCase() === d.sev;
+        });
+        return {
+          sev:   d.sev,
+          label: d.label,
+          color: d.color,
+          count: matching.length,
+          ports: matching.slice(0, 3).map(function(p) { return p.port; })
+        };
+      });
+      var maxCount = Math.max.apply(null, cols.map(function(c) { return c.count; }));
+      if (maxCount === 0) maxCount = 1;
+      cols.forEach(function(c) {
+        c.height = Math.max(4, Math.round((c.count / maxCount) * 110));
+      });
+      return cols;
+    },
+
+    donutTotal() {
+      var meta = this.auditData && this.auditData.scanMeta;
+      var open = meta && meta.portsOpen;
+      return (open != null ? open : null) || this.sortedPorts.length;
+    }
+  },
+
+  watch: {
+    msg: {
+      deep: false,
+      handler(newMsg) {
+        if (!newMsg) return;
+        if (!newMsg.payload || !newMsg.payload.findings) {
+          this.state = 'scanning';
+          return;
+        }
+        this.auditData    = newMsg.payload;
+        this.state        = 'done';
+        this.openFindings = {};
+      }
+    }
+  },
+
+  methods: {
+    toggleFinding(key) {
+      this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
+    },
+
+    parseFixSteps(fix) {
+      if (!fix) return [];
+      if (fix.indexOf('\n') >= 0) {
+        return fix.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      }
+      if (fix.indexOf('. ') >= 0) {
+        var parts = fix.split('. ').map(function(s) { return s.trim(); }).filter(Boolean);
+        return parts.map(function(s, i) { return i < parts.length - 1 ? s + '.' : s; });
+      }
+      return [fix];
+    },
+
+    sevLabel(sev) {
+      var MAP = { high: 'Alto', medium: 'Medio', low: 'Bajo', info: 'Info', critical: 'Crítico' };
+      return MAP[(sev || '').toLowerCase()] || (sev || '').toUpperCase();
+    },
+
+    formatDate(iso) {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+    },
+
+    async copyCommand(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        this.copiedKey = text;
+        setTimeout(() => { this.copiedKey = null; }, 2000);
+      } catch(e) {
+        const el = document.createElement('textarea');
+        el.value = text;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+        this.copiedKey = text;
+        setTimeout(() => { this.copiedKey = null; }, 2000);
+      }
+    }
+  },
+
+  mounted() {}
+};
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #F0F9FF;
+    --header: #0F172A;
+    --accent: #06B6D4;
+    --accent-dim: rgba(6,182,212,.15);
+    --card-bg: #ffffff;
+    --card-border: #BAE6FD;
+    --text: #0F172A;
+    --text-muted: #64748B;
+    --text-subtle: #94A3B8;
+
+    --sev-high-bg: #FFF7ED;
+    --sev-high-border: #EA580C;
+    --sev-high-text: #C2410C;
+    --sev-high-badge: #FED7AA;
+
+    --sev-medium-bg: #FFFBEB;
+    --sev-medium-border: #D97706;
+    --sev-medium-text: #B45309;
+    --sev-medium-badge: #FDE68A;
+
+    --sev-info-bg: #F0F9FF;
+    --sev-info-border: #06B6D4;
+    --sev-info-text: #0369A1;
+    --sev-info-badge: #BAE6FD;
+
+    --sev-low-bg: #F8FAFC;
+    --sev-low-border: #94A3B8;
+    --sev-low-text: #475569;
+    --sev-low-badge: #E2E8F0;
+
+    --sev-critical-bg: #FEF2F2;
+    --sev-critical-border: #DC2626;
+    --sev-critical-text: #991B1B;
+    --sev-critical-badge: #FECACA;
+
+    --mono: 'SF Mono', 'Consolas', 'Courier New', monospace;
+    --sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* ── HEADER ──────────────────────────────────────────────────── */
+  .header {
+    background: var(--header);
+    padding: 20px 28px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .header-row1 {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .header-icon {
+    width: 40px; height: 40px;
+    background: var(--accent-dim);
+    border: 1.5px solid var(--accent);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .header-icon svg { width: 20px; height: 20px; stroke: var(--accent); fill: none; stroke-width: 2; }
+
+  .header-title-block { flex: 1; }
+  .header-title {
+    font-size: 18px; font-weight: 700; color: #fff;
+    letter-spacing: -0.3px;
+  }
+  .header-subtitle {
+    font-size: 12px; color: #94A3B8;
+    font-family: var(--mono);
+    margin-top: 2px;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-left: auto;
+  }
+
+  .port-count-block {
+    text-align: right;
+  }
+  .port-count-num {
+    font-family: var(--mono);
+    font-size: 42px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .port-count-num.all-info { color: #4ADE80; }
+  .port-count-label {
+    font-size: 11px;
+    color: #64748B;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 2px;
+  }
+
+  /* Risk badge on dark header */
+  .risk-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    border: 1.5px solid transparent;
+  }
+  .risk-badge .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+  }
+  .risk-badge.medium {
+    background: rgba(217,119,6,.15);
+    border-color: rgba(217,119,6,.4);
+    color: #FCD34D;
+  }
+  .risk-badge.medium .dot { background: #F59E0B; }
+  .risk-badge.high {
+    background: rgba(234,88,12,.15);
+    border-color: rgba(234,88,12,.4);
+    color: #FCA5A5;
+  }
+  .risk-badge.high .dot { background: #EF4444; box-shadow: 0 0 6px #EF4444; }
+  .risk-badge.critical {
+    background: rgba(220,38,38,.15);
+    border-color: rgba(220,38,38,.5);
+    color: #FCA5A5;
+  }
+  .risk-badge.critical .dot { background: #DC2626; box-shadow: 0 0 8px #DC2626; }
+  .risk-badge.low {
+    background: rgba(148,163,184,.12);
+    border-color: rgba(148,163,184,.35);
+    color: #CBD5E1;
+  }
+  .risk-badge.low .dot { background: #94A3B8; }
+  .risk-badge.info {
+    background: rgba(6,182,212,.12);
+    border-color: rgba(6,182,212,.35);
+    color: #67E8F9;
+  }
+  .risk-badge.info .dot { background: var(--accent); }
+
+  .header-row2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px;
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 20px;
+    font-size: 11.5px;
+    color: #CBD5E1;
+    font-family: var(--mono);
+  }
+  .pill .pill-label {
+    color: #64748B;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: var(--sans);
+  }
+  .pill-sep { color: #334155; margin: 0 2px; }
+
+  /* ── MAIN CONTENT ─────────────────────────────────────────────── */
+  .main { padding: 24px 28px; display: flex; flex-direction: column; gap: 24px; }
+
+  /* ── SECTION TITLE ───────────────────────────────────────────── */
+  .section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--card-border);
+  }
+
+  /* ── PORT GRID ───────────────────────────────────────────────── */
+  .port-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+  }
+
+  .port-card {
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 16px 16px 14px;
+    border: 1px solid var(--card-border);
+    border-left: 4px solid;
+    position: relative;
+    transition: box-shadow .15s, transform .15s;
+    cursor: default;
+  }
+  .port-card:hover { box-shadow: 0 4px 18px rgba(0,0,0,.07); transform: translateY(-1px); }
+
+  .port-card.sev-high     { background: var(--sev-high-bg);     border-left-color: var(--sev-high-border); }
+  .port-card.sev-medium   { background: var(--sev-medium-bg);   border-left-color: var(--sev-medium-border); }
+  .port-card.sev-info     { background: var(--sev-info-bg);     border-left-color: var(--sev-info-border); }
+  .port-card.sev-low      { background: var(--sev-low-bg);      border-left-color: var(--sev-low-border); }
+  .port-card.sev-critical { background: var(--sev-critical-bg); border-left-color: var(--sev-critical-border); }
+
+  .port-sev-badge {
+    position: absolute; top: 12px; right: 12px;
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 2px 7px; border-radius: 10px;
+  }
+  .port-sev-badge.high     { background: var(--sev-high-badge);     color: var(--sev-high-text); }
+  .port-sev-badge.medium   { background: var(--sev-medium-badge);   color: var(--sev-medium-text); }
+  .port-sev-badge.info     { background: var(--sev-info-badge);     color: var(--sev-info-text); }
+  .port-sev-badge.low      { background: var(--sev-low-badge);      color: var(--sev-low-text); }
+  .port-sev-badge.critical { background: var(--sev-critical-badge); color: var(--sev-critical-text); }
+
+  .port-number {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .port-service {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+  .port-meta {
+    display: flex; flex-direction: column; gap: 3px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(0,0,0,.06);
+  }
+  .port-meta-item {
+    font-size: 11.5px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .port-meta-item .meta-key {
+    color: var(--text-subtle);
+    font-size: 10.5px;
+    min-width: 48px;
+  }
+  .port-meta-item code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+  }
+
+  /* Empty state */
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 56px 24px;
+    gap: 12px;
+    background: var(--card-bg);
+    border-radius: 14px;
+    border: 1px solid var(--card-border);
+  }
+  .empty-state .check { font-size: 48px; }
+  .empty-title { font-size: 18px; font-weight: 600; color: #059669; }
+  .empty-sub { font-size: 14px; color: var(--text-muted); text-align: center; }
+
+  /* ── TWO-COLUMN ROW ──────────────────────────────────────────── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+
+  /* Bar chart */
+  .bar-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    height: 130px;
+    padding: 0 4px;
+    margin: 18px 0 14px;
+  }
+  .bar-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    height: 100%;
+    justify-content: flex-end;
+    gap: 5px;
+  }
+  .bar-count {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1;
+  }
+  .bar-fill {
+    width: 100%;
+    border-radius: 6px 6px 2px 2px;
+    transition: height .4s cubic-bezier(.4,0,.2,1);
+    min-height: 4px;
+    position: relative;
+  }
+  .bar-ports {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    position: absolute;
+    bottom: 6px;
+    left: 0; right: 0;
+  }
+  .bar-port-num {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 700;
+    color: rgba(255,255,255,.9);
+    line-height: 1;
+  }
+  .bar-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-subtle);
+  }
+  .bar-axis {
+    height: 1px;
+    background: var(--card-border);
+    margin: 0 4px 10px;
+  }
+  .bar-total-label {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-subtle);
+    margin-top: 4px;
+  }
+  .bar-total-label strong {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  /* Table */
+  .port-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .port-table th {
+    text-align: left;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-subtle);
+    padding: 0 10px 10px;
+    border-bottom: 1px solid var(--card-border);
+  }
+  .port-table td {
+    padding: 9px 10px;
+    vertical-align: middle;
+  }
+  .port-table tr:nth-child(even) td { background: #F8FBFF; }
+  .port-table tr:last-child td:first-child { border-radius: 0 0 0 8px; }
+  .port-table tr:last-child td:last-child  { border-radius: 0 0 8px 0; }
+
+  .port-table .td-port {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .port-table .td-service {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  .port-table .td-process {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-subtle);
+  }
+
+  .badge {
+    display: inline-block;
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 2px 8px; border-radius: 10px;
+  }
+  .badge.high     { background: var(--sev-high-badge);     color: var(--sev-high-text); }
+  .badge.medium   { background: var(--sev-medium-badge);   color: var(--sev-medium-text); }
+  .badge.info     { background: var(--sev-info-badge);     color: var(--sev-info-text); }
+  .badge.low      { background: var(--sev-low-badge);      color: var(--sev-low-text); }
+  .badge.critical { background: var(--sev-critical-badge); color: var(--sev-critical-text); }
+  .badge.cat      { background: #EDE9FE; color: #5B21B6; }
+
+  /* ── FINDINGS ────────────────────────────────────────────────── */
+  .findings-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .finding-item {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .finding-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    cursor: pointer;
+    user-select: none;
+    transition: background .12s;
+  }
+  .finding-header:hover { background: #F8FBFF; }
+
+  .finding-badges { display: flex; gap: 6px; flex-shrink: 0; }
+  .finding-title {
+    flex: 1;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .finding-chevron {
+    width: 16px; height: 16px;
+    color: var(--text-subtle);
+    transition: transform .2s;
+    flex-shrink: 0;
+  }
+  .finding-chevron.open { transform: rotate(180deg); }
+
+  .finding-body {
+    display: none;
+    padding: 0 16px 16px;
+    border-top: 1px solid var(--card-border);
+  }
+  .finding-body.open { display: block; }
+
+  /* ── Detail grid (two-column, host-style) ── */
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding-top: 14px;
+  }
+  .detail-col {
+    background: #F8FAFC;
+    border-radius: 8px;
+    border: 1px solid var(--card-border);
+    padding: 14px;
+  }
+  .detail-col-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .detail-evidence {
+    font-size: 12px;
+    font-family: var(--mono);
+    background: #1E293B;
+    color: #E2E8F0;
+    border-radius: 6px;
+    padding: 10px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: auto;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+  .fix-steps { display: flex; flex-direction: column; gap: 8px; }
+  .fix-step  { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--text); line-height: 1.5; }
+  .fix-num {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* ── Estados idle / scanning ── */
+  .lca-state-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-muted);
+  }
+  .lca-state-ico {
+    font-size: 3rem;
+    margin-bottom: 14px;
+    animation: lcaPulse 2.2s ease-in-out infinite;
+  }
+  .lca-state-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #334155;
+    margin-bottom: 8px;
+  }
+  .lca-state-desc { font-size: .88rem; line-height: 1.4; }
+  .lca-spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid #e2e8f0;
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: lcaSpin 1s linear infinite;
+    margin-bottom: 16px;
+  }
+  @keyframes lcaPulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+  @keyframes lcaSpin  { to { transform: rotate(360deg); } }
+
+  /* ── Copy command button ── */
+  .copy-cmd-btn {
+    margin-top: 12px;
+    padding: 6px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--mono);
+    border-radius: 6px;
+    border: 1.5px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    transition: all .15s;
+    letter-spacing: .03em;
+  }
+  .copy-cmd-btn:hover {
+    background: var(--accent-dim);
+  }
+  .copy-cmd-btn.copied {
+    border-color: #22C55E;
+    color: #22C55E;
+    background: rgba(34,197,94,.08);
+  }
+</style>
