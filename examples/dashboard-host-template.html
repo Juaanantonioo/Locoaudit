@@ -319,6 +319,12 @@
                           <span class="fix-num">{{ si + 1 }}</span>{{ step }}
                         </div>
                       </div>
+                      <button v-if="f.fix && f.isCommand"
+                              class="copy-cmd-btn"
+                              @click.stop="copyCommand(f.fix)"
+                              :class="{ copied: copiedKey === f.fix }">
+                        {{ copiedKey === f.fix ? '✓ Copiado' : '⧉ Copiar comando' }}
+                      </button>
                     </div>
                   </div>
                   <div v-else style="padding:12px 0;font-style:italic;color:#6B7280;font-size:12.5px;">
@@ -356,7 +362,8 @@ export default {
       state: 'idle',
       auditData: null,
       openGroups: {},
-      openFindings: {}
+      openFindings: {},
+      copiedKey: null
     };
   },
 
@@ -646,6 +653,23 @@ export default {
       if (pct >= 95) return 'linear-gradient(90deg,#65A30D,#D97706 70%,#EA580C)';
       if (pct >= 85) return '#D97706';
       return '#65A30D';
+    },
+
+    async copyCommand(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        this.copiedKey = text;
+        setTimeout(() => { this.copiedKey = null; }, 2000);
+      } catch(e) {
+        const el = document.createElement('textarea');
+        el.value = text;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+        this.copiedKey = text;
+        setTimeout(() => { this.copiedKey = null; }, 2000);
+      }
     }
   }
 };
@@ -1209,4 +1233,26 @@ export default {
   }
   @keyframes lcaPulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
   @keyframes lcaSpin  { to { transform: rotate(360deg); } }
+
+  /* ── Copy command button ── */
+  .copy-cmd-btn {
+    margin-top: 12px;
+    padding: 6px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 6px;
+    border: 1.5px solid #0EA5E9;
+    background: transparent;
+    color: #0EA5E9;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .copy-cmd-btn:hover {
+    background: rgba(14,165,233,.08);
+  }
+  .copy-cmd-btn.copied {
+    border-color: #22C55E;
+    color: #22C55E;
+    background: rgba(34,197,94,.08);
+  }
 </style>

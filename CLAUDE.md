@@ -50,6 +50,14 @@ Las herramientas **requeridas** bloquean el nodo si faltan.
 - **`audit-webapp`** — nodo nuevo con OWASP ZAP para escanear servicios web expuestos por el host
 - **Integración con OpenVAS** — la arquitectura modular está diseñada para permitirlo
 - **Nuclei** — escaneo de vulnerabilidades de red con plantillas YAML personalizables
+- **Acciones bidireccionales en dashboards** — actualmente los dashboards
+  implementan un botón "Copiar comando" (Opción A) que copia el comando
+  de resolución al portapapeles del usuario. La Opción B (ejecución directa)
+  requeriría una arquitectura de acciones bidireccionales:
+  el ui_template enviaría { action: 'kill', pid: X } o { action: 'upgrade', pkg: Y }
+  vía this.$socket.emit() al flujo de Node-RED, donde un nodo function
+  ejecutaría el comando y relanzaría la auditoría automáticamente.
+  La base técnica (socket de Dashboard 2.0 + executor.js) ya está disponible.
 - **`audit-network` multi-dispositivo** — ampliar el nodo para permitir auditar
   otros dispositivos de la red local además de localhost. Implicaría:
   - Host discovery con `nmap -sn <rango CIDR>` para detectar IPs activas
