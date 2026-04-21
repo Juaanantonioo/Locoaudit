@@ -105,7 +105,7 @@ const PORT_CATALOG = {
   443:   { service: "HTTPS",      severity: "info",   fix: null },
   631:   { service: "CUPS",       severity: "info",   fix: null },
   3000:  { service: "Dev-server", severity: "info",   fix: null },
-  5000:  { service: "Dev-server", severity: "info",   fix: null },
+  5000:  { service: "Dev-server", severity: "info",   fix: "Si no usas el receptor AirPlay, desactívalo en Ajustes del Sistema → General → AirDrop y Handoff." },
   8000:  { service: "Dev-server", severity: "info",   fix: null },
   9000:  { service: "Dev-server", severity: "info",   fix: null },
 
@@ -114,12 +114,54 @@ const PORT_CATALOG = {
   548:   { service: "AFP",        severity: "info",   fix: "Si no usas compartición de archivos macOS, desactívalo en Ajustes → General → Compartir." },
   5353:  { service: "mDNS",       severity: "info",   fix: null },
   7000:  { service: "AirPlay",    severity: "info",   fix: "Si no usas el receptor AirPlay, desactívalo en Ajustes → General → AirDrop y Handoff." },
-  8021:  { service: "macOS-svc",  severity: "info",   fix: null },
+  8021:  { service: "macOS-svc",  severity: "info",   fix: "Puerto usado por servicios internos de macOS. Si no reconoces este servicio, ejecuta 'lsof -i :8021' en Terminal para identificarlo." },
 };
 
 const ALL_PORTS = Object.keys(PORT_CATALOG).map(Number);
 
 // ── Escáner ───────────────────────────────────────────────────────────────────
+
+/**
+ * Parsea un string de puertos personalizado a un array de números válidos.
+ *
+ * Formatos aceptados (combinables con comas):
+ *   "22,80,443"       → puertos individuales
+ *   "1-500"           → rango inclusivo
+ *   "22,80,1000-1100" → combinación
+ *
+ * Tokens inválidos se ignoran silenciosamente. Si el resultado está vacío
+ * lanza un Error con instrucciones de uso.
+ *
+ * @param {string} input
+ * @returns {number[]}  Array ordenado de puertos únicos en rango 1-65535
+ * @throws {Error} si no se encuentra ningún puerto válido
+ */
+function parsePortsInput(input) {
+  const tokens = String(input).split(",").map((s) => s.trim()).filter(Boolean);
+  const ports  = new Set();
+
+  for (const token of tokens) {
+    if (/^\d+$/.test(token)) {
+      const n = parseInt(token, 10);
+      if (n >= 1 && n <= 65535) ports.add(n);
+    } else if (/^\d+-\d+$/.test(token)) {
+      const [a, b] = token.split("-").map(Number);
+      if (a >= 1 && b <= 65535 && a <= b) {
+        for (let p = a; p <= b; p++) ports.add(p);
+      }
+    }
+    // token inválido → ignorar
+  }
+
+  if (ports.size === 0) {
+    throw new Error(
+      "No se encontraron puertos válidos en la lista personalizada. " +
+      "Usa formato: 22,80,443 o rangos como 1-1024."
+    );
+  }
+
+  return Array.from(ports).sort((a, b) => a - b);
+}
 
 /**
  * Intenta conectar a 127.0.0.1:port con un timeout dado.
@@ -171,23 +213,42 @@ async function runWithConcurrency(tasks, concurrency) {
 // ── API pública ───────────────────────────────────────────────────────────────
 
 /**
- * Escanea los puertos TCP del catálogo en 127.0.0.1 y devuelve los abiertos.
+ * Escanea puertos TCP en 127.0.0.1 y devuelve los abiertos.
  *
- * @param {{ timeout?: number, concurrency?: number }} [options]
+ * @param {object}  [options]
+ * @param {number}  [options.timeout=500]        ms por intento TCP
+ * @param {number}  [options.concurrency=20]     workers paralelos
+ * @param {string}  [options.mode="standard"]    modo de escaneo:
+ *   - "standard" — solo los puertos del PORT_CATALOG (~27 puertos conocidos)
+ *   - "full"     — puertos 1-1024 con concurrencia controlada
+ *   - "custom"   — puertos definidos en options.customPorts
+ * @param {string}  [options.customPorts=""]     lista de puertos para mode "custom".
+ *   Formatos: "22,80,443" · "1-500" · "22,80,1000-1100"
+ *   Los tokens inválidos se ignoran; si no hay ninguno válido lanza Error.
  * @returns {Promise<PortResult[]>}
  */
 async function scanPorts(options = {}) {
   const timeout     = options.timeout     ?? 500;
   const concurrency = options.concurrency ?? 20;
+  const mode        = options.mode        ?? "standard";
 
-  const tasks = ALL_PORTS.map((port) => async () => {
+  let portsToScan;
+  if (mode === "full") {
+    portsToScan = Array.from({ length: 1024 }, (_, i) => i + 1);
+  } else if (mode === "custom") {
+    portsToScan = parsePortsInput(options.customPorts || "");
+  } else {
+    portsToScan = ALL_PORTS;
+  }
+
+  const tasks = portsToScan.map((port) => async () => {
     const open = await probePort(port, timeout);
     if (!open) return null;
 
     const meta = PORT_CATALOG[port] ?? {
       service:  "unknown",
       severity: "low",
-      fix:      "Investiga qué proceso tiene abierto este puerto con 'lsof -i :<puerto>'.",
+      fix:      `Ejecutar 'lsof -i :${port}' para identificar el proceso que usa este puerto.`,
     };
 
     return {
@@ -204,4 +265,4 @@ async function scanPorts(options = {}) {
   return raw.filter(Boolean);
 }
 
-module.exports = { scanPorts, PORT_CATALOG };
+module.exports = { scanPorts, parsePortsInput, PORT_CATALOG };
