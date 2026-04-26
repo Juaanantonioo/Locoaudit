@@ -1,0 +1,1166 @@
+<!--
+  LoCoAudit — Dashboard de Auditoría de Imagen
+  Template para nodo "ui_template" de @flowfuse/node-red-dashboard (Dashboard 2.0 · Vue 3)
+
+  CÓMO USAR:
+  1. Arrastra un nodo "ui_template" al lienzo
+  2. Conecta:  [inject] → [audit-image] → [ui_template]
+  3. Doble click en ui_template → campo "Template": pega TODO este fichero
+  4. En el nodo: Group → ancho 6 o más, tipo "Widget"
+  5. Despliega y abre http://127.0.0.1:1880/dashboard
+
+  Diseño de referencia: LoCoAudit - Dashboard de Imagen.html
+-->
+<template>
+  <div>
+
+    <!-- ── Sin datos ── -->
+    <div v-show="state === 'idle'" class="ia-state-center">
+      <div class="ia-state-ico">🐳</div>
+      <h3 class="ia-state-title">Esperando auditoría de imagen…</h3>
+      <p class="ia-state-desc">Pulsa el botón de inicio en Node-RED para auditar las imágenes Docker.</p>
+    </div>
+
+    <!-- ── Escaneando ── -->
+    <div v-show="state === 'scanning'" class="ia-state-center">
+      <div class="ia-spinner"></div>
+      <p class="ia-state-desc">Analizando imágenes y contenedores…</p>
+    </div>
+
+    <!-- ── Resultados ── -->
+    <div v-if="state === 'done' && auditData">
+
+      <!-- ══ HEADER ══ -->
+      <header class="ia-header">
+        <div class="ia-header-row1">
+          <!-- Docker icon -->
+          <div class="ia-header-icon">
+            <svg width="26" height="20" viewBox="0 0 26 20" fill="none">
+              <rect x="1"  y="7" width="4" height="4" rx="0.5" fill="#7C3AED"/>
+              <rect x="6"  y="7" width="4" height="4" rx="0.5" fill="#7C3AED"/>
+              <rect x="11" y="7" width="4" height="4" rx="0.5" fill="#7C3AED"/>
+              <rect x="16" y="7" width="4" height="4" rx="0.5" fill="#7C3AED"/>
+              <rect x="6"  y="2" width="4" height="4" rx="0.5" fill="#A78BFA"/>
+              <rect x="11" y="2" width="4" height="4" rx="0.5" fill="#A78BFA"/>
+              <path d="M22 11C22 11 21 9 19 9H2C2 13 5 16 9 16H17C19.5 16 21.5 14 22 11Z" fill="#C4B5FD"/>
+              <circle cx="21" cy="9" r="2" fill="#8B5CF6"/>
+            </svg>
+          </div>
+
+          <div class="ia-header-title-block">
+            <div class="ia-breadcrumb">
+              <span>LoCoAudit</span>
+              <span class="ia-breadcrumb-sep">▸</span>
+              <span>Imagen</span>
+            </div>
+            <div class="ia-header-title">
+              {{ auditData.host && auditData.host.hostname }}
+              <span class="ia-risk-badge" :class="riskClass">
+                <span class="ia-risk-dot"></span>{{ riskLabel }}
+              </span>
+            </div>
+            <div class="ia-header-subtitle">
+              Auditoría de Imagen
+              <span class="ia-sep">·</span>
+              <span class="ia-mono">{{ auditData.host && auditData.host.platform }}</span>
+            </div>
+          </div>
+
+          <!-- Stat counters -->
+          <div class="ia-header-stats">
+            <div class="ia-stat-block">
+              <div class="ia-stat-num">🐳 {{ (auditData.scanMeta && auditData.scanMeta.imagesFound) || 0 }}</div>
+              <div class="ia-stat-label">imágenes</div>
+            </div>
+            <div class="ia-stat-block">
+              <div class="ia-stat-num">⚙️ {{ (auditData.scanMeta && auditData.scanMeta.containersFound) || 0 }}</div>
+              <div class="ia-stat-label">contenedores</div>
+            </div>
+            <div class="ia-stat-block ia-stat-accent">
+              <div class="ia-stat-num">▶ {{ (auditData.scanMeta && auditData.scanMeta.containersRunning) || 0 }}</div>
+              <div class="ia-stat-label">activos</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ia-header-row2">
+          <span class="ia-pill">🖼 {{ (auditData.scanMeta && auditData.scanMeta.imagesFound) || 0 }} imágenes</span>
+          <span class="ia-pill">📦 {{ (auditData.scanMeta && auditData.scanMeta.containersRunning) || 0 }} activos</span>
+          <span class="ia-pill" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">⏱ {{ durLabel }}</span>
+          <span class="ia-pill">📅 {{ scanTime }}</span>
+        </div>
+      </header>
+
+      <div class="ia-main">
+
+        <!-- ══ CONTADORES DE URGENCIA ══ -->
+        <div class="ia-counters-grid">
+          <div v-for="card in urgencyCards" :key="card.sev"
+               class="ia-counter-card"
+               :class="['ia-sev-' + card.sev, { 'ia-counter-filtered': filterSev === card.sev }]"
+               @click="filterSev = filterSev === card.sev ? 'all' : card.sev">
+            <div class="ia-counter-top">
+              <span class="ia-counter-num" :style="counts[card.sev] === 0 ? { color: '#CBD5E1' } : {}">
+                {{ counts[card.sev] }}
+              </span>
+              <span class="ia-counter-icon">{{ card.icon }}</span>
+            </div>
+            <div class="ia-counter-sev">{{ sevLabel(card.sev) }}</div>
+            <div class="ia-counter-sub">{{ card.action }}</div>
+            <div v-if="filterSev === card.sev" class="ia-filter-active-indicator">● Filtro activo</div>
+          </div>
+        </div>
+
+        <!-- ══ CONTENEDORES ACTIVOS ══ -->
+        <section>
+          <div class="ia-section-label">
+            <span class="ia-title-bar"></span>
+            Contenedores activos
+            <span class="ia-section-count">({{ runningContainers.length }})</span>
+          </div>
+
+          <div v-if="runningContainers.length === 0" class="ia-empty-dashed">
+            No hay contenedores activos
+          </div>
+          <div v-else class="ia-container-grid">
+            <div v-for="c in runningContainers" :key="c.id"
+                 class="ia-container-card"
+                 :class="'ia-crisk-' + containerRisk(c.name)">
+              <!-- Layer strips (decorative) -->
+              <div class="ia-layer-strip ia-strip-0"
+                   :style="{ background: containerStripColor(c.name, 0) }"></div>
+              <div class="ia-layer-strip ia-strip-1"
+                   :style="{ background: containerStripColor(c.name, 1) }"></div>
+              <div class="ia-layer-strip ia-strip-2"
+                   :style="{ background: containerStripColor(c.name, 2) }"></div>
+
+              <div class="ia-container-body">
+                <div class="ia-container-top">
+                  <div>
+                    <div class="ia-container-name">{{ c.name }}</div>
+                    <code class="ia-container-image">{{ c.image }}</code>
+                  </div>
+                  <div class="ia-status-badge" :class="c.running ? 'ia-running' : 'ia-stopped'">
+                    {{ c.running ? '▶ Activo' : '■ Detenido' }}
+                  </div>
+                </div>
+
+                <div class="ia-ports-row" v-if="c.ports && c.ports.length > 0">
+                  <span v-for="p in c.ports" :key="p" class="ia-port-chip">🔌 {{ p }}</span>
+                </div>
+
+                <div class="ia-container-findings" v-if="relatedFindings(c.name).length > 0">
+                  <span class="ia-findings-prefix">
+                    {{ relatedFindings(c.name).length }} hallazgo{{ relatedFindings(c.name).length > 1 ? 's' : '' }}:
+                  </span>
+                  <template v-for="sev in ['critical','high','medium','low']" :key="'csev-'+sev">
+                    <span v-if="sevCountFor(c.name, sev) > 0"
+                          class="ia-mini-sev-badge"
+                          :class="'ia-badge-' + sev">
+                      {{ sevCountFor(c.name, sev) }} {{ sevLabel(sev) }}
+                    </span>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══ DONUT + IMÁGENES ══ -->
+        <div class="ia-mid-row">
+
+          <!-- Distribución de hallazgos (donut SVG puro) -->
+          <div class="ia-card">
+            <div class="ia-section-label">
+              <span class="ia-title-bar"></span>
+              Distribución de hallazgos
+            </div>
+            <div class="ia-donut-wrap">
+              <svg class="ia-donut-svg" viewBox="0 0 160 160">
+                <!-- track -->
+                <circle cx="80" cy="80" r="60" fill="none" stroke="#F3F4F6" stroke-width="20"></circle>
+                <!-- segments -->
+                <circle v-for="seg in donutSegments" :key="'ds-' + seg.key"
+                        cx="80" cy="80" r="60" fill="none"
+                        :stroke="seg.color" stroke-width="20"
+                        :stroke-dasharray="seg.dasharray"
+                        :stroke-dashoffset="seg.dashoffset"></circle>
+                <!-- inner disc -->
+                <circle cx="80" cy="80" r="48" fill="#FFFFFF"></circle>
+                <text x="80" y="74"  text-anchor="middle" class="ia-donut-total">{{ donutTotal }}</text>
+                <text x="80" y="88"  text-anchor="middle" class="ia-donut-sub">hallazgos</text>
+                <text x="80" y="100" text-anchor="middle" class="ia-donut-sub">totales</text>
+              </svg>
+              <div class="ia-donut-legend">
+                <div v-for="seg in donutSegments" :key="'dl-' + seg.key" class="ia-legend-item">
+                  <span class="ia-legend-dot" :style="{ background: seg.color }"></span>
+                  <span class="ia-legend-name">{{ sevLabel(seg.key) }}</span>
+                  <div class="ia-legend-bar-track">
+                    <div class="ia-legend-bar-fill"
+                         :style="{ width: (donutTotal > 0 ? (seg.count / donutTotal * 100) : 0) + '%', background: seg.color }"></div>
+                  </div>
+                  <span class="ia-legend-count" :style="{ color: seg.color }">{{ seg.count }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Imágenes escaneadas -->
+          <div class="ia-card">
+            <div class="ia-section-label">
+              <span class="ia-title-bar"></span>
+              Imágenes escaneadas
+            </div>
+            <div class="ia-images-list">
+              <div v-for="img in images" :key="img.id" class="ia-image-row">
+                <!-- Layer icon (stacked slabs) -->
+                <div class="ia-layer-icon">
+                  <div class="ia-layer-slab ia-slab-0"
+                       :class="maxSevForImage(img) ? 'ia-slab-' + maxSevForImage(img) : 'ia-slab-clean'"></div>
+                  <div class="ia-layer-slab ia-slab-1"
+                       :class="maxSevForImage(img) ? 'ia-slab-' + maxSevForImage(img) : 'ia-slab-clean'"
+                       style="opacity:0.6"></div>
+                  <div class="ia-layer-slab ia-slab-2"
+                       :class="maxSevForImage(img) ? 'ia-slab-' + maxSevForImage(img) : 'ia-slab-clean'"
+                       style="opacity:0.35"></div>
+                </div>
+
+                <div class="ia-image-info">
+                  <div class="ia-image-name">{{ img.repository }}:{{ img.tag }}</div>
+                  <div class="ia-image-meta">{{ fmtBytes(img.sizeBytes) }} · creada {{ img.created }}</div>
+                </div>
+
+                <div class="ia-image-badge-wrap">
+                  <span v-if="cvesForImage(img) > 0"
+                        class="ia-cve-badge"
+                        :class="maxSevForImage(img) ? 'ia-badge-' + maxSevForImage(img) : ''">
+                    {{ cvesForImage(img) }} CVE{{ cvesForImage(img) > 1 ? 's' : '' }}
+                  </span>
+                  <span v-else class="ia-clean-badge">✓ Limpia</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══ HALLAZGOS ══ -->
+        <section>
+          <div class="ia-findings-header">
+            <div class="ia-section-label" style="margin-bottom:0">
+              <span class="ia-title-bar"></span>
+              Hallazgos
+              <span class="ia-section-count">
+                ({{ filteredFindings.length }}{{ filterSev !== 'all' || filterType !== 'all' ? ' filtrados' : '' }})
+              </span>
+            </div>
+            <div class="ia-filter-bar">
+              <button v-for="ft in typeFilters" :key="ft.val"
+                      class="ia-filter-btn"
+                      :class="{ active: filterType === ft.val }"
+                      @click="filterType = ft.val">{{ ft.label }}</button>
+              <button v-if="filterSev !== 'all' || filterType !== 'all'"
+                      class="ia-filter-btn ia-clear-btn"
+                      @click="filterSev = 'all'; filterType = 'all'">✕ Limpiar</button>
+            </div>
+          </div>
+
+          <div v-if="filteredFindings.length === 0" class="ia-empty-dashed" style="margin-top:10px">
+            No hay hallazgos para los filtros seleccionados
+          </div>
+
+          <div v-else class="ia-findings-list">
+            <div v-for="(f, fi) in filteredFindings" :key="f.id || fi" class="ia-finding-item"
+                 :class="{ 'ia-finding-open': openFindings[f.id || fi] }">
+              <button class="ia-finding-row" @click="toggleFinding(f.id || fi)">
+                <span class="ia-type-badge" :class="findingIsCVE(f) ? 'ia-type-cve' : 'ia-type-config'">
+                  {{ findingIsCVE(f) ? 'CVE' : 'Config' }}
+                </span>
+                <span class="ia-sev-badge" :class="'ia-badge-' + (f.severity || 'info')">
+                  {{ sevLabel(f.severity) }}
+                </span>
+                <span class="ia-finding-title">{{ f.title }}</span>
+                <span class="ia-finding-id">{{ f.id }}</span>
+                <span class="ia-finding-chevron" :class="{ open: openFindings[f.id || fi] }">▾</span>
+              </button>
+
+              <div class="ia-finding-detail" :class="{ open: openFindings[f.id || fi] }">
+                <div class="ia-detail-grid" v-if="f.fix">
+                  <div class="ia-detail-col ia-col-impact">
+                    <div class="ia-detail-col-title">Impacto</div>
+                    <p class="ia-detail-evidence">{{ f.evidence }}</p>
+                  </div>
+                  <div class="ia-detail-col ia-col-resolution">
+                    <div class="ia-detail-col-title">Pasos de Resolución</div>
+                    <div class="ia-fix-steps" v-if="!f.isCommand">
+                      <div v-for="(step, si) in parseFixSteps(f.fix)" :key="si" class="ia-fix-step">
+                        <span class="ia-fix-num">{{ si + 1 }}</span>
+                        <span>{{ step }}</span>
+                      </div>
+                    </div>
+                    <p v-if="f.isCommand" style="font-size:12.5px;color:var(--accent);line-height:1.5;margin-bottom:10px;">
+                      {{ f.title }}. Ejecuta el siguiente comando para aplicar la corrección:
+                    </p>
+                    <div v-if="f.isCommand" class="ia-cmd-box">
+                      <code class="ia-cmd-code">{{ f.fix }}</code>
+                      <button class="ia-copy-btn"
+                              :class="{ copied: copiedKey === f.fix }"
+                              @click.stop="copyCommand(f.fix)">
+                        {{ copiedKey === f.fix ? '✓ Copiado' : 'Copiar' }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="ia-detail-info-only">
+                  Este hallazgo es informativo. No requiere acción inmediata.
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Footer -->
+        <div class="ia-footer" v-if="auditData.scanMeta">
+          LoCoAudit · audit-image · {{ scanTime }}
+        </div>
+
+      </div><!-- /ia-main -->
+    </div><!-- /done -->
+  </div>
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      state: 'idle',
+      auditData: null,
+      openFindings: {},
+      copiedKey: null,
+      filterSev: 'all',
+      filterType: 'all'
+    };
+  },
+
+  computed: {
+    maxSev() {
+      return (this.auditData && this.auditData.summary && this.auditData.summary.maxSeverity) || 'info';
+    },
+
+    counts() {
+      var c = (this.auditData && this.auditData.summary && this.auditData.summary.counts) || {};
+      return {
+        critical: c.critical || 0,
+        high:     c.high     || 0,
+        medium:   c.medium   || 0,
+        low:      c.low      || 0
+      };
+    },
+
+    riskLabel() {
+      var MAP = {
+        critical: 'Riesgo Crítico', high: 'Riesgo Alto',
+        medium: 'Riesgo Moderado', low: 'Riesgo Bajo', info: 'Sin Riesgo'
+      };
+      return MAP[this.maxSev] || this.maxSev;
+    },
+
+    riskClass() {
+      return this.maxSev;
+    },
+
+    scanTime() {
+      var ts = this.auditData && this.auditData.timestamp;
+      if (!ts) return '—';
+      return new Date(ts).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+    },
+
+    durLabel() {
+      var ms = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.durationMs;
+      if (!ms) return '—';
+      return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+    },
+
+    runningContainers() {
+      var docker = this.auditData && this.auditData.raw && this.auditData.raw.docker;
+      var containers = docker && docker.containers;
+      if (!Array.isArray(containers)) return [];
+      return containers.filter(function(c) { return c.running; });
+    },
+
+    allContainers() {
+      var docker = this.auditData && this.auditData.raw && this.auditData.raw.docker;
+      var containers = docker && docker.containers;
+      return Array.isArray(containers) ? containers : [];
+    },
+
+    images() {
+      var docker = this.auditData && this.auditData.raw && this.auditData.raw.docker;
+      var imgs = docker && docker.images;
+      return Array.isArray(imgs) ? imgs : [];
+    },
+
+    filteredFindings() {
+      var findings = (this.auditData && this.auditData.findings) || [];
+      var self = this;
+      return findings.filter(function(f) {
+        if (self.filterSev !== 'all' && f.severity !== self.filterSev) return false;
+        if (self.filterType === 'cve' && !self.findingIsCVE(f)) return false;
+        if (self.filterType === 'config' && !self.findingIsConfig(f)) return false;
+        return true;
+      });
+    },
+
+    donutTotal() {
+      var c = this.counts;
+      return c.critical + c.high + c.medium + c.low;
+    },
+
+    // Donut SVG puro — r=60, cx=cy=80, C≈376.99
+    donutSegments() {
+      var C = 2 * Math.PI * 60;
+      var c = this.counts;
+      var total = this.donutTotal;
+      if (total === 0) return [];
+      var sevs = [
+        { key: 'critical', color: '#EF4444', count: c.critical },
+        { key: 'high',     color: '#F97316', count: c.high     },
+        { key: 'medium',   color: '#EAB308', count: c.medium   },
+        { key: 'low',      color: '#22C55E', count: c.low      }
+      ].filter(function(s) { return s.count > 0; });
+
+      var offset = C / 4; // start at 12 o'clock
+      return sevs.map(function(s) {
+        var arc = (s.count / total) * C;
+        var seg = {
+          key:        s.key,
+          color:      s.color,
+          count:      s.count,
+          dasharray:  arc.toFixed(2) + ' ' + (C - arc).toFixed(2),
+          dashoffset: offset.toFixed(2)
+        };
+        offset -= arc;
+        return seg;
+      });
+    },
+
+    urgencyCards() {
+      return [
+        { sev: 'critical', action: 'Acción inmediata',     icon: '🔴' },
+        { sev: 'high',     action: 'Resolver esta semana', icon: '🟠' },
+        { sev: 'medium',   action: 'Cuando puedas',        icon: '🟡' },
+        { sev: 'low',      action: 'Opcional',             icon: '🟢' }
+      ];
+    },
+
+    typeFilters() {
+      return [
+        { val: 'all',    label: 'Todo'     },
+        { val: 'cve',    label: '🛡 CVE'   },
+        { val: 'config', label: '⚙ Config' }
+      ];
+    }
+  },
+
+  watch: {
+    msg: {
+      deep: false,
+      handler(newMsg) {
+        if (!newMsg) return;
+        if (!newMsg.payload || !newMsg.payload.findings) {
+          this.state = 'scanning';
+          return;
+        }
+        this.auditData    = newMsg.payload;
+        this.state        = 'done';
+        this.openFindings = {};
+        this.filterSev    = 'all';
+        this.filterType   = 'all';
+      }
+    }
+  },
+
+  methods: {
+    toggleFinding(key) {
+      this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
+    },
+
+    findingIsCVE(f) {
+      return f.id && f.id.startsWith('IMG-CVE');
+    },
+
+    findingIsConfig(f) {
+      return f.id && !f.id.startsWith('IMG-CVE');
+    },
+
+    // cuenta findings CVE asociados a una imagen
+    // soporta campo extra f.image (repository:tag) o coincidencia en evidence/title
+    cvesForImage(img) {
+      var fullName = img.repository + ':' + img.tag;
+      var findings = (this.auditData && this.auditData.findings) || [];
+      return findings.filter(function(f) {
+        if (!f.id || !f.id.startsWith('IMG-CVE')) return false;
+        return f.image === fullName ||
+               (f.evidence || '').includes(fullName) ||
+               (f.title    || '').includes(img.repository);
+      }).length;
+    },
+
+    // severidad máxima de findings asociados a una imagen
+    maxSevForImage(img) {
+      var fullName = img.repository + ':' + img.tag;
+      var findings = (this.auditData && this.auditData.findings) || [];
+      var order = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+      var best = null;
+      findings.forEach(function(f) {
+        var match = f.image === fullName ||
+                    (f.evidence || '').includes(fullName) ||
+                    (f.title    || '').includes(img.repository);
+        if (!match) return;
+        var sev = (f.severity || 'info').toLowerCase();
+        if (!best || (order[sev] || 0) > (order[best] || 0)) best = sev;
+      });
+      return best;
+    },
+
+    // findings cuyo title / target / evidence contienen el nombre del contenedor
+    relatedFindings(containerName) {
+      var findings = (this.auditData && this.auditData.findings) || [];
+      return findings.filter(function(f) {
+        return (f.title    || '').includes(containerName) ||
+               f.target === containerName ||
+               (f.evidence || '').includes(containerName);
+      });
+    },
+
+    // severidad máxima entre findings relacionados con un contenedor
+    containerRisk(containerName) {
+      var related = this.relatedFindings(containerName);
+      var order = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+      var best = 'none';
+      related.forEach(function(f) {
+        var sev = (f.severity || 'info').toLowerCase();
+        if (best === 'none' || (order[sev] || 0) > (order[best] || 0)) best = sev;
+      });
+      return best;
+    },
+
+    // conteo de hallazgos por severidad para el badge de un contenedor
+    sevCountFor(containerName, sev) {
+      return this.relatedFindings(containerName).filter(function(f) {
+        return f.severity === sev;
+      }).length;
+    },
+
+    // color rgba para las layer-strips decorativas del contenedor
+    containerStripColor(containerName, i) {
+      var risk = this.containerRisk(containerName);
+      var opacity = (0.7 - i * 0.2).toFixed(2);
+      if (risk === 'critical') return 'rgba(239,68,68,'  + opacity + ')';
+      if (risk === 'high')     return 'rgba(249,115,22,' + opacity + ')';
+      if (risk === 'medium')   return 'rgba(234,179,8,'  + opacity + ')';
+      var dimOp = (0.5 - i * 0.15).toFixed(2);
+      return 'rgba(124,58,237,' + dimOp + ')';
+    },
+
+    parseFixSteps(fix) {
+      if (!fix) return [];
+      if (fix.indexOf('\n') >= 0) {
+        return fix.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      }
+      if (fix.indexOf('. ') >= 0) {
+        var parts = fix.split('. ').map(function(s) { return s.trim(); }).filter(Boolean);
+        return parts.map(function(s, i) { return i < parts.length - 1 ? s + '.' : s; });
+      }
+      return [fix];
+    },
+
+    sevLabel(sev) {
+      var MAP = { critical: 'Crítico', high: 'Alto', medium: 'Medio', low: 'Bajo', info: 'Info' };
+      return MAP[(sev || '').toLowerCase()] || (sev || '').toUpperCase();
+    },
+
+    formatDate(iso) {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+    },
+
+    fmtBytes(b) {
+      if (!b) return '—';
+      if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+      return (b / 1e6).toFixed(0) + ' MB';
+    },
+
+    async copyCommand(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        this.copiedKey = text;
+        setTimeout(() => { this.copiedKey = null; }, 2000);
+      } catch(e) {
+        const el = document.createElement('textarea');
+        el.value = text;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+        this.copiedKey = text;
+        setTimeout(() => { this.copiedKey = null; }, 2000);
+      }
+    }
+  },
+
+  mounted() {}
+};
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --indigo:       #1E1B4B;
+    --accent:       #7C3AED;
+    --accent-light: #EDE9FE;
+    --accent-dim:   rgba(124,58,237,.12);
+    --accent-mid:   #A78BFA;
+    --accent-pale:  #C4B5FD;
+    --accent-border:#DDD6FE;
+
+    --critical:        #EF4444;
+    --critical-bg:     #FEF2F2;
+    --critical-border: #FECACA;
+    --high:            #F97316;
+    --high-bg:         #FFF7ED;
+    --high-border:     #FED7AA;
+    --medium:          #EAB308;
+    --medium-bg:       #FEFCE8;
+    --medium-border:   #FEF08A;
+    --low:             #22C55E;
+    --low-bg:          #F0FDF4;
+    --low-border:      #BBF7D0;
+
+    --mono: 'SF Mono', 'Consolas', 'Courier New', monospace;
+    --sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --radius: 12px;
+    --radius-sm: 8px;
+  }
+
+  body {
+    font-family: var(--sans);
+    background: var(--accent-light);
+    color: var(--indigo);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track  { background: var(--accent-border); }
+  ::-webkit-scrollbar-thumb  { background: var(--accent); border-radius: 3px; }
+
+  /* ── STATES ───────────────────────────────────────────────── */
+  .ia-state-center {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 60px 20px; text-align: center;
+    color: var(--accent);
+  }
+  .ia-state-ico {
+    font-size: 3rem; margin-bottom: 14px;
+    animation: iaPulse 2.2s ease-in-out infinite;
+  }
+  .ia-state-title { font-size: 1.05rem; font-weight: 700; color: var(--indigo); margin-bottom: 8px; }
+  .ia-state-desc  { font-size: .88rem; line-height: 1.4; color: var(--accent-mid); }
+  .ia-spinner {
+    width: 48px; height: 48px;
+    border: 4px solid var(--accent-border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: iaSpin 1s linear infinite;
+    margin-bottom: 16px;
+  }
+  @keyframes iaPulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+  @keyframes iaSpin  { to { transform: rotate(360deg); } }
+
+  /* ── HEADER ───────────────────────────────────────────────── */
+  .ia-header {
+    background: var(--indigo);
+    padding: 20px 24px 16px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+
+  .ia-header-row1 {
+    display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap;
+  }
+
+  .ia-header-icon {
+    width: 48px; height: 48px; flex-shrink: 0;
+    background: rgba(124,58,237,.3);
+    border: 1px solid rgba(196,181,253,.3);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .ia-header-title-block { flex: 1; min-width: 0; }
+
+  .ia-breadcrumb {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .12em;
+    color: var(--accent-mid);
+    margin-bottom: 4px;
+  }
+  .ia-breadcrumb-sep { color: #4C3A8A; }
+
+  .ia-header-title {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-size: 20px; font-weight: 700;
+    color: var(--accent-light); letter-spacing: -.01em;
+  }
+
+  .ia-header-subtitle {
+    font-size: 12px; color: #8B7EC8; margin-top: 2px;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .ia-sep { color: #4C3A8A; margin: 0 2px; }
+  .ia-mono { font-family: var(--mono); font-size: 11px; }
+
+  /* Risk badge on dark bg */
+  .ia-risk-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 6px;
+    font-size: 11px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .08em;
+  }
+  .ia-risk-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .ia-risk-badge.critical { background: var(--critical); color: #fff; }
+  .ia-risk-badge.high     { background: var(--high);     color: #fff; }
+  .ia-risk-badge.medium   { background: var(--medium);   color: #fff; }
+  .ia-risk-badge.low      { background: var(--low);      color: #fff; }
+  .ia-risk-badge.info     { background: #0EA5E9;          color: #fff; }
+
+  /* Header stats */
+  .ia-header-stats {
+    display: flex; gap: 8px; align-items: center; margin-left: auto; flex-wrap: wrap;
+  }
+  .ia-stat-block {
+    background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 10px;
+    padding: 8px 14px; text-align: center; min-width: 72px;
+  }
+  .ia-stat-block.ia-stat-accent {
+    background: rgba(124,58,237,.4);
+    border-color: rgba(196,181,253,.5);
+  }
+  .ia-stat-num {
+    font-size: 20px; font-weight: 800;
+    color: var(--accent-light); line-height: 1;
+  }
+  .ia-stat-accent .ia-stat-num { color: var(--accent-pale); }
+  .ia-stat-label { font-size: 10px; color: #8B7EC8; margin-top: 2px; }
+
+  /* Pills row */
+  .ia-header-row2 {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  }
+  .ia-pill {
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(196,181,253,.2);
+    color: var(--accent-pale);
+    font-size: 11px; padding: 3px 10px; border-radius: 20px;
+  }
+
+  /* ── MAIN ─────────────────────────────────────────────────── */
+  .ia-main {
+    max-width: 1200px; margin: 0 auto;
+    padding: 20px 24px 40px;
+    display: flex; flex-direction: column; gap: 24px;
+  }
+
+  /* ── SECTION LABEL ────────────────────────────────────────── */
+  .ia-section-label {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase; letter-spacing: .1em;
+    margin-bottom: 10px;
+  }
+  .ia-title-bar {
+    width: 3px; height: 16px;
+    background: var(--accent); border-radius: 2px;
+    display: inline-block; flex-shrink: 0;
+  }
+  .ia-section-count {
+    font-weight: 400; color: var(--accent-mid);
+    text-transform: none; letter-spacing: 0;
+  }
+
+  /* ── URGENCY COUNTERS ─────────────────────────────────────── */
+  .ia-counters-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+
+  .ia-counter-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: transform .15s, box-shadow .15s;
+    border: 2px solid var(--accent-border);
+    border-top-width: 4px;
+  }
+  .ia-counter-card:hover { transform: translateY(-2px); }
+
+  .ia-counter-card.ia-sev-critical { border-color: var(--critical-border); border-top-color: var(--critical); box-shadow: 0 2px 12px var(--critical-border); }
+  .ia-counter-card.ia-sev-high     { border-color: var(--high-border);     border-top-color: var(--high);     box-shadow: 0 2px 12px var(--high-border); }
+  .ia-counter-card.ia-sev-medium   { border-color: var(--medium-border);   border-top-color: var(--medium);   box-shadow: 0 2px 12px var(--medium-border); }
+  .ia-counter-card.ia-sev-low      { border-color: var(--low-border);      border-top-color: var(--low);      box-shadow: 0 2px 12px var(--low-border); }
+
+  .ia-counter-card.ia-counter-filtered { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .ia-counter-top { display: flex; justify-content: space-between; align-items: baseline; }
+  .ia-counter-num {
+    font-size: 36px; font-weight: 800; line-height: 1;
+  }
+  .ia-sev-critical .ia-counter-num { color: var(--critical); }
+  .ia-sev-high     .ia-counter-num { color: var(--high); }
+  .ia-sev-medium   .ia-counter-num { color: var(--medium); }
+  .ia-sev-low      .ia-counter-num { color: var(--low); }
+  .ia-counter-icon { font-size: 18px; }
+
+  .ia-counter-sev {
+    font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .06em; margin-top: 4px;
+  }
+  .ia-sev-critical .ia-counter-sev { color: var(--critical); }
+  .ia-sev-high     .ia-counter-sev { color: var(--high); }
+  .ia-sev-medium   .ia-counter-sev { color: var(--medium); }
+  .ia-sev-low      .ia-counter-sev { color: var(--low); }
+
+  .ia-counter-sub { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+  .ia-filter-active-indicator { margin-top: 6px; font-size: 10px; font-weight: 600; color: var(--accent); }
+
+  /* ── CONTAINER CARDS ──────────────────────────────────────── */
+  .ia-empty-dashed {
+    background: #fff;
+    border: 1px dashed var(--accent-border);
+    border-radius: 10px;
+    padding: 32px; text-align: center; color: var(--accent-mid);
+  }
+
+  .ia-container-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+  }
+
+  .ia-container-card {
+    background: #fff;
+    border: 2px solid var(--accent-border);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 4px 16px rgba(124,58,237,.06);
+  }
+  .ia-container-card.ia-crisk-critical { border-color: var(--critical); box-shadow: 0 4px 16px rgba(239,68,68,.15); }
+  .ia-container-card.ia-crisk-high     { border-color: var(--high);     box-shadow: 0 4px 16px rgba(249,115,22,.12); }
+  .ia-container-card.ia-crisk-medium   { border-color: var(--medium);   box-shadow: 0 4px 16px rgba(234,179,8,.12); }
+  .ia-container-card.ia-crisk-low      { border-color: var(--low);      }
+
+  /* Layer strips (decorative top bars) */
+  .ia-layer-strip {
+    position: absolute; top: 0; right: 0;
+    height: 3px;
+    border-bottom-left-radius: 2px;
+  }
+  .ia-strip-0 { width: 95%; }
+  .ia-strip-1 { width: 89%; }
+  .ia-strip-2 { width: 83%; }
+
+  .ia-container-body { padding: 16px 16px 14px; }
+
+  .ia-container-top {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 8px;
+  }
+  .ia-container-name {
+    font-size: 16px; font-weight: 700; color: var(--indigo); margin-bottom: 4px;
+  }
+  .ia-container-image {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--accent); background: var(--accent-light);
+    padding: 2px 6px; border-radius: 4px; display: inline-block;
+  }
+  .ia-status-badge {
+    padding: 3px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 600; white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .ia-running { background: var(--low-bg); color: #15803D; border: 1px solid var(--low-border); }
+  .ia-stopped { background: #F8FAFC;       color: #64748B; border: 1px solid #E2E8F0; }
+
+  .ia-ports-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+  .ia-port-chip {
+    font-family: var(--mono); font-size: 11px;
+    background: #F1F5F9; color: #475569;
+    padding: 2px 7px; border-radius: 4px;
+  }
+
+  .ia-container-findings {
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid #F3F4F6;
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  }
+  .ia-findings-prefix { font-size: 11px; color: #9CA3AF; }
+
+  /* Severity badges (shared) */
+  .ia-mini-sev-badge, .ia-sev-badge, .ia-cve-badge {
+    display: inline-block;
+    font-size: 11px; font-weight: 600;
+    padding: 1px 7px; border-radius: 4px;
+    border: 1px solid transparent;
+  }
+  .ia-badge-critical { background: var(--critical-bg); color: #B91C1C; border-color: var(--critical-border); }
+  .ia-badge-high     { background: var(--high-bg);     color: #C2410C; border-color: var(--high-border); }
+  .ia-badge-medium   { background: var(--medium-bg);   color: #A16207; border-color: var(--medium-border); }
+  .ia-badge-low      { background: var(--low-bg);      color: #15803D; border-color: var(--low-border); }
+  .ia-badge-info     { background: #F0F9FF;             color: #0369A1; border-color: #BAE6FD; }
+
+  /* ── DONUT + IMAGES ROW ───────────────────────────────────── */
+  .ia-mid-row {
+    display: grid;
+    grid-template-columns: 1fr 1.6fr;
+    gap: 16px;
+  }
+
+  .ia-card {
+    background: #fff;
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+
+  .ia-donut-wrap {
+    display: flex; align-items: center; gap: 20px;
+  }
+  .ia-donut-svg {
+    width: 160px; height: 160px; flex-shrink: 0;
+  }
+  .ia-donut-total {
+    font-size: 28px; font-weight: 700; fill: var(--accent);
+    font-family: var(--sans);
+  }
+  .ia-donut-sub {
+    font-size: 10px; fill: var(--accent-mid);
+    font-family: var(--sans);
+  }
+
+  .ia-donut-legend { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  .ia-legend-item  { display: flex; align-items: center; gap: 8px; }
+  .ia-legend-dot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .ia-legend-name  { font-size: 12px; font-weight: 600; color: #374151; min-width: 44px; }
+  .ia-legend-bar-track {
+    flex: 1; height: 6px; background: #F3F4F6;
+    border-radius: 3px; overflow: hidden;
+  }
+  .ia-legend-bar-fill {
+    height: 100%; border-radius: 3px;
+    transition: width .8s ease;
+  }
+  .ia-legend-count { font-size: 12px; font-weight: 700; min-width: 24px; text-align: right; }
+
+  /* Images list */
+  .ia-images-list { display: flex; flex-direction: column; gap: 8px; }
+  .ia-image-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 8px;
+    background: #FAFAF9; border: 1px solid #F3F4F6;
+  }
+
+  /* Layer icon (stacked slabs) */
+  .ia-layer-icon {
+    width: 32px; height: 32px; flex-shrink: 0;
+    position: relative;
+  }
+  .ia-layer-slab {
+    position: absolute; height: 6px; border-radius: 2px;
+    border: 1px solid;
+  }
+  .ia-slab-0 { width: 28px; bottom: 0;  left: 0; }
+  .ia-slab-1 { width: 22px; bottom: 6px; left: 3px; }
+  .ia-slab-2 { width: 16px; bottom: 12px; left: 6px; }
+
+  .ia-slab-critical, .ia-slab-critical { background: var(--critical-border); border-color: var(--critical); }
+  .ia-slab-high     { background: var(--high-border);     border-color: var(--high); }
+  .ia-slab-medium   { background: var(--medium-border);   border-color: var(--medium); }
+  .ia-slab-low      { background: var(--low-border);      border-color: var(--low); }
+  .ia-slab-clean    { background: var(--accent-border);   border-color: var(--accent-pale); }
+
+  .ia-image-info { flex: 1; min-width: 0; }
+  .ia-image-name {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    color: var(--indigo);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ia-image-meta { font-size: 11px; color: #9CA3AF; margin-top: 1px; }
+
+  .ia-image-badge-wrap { flex-shrink: 0; }
+  .ia-cve-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+  .ia-clean-badge {
+    font-size: 11px; font-weight: 600;
+    background: var(--low-bg); color: #15803D;
+    border: 1px solid var(--low-border);
+    padding: 2px 8px; border-radius: 6px;
+  }
+
+  /* ── FINDINGS SECTION ─────────────────────────────────────── */
+  .ia-findings-header {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+  }
+
+  .ia-filter-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ia-filter-btn {
+    padding: 4px 12px; border-radius: 20px;
+    font-size: 11px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--accent-border);
+    background: #fff; color: var(--accent);
+    transition: all .15s;
+  }
+  .ia-filter-btn.active {
+    background: var(--accent); color: #fff;
+    border-color: var(--accent);
+  }
+  .ia-filter-btn:hover:not(.active) { background: var(--accent-light); }
+  .ia-clear-btn {
+    border-color: var(--critical-border);
+    background: var(--critical-bg); color: #B91C1C;
+  }
+  .ia-clear-btn:hover { background: #FECACA; }
+
+  .ia-findings-list { display: flex; flex-direction: column; gap: 6px; }
+
+  .ia-finding-item {
+    background: #fff;
+    border: 1px solid var(--accent-border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(124,58,237,.05);
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .ia-finding-item.ia-finding-open {
+    border-color: var(--accent-pale);
+    box-shadow: 0 4px 16px rgba(124,58,237,.1);
+  }
+
+  .ia-finding-row {
+    width: 100%; background: none; border: none; cursor: pointer;
+    padding: 12px 14px;
+    display: flex; align-items: center; gap: 8px;
+    text-align: left;
+  }
+  .ia-finding-row:hover { background: var(--accent-light); }
+
+  .ia-type-badge {
+    font-family: var(--mono); font-size: 11px; font-weight: 700;
+    padding: 2px 7px; border-radius: 4px; flex-shrink: 0;
+  }
+  .ia-type-cve    { background: var(--accent-light); color: var(--accent); }
+  .ia-type-config { background: #FEF3C7;             color: #D97706; }
+
+  .ia-sev-badge {
+    font-size: 11px; font-weight: 600;
+    padding: 2px 7px; border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .ia-finding-title {
+    font-size: 13px; font-weight: 600; color: var(--indigo); flex: 1;
+  }
+  .ia-finding-id {
+    font-family: var(--mono); font-size: 11px; color: var(--accent-mid); flex-shrink: 0;
+  }
+  .ia-finding-chevron {
+    color: var(--accent-pale); font-size: 14px;
+    transition: transform .2s; flex-shrink: 0;
+  }
+  .ia-finding-chevron.open { transform: rotate(180deg); }
+
+  /* Expanded detail */
+  .ia-finding-detail {
+    display: none;
+    padding: 0 14px 14px;
+    border-top: 1px solid var(--accent-light);
+    animation: iaSlideDown .15s ease;
+  }
+  .ia-finding-detail.open { display: block; }
+  @keyframes iaSlideDown { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+  .ia-detail-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    padding-top: 12px;
+  }
+  .ia-detail-col {
+    border-radius: var(--radius-sm); padding: 12px;
+    border: 1px solid;
+  }
+  .ia-col-impact     { background: #FFF5F5; border-color: var(--critical-border); }
+  .ia-col-resolution { background: #F5F3FF; border-color: var(--accent-border); }
+
+  .ia-detail-col-title {
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .06em;
+    margin-bottom: 6px;
+  }
+  .ia-col-impact     .ia-detail-col-title { color: #B91C1C; }
+  .ia-col-resolution .ia-detail-col-title { color: var(--accent); }
+
+  .ia-detail-evidence {
+    font-size: 12px; color: #374151; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+  }
+
+  .ia-fix-steps { display: flex; flex-direction: column; gap: 6px; }
+  .ia-fix-step  { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: #374151; line-height: 1.5; }
+  .ia-fix-num {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    font-size: 10px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; margin-top: 1px;
+  }
+
+  /* Command box */
+  .ia-cmd-box {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 10px;
+    background: var(--indigo);
+    border-radius: 8px; padding: 10px 14px;
+  }
+  .ia-cmd-code {
+    flex: 1; font-family: var(--mono); font-size: 12px;
+    color: var(--accent-pale);
+    overflow-x: auto; white-space: nowrap;
+  }
+  .ia-copy-btn {
+    flex-shrink: 0;
+    background: var(--accent); color: #fff;
+    border: none; border-radius: 6px;
+    padding: 4px 10px; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: background .2s;
+  }
+  .ia-copy-btn:hover  { background: #6D28D9; }
+  .ia-copy-btn.copied { background: var(--low); }
+
+  .ia-detail-info-only {
+    padding: 12px 0;
+    font-style: italic; font-size: 12.5px; color: #6B7280;
+  }
+
+  /* ── FOOTER ───────────────────────────────────────────────── */
+  .ia-footer {
+    text-align: center;
+    padding: 8px 0;
+    font-size: 11px; color: var(--accent-mid);
+  }
+</style>
