@@ -23,36 +23,51 @@ const { execCommand, commandExists } = require("../../../lib/executor");
 const TIMEOUT_MS = 120000;
 
 /**
- * Determina el directorio a escanear según la plataforma.
+ * Determina el directorio a escanear y los flags --skip-dirs según plataforma.
  *
  * Se escanean rutas de software instalado a nivel de sistema, NO $HOME,
  * para evitar que proyectos de desarrollo personales (node_modules, venvs,
  * .cargo, etc.) inflen la severidad del informe con CVEs propios del
  * entorno de desarrollo del usuario y no del sistema auditado.
  *
- * - win32  → "C:\Program Files"      (software instalado globalmente)
- * - darwin → resultado de `brew --prefix` (Homebrew) o "/usr/local" si falla
- * - linux  → "/usr/lib"              (paquetes del sistema)
+ * - win32  → "C:\Program Files"
+ * - darwin → /opt/homebrew/Cellar (o brew --prefix/Cellar como fallback)
+ *            Se excluyen /share/ y /examples/ de cada fórmula porque
+ *            contienen archivos de ejemplo distribuidos por upstream
+ *            (templates, demos, lockfiles de proyectos de muestra) que
+ *            no son dependencias activas del usuario. Los CVEs en esos
+ *            archivos no son accionables: el usuario no puede ni debe
+ *            parcharlos directamente.
+ *            También se excluye /Library/Homebrew, que contiene los
+ *            meta-archivos de Homebrew (Gemfile.lock de la propia
+ *            herramienta brew), no del software instalado.
+ * - linux  → "/usr/lib"
  *
- * @returns {string} Ruta absoluta del target a escanear.
+ * @returns {{ target: string, skipDirs: string|null }}
  */
 function resolveScanTarget() {
   if (process.platform === "win32") {
-    return "C:\\Program Files";
+    return { target: "C:\\Program Files", skipDirs: null };
   }
 
   if (process.platform === "darwin") {
+    let prefix = "/opt/homebrew";
     try {
-      const prefix = execSync("brew --prefix", { timeout: 5000 })
-        .toString()
-        .trim();
-      if (prefix) return prefix;
-    } catch (_) { /* brew no disponible o falla → usar fallback */ }
-    return "/usr/local";
+      const raw = execSync("brew --prefix", { timeout: 5000 }).toString().trim();
+      if (raw) prefix = raw;
+    } catch (_) { /* brew no disponible → usar /opt/homebrew */ }
+
+    return {
+      target: `${prefix}/Cellar`,
+      // Los /share/ y /examples/ dentro de cada fórmula son archivos de ejemplo
+      // distribuidos por upstream, no dependencias activas.
+      // /Library/Homebrew contiene meta-archivos de la herramienta brew.
+      skipDirs: `${prefix}/Cellar/*/*/share,${prefix}/Cellar/*/*/examples,${prefix}/Library/Homebrew`,
+    };
   }
 
   // linux y cualquier otra plataforma unix
-  return "/usr/lib";
+  return { target: "/usr/lib", skipDirs: null };
 }
 
 /**
@@ -67,12 +82,13 @@ async function runTrivyFs() {
     return { skipped: true, reason: "trivy not installed" };
   }
 
-  const scanTarget = resolveScanTarget();
+  const { target: scanTarget, skipDirs } = resolveScanTarget();
+  const skipFlag = skipDirs ? ` --skip-dirs "${skipDirs}"` : "";
 
   let stdout;
   try {
     stdout = await execCommand(
-      `trivy fs --format json --quiet --scanners vuln ${scanTarget}`,
+      `trivy fs --format json --quiet --scanners vuln${skipFlag} ${scanTarget}`,
       TIMEOUT_MS
     );
   } catch (err) {
