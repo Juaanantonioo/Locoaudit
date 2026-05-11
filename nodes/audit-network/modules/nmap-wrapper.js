@@ -38,6 +38,7 @@
 
 const { execCommand, commandExists } = require("../../../lib/executor");
 const { PORT_CATALOG }               = require("./port-scanner");
+const { getFixForPort }              = require("./network-utils");
 
 // ── Parser XML ────────────────────────────────────────────────────────────────
 
@@ -115,7 +116,7 @@ function applyMeta(parsed) {
   return {
     ...parsed,
     severity: meta ? meta.severity : "low",
-    fix:      meta ? meta.fix      : `Investiga qué proceso usa el puerto ${parsed.port} con 'lsof -i :${parsed.port}'.`,
+    fix:      getFixForPort(parsed.port, process.platform),
   };
 }
 

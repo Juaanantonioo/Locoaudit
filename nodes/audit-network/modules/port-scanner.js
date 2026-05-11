@@ -51,6 +51,7 @@
  */
 
 const net = require("net");
+const { getFixForPort } = require("./network-utils");
 
 // ── Catálogo de puertos ───────────────────────────────────────────────────────
 
@@ -248,7 +249,6 @@ async function scanPorts(options = {}) {
     const meta = PORT_CATALOG[port] ?? {
       service:  "unknown",
       severity: "low",
-      fix:      `Ejecutar 'lsof -i :${port}' para identificar el proceso que usa este puerto.`,
     };
 
     return {
@@ -257,7 +257,7 @@ async function scanPorts(options = {}) {
       state:    "open",
       service:  meta.service,
       severity: meta.severity,
-      fix:      meta.fix,
+      fix:      getFixForPort(port, process.platform),
     };
   });
 
