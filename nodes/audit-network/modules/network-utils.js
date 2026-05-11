@@ -101,9 +101,9 @@ function getFixForPort(port, platform) {
       }
       if (plat === "darwin") {
         return (
-          "Para deshabilitar: sudo launchctl stop com.openssh.sshd && sudo launchctl disable system/com.openssh.sshd\n" +
+          "Para deshabilitar: sudo systemsetup -setremotelogin off\n" +
           "Para asegurar: edita /etc/ssh/sshd_config → PermitRootLogin no, PasswordAuthentication no.\n" +
-          "Luego: sudo launchctl stop com.openssh.sshd && sudo launchctl start com.openssh.sshd"
+          "Luego reactiva con: sudo systemsetup -setremotelogin on"
         );
       }
       return (
