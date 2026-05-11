@@ -83,4 +83,136 @@ function toBaseUrl(protocol, host, port) {
   return `${protocol}://${host}${showPort ? ":" + port : ""}`;
 }
 
-module.exports = { parsePortsList, parseTargets, isLocalTarget, toBaseUrl };
+/**
+ * Devuelve el fix concreto para un puerto conocido según la plataforma.
+ * Para puertos no catalogados devuelve comandos genéricos de identificación.
+ *
+ * @param {number} port
+ * @param {string} platform  process.platform: 'darwin' | 'linux' | 'win32'
+ * @returns {string|null}
+ */
+function getFixForPort(port, platform) {
+  const plat = platform || process.platform;
+
+  switch (port) {
+    case 22: // SSH
+      if (plat === "win32") {
+        return "Desactiva el servicio OpenSSH en Servicios del sistema (services.msc → OpenSSH Server → Detener y deshabilitar).";
+      }
+      if (plat === "darwin") {
+        return (
+          "Para deshabilitar: sudo launchctl stop com.openssh.sshd && sudo launchctl disable system/com.openssh.sshd\n" +
+          "Para asegurar: edita /etc/ssh/sshd_config → PermitRootLogin no, PasswordAuthentication no.\n" +
+          "Luego: sudo launchctl stop com.openssh.sshd && sudo launchctl start com.openssh.sshd"
+        );
+      }
+      return (
+        "Para deshabilitar: sudo systemctl stop ssh && sudo systemctl disable ssh\n" +
+        "Para asegurar: edita /etc/ssh/sshd_config → PermitRootLogin no, PasswordAuthentication no.\n" +
+        "Luego: sudo systemctl restart ssh"
+      );
+
+    case 21: // FTP
+      if (plat === "win32") {
+        return "Desactiva el servicio FTP en Panel de control → Características de Windows → IIS → Servidor FTP.";
+      }
+      if (plat === "darwin") {
+        return "sudo launchctl disable system/ftp";
+      }
+      return "sudo systemctl stop vsftpd && sudo systemctl disable vsftpd";
+
+    case 23: // Telnet
+      if (plat === "win32") {
+        return "Desactiva el cliente Telnet en Panel de control → Características de Windows → Cliente Telnet.";
+      }
+      if (plat === "darwin") {
+        return "sudo launchctl disable system/telnet";
+      }
+      return "sudo systemctl stop telnet && sudo apt remove telnetd";
+
+    case 80:  // HTTP
+    case 443: // HTTPS
+      if (plat === "win32") {
+        return (
+          "Si no necesitas servidor web: net stop w3svc\n" +
+          "Si lo necesitas: asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
+        );
+      }
+      return (
+        "Si no necesitas servidor web: sudo systemctl stop nginx || sudo systemctl stop apache2\n" +
+        "Si lo necesitas: asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
+      );
+
+    case 3306: // MySQL
+      if (plat === "win32") {
+        return (
+          "Limita acceso: en my.ini añade bind-address = 127.0.0.1 bajo [mysqld].\n" +
+          "Luego reinicia el servicio MySQL desde services.msc."
+        );
+      }
+      return (
+        "Limita acceso: edita /etc/mysql/mysql.conf.d/mysqld.cnf → bind-address = 127.0.0.1\n" +
+        "Luego: sudo systemctl restart mysql"
+      );
+
+    case 5432: // PostgreSQL
+      if (plat === "win32") {
+        return (
+          "Limita acceso: edita postgresql.conf → listen_addresses = 'localhost'\n" +
+          "y pg_hba.conf para restringir IPs. Luego reinicia el servicio PostgreSQL desde services.msc."
+        );
+      }
+      return (
+        "Limita acceso: edita postgresql.conf → listen_addresses = 'localhost'\n" +
+        "y pg_hba.conf para restringir IPs. Luego: sudo systemctl restart postgresql"
+      );
+
+    case 6379: // Redis
+      if (plat === "win32") {
+        return (
+          "Edita redis.windows.conf → bind 127.0.0.1\n" +
+          "Añade requirepass con contraseña fuerte. Luego reinicia el servicio Redis desde services.msc."
+        );
+      }
+      return (
+        "Edita /etc/redis/redis.conf → bind 127.0.0.1\n" +
+        "Añade requirepass con contraseña fuerte. Luego: sudo systemctl restart redis"
+      );
+
+    case 27017: // MongoDB
+      if (plat === "win32") {
+        return (
+          "Edita mongod.cfg → bindIp: 127.0.0.1\n" +
+          "Habilita autenticación: security.authorization: enabled. Luego reinicia el servicio MongoDB."
+        );
+      }
+      return (
+        "Edita /etc/mongod.conf → bindIp: 127.0.0.1\n" +
+        "Habilita autenticación: security.authorization: enabled"
+      );
+
+    default: {
+      if (plat === "win32") {
+        return (
+          `Identifica el proceso: netstat -ano | findstr :${port}\n` +
+          "Si no reconoces el servicio, bloquea el puerto en el firewall:\n" +
+          `netsh advfirewall firewall add rule name="Block ${port}" dir=in action=block protocol=TCP localport=${port}`
+        );
+      }
+      if (plat === "darwin") {
+        return (
+          `Identifica el proceso: sudo lsof -i :${port}\n` +
+          "Si no reconoces el servicio, bloquea el puerto en el firewall:\n" +
+          "sudo /usr/libexec/ApplicationFirewall/socketfilterfw --blockapp <app>"
+        );
+      }
+      return (
+        `Identifica el proceso: sudo lsof -i :${port}\n` +
+        "Si no reconoces el servicio, bloquea el puerto en el firewall:\n" +
+        `sudo ufw deny ${port}`
+      );
+    }
+  }
+}
+
+module.exports = { parsePortsList, parseTargets, isLocalTarget, toBaseUrl, getFixForPort };
