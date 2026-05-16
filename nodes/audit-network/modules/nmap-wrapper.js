@@ -36,9 +36,38 @@
  * @typedef {{ skipped: true, reason: string } | { skipped: false, ports: NmapPort[] }} NmapResult
  */
 
+const os                             = require("os");
 const { execCommand, commandExists } = require("../../../lib/executor");
 const { PORT_CATALOG }               = require("./port-scanner");
 const { getFixForPort }              = require("./network-utils");
+
+/**
+ * Detecta qué interfaz de red local está en la misma subred que targetIp.
+ * Necesario en macOS cuando hay varias interfaces activas en la misma subred:
+ * sin -e, nmap falla con SO_ERROR 50 (ENETDOWN) al no saber cuál usar.
+ * Para localhost devuelve null (no hace falta -e).
+ *
+ * @param {string} targetIp
+ * @returns {string|null}  Nombre de interfaz (ej: "en6") o null
+ */
+function findInterfaceForTarget(targetIp) {
+  if (targetIp === "127.0.0.1" || targetIp === "localhost") return null;
+  const targetParts = targetIp.split(".").map(Number);
+  if (targetParts.length !== 4 || targetParts.some(isNaN)) return null;
+
+  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+    for (const addr of addrs) {
+      if (addr.family !== "IPv4" || addr.internal) continue;
+      const addrParts = addr.address.split(".").map(Number);
+      const maskParts = addr.netmask.split(".").map(Number);
+      const sameSubnet = maskParts.every(
+        (mask, i) => (addrParts[i] & mask) === (targetParts[i] & mask)
+      );
+      if (sameSubnet) return name;
+    }
+  }
+  return null;
+}
 
 // ── Parser XML ────────────────────────────────────────────────────────────────
 
@@ -138,10 +167,20 @@ async function runNmap(options = {}) {
     return { skipped: true, reason: "nmap not installed" };
   }
 
+  // Construir lista de puertos: catálogo conocido + top 1000 de nmap.
+  // Sin -p, nmap solo escanea sus propios top-1000 y omite puertos como 8006
+  // (Proxmox), 10000 (Webmin) u otros paneles de gestión no estándar.
+  const catalogPorts = Object.keys(PORT_CATALOG).join(",");
+
+  // En macOS con varias interfaces en la misma subred, nmap falla con SO_ERROR 50
+  // si no se especifica explícitamente qué interfaz usar.
+  const iface = findInterfaceForTarget(target);
+  const ifaceFlag = iface ? `-e ${iface}` : "";
+
   let stdout;
   try {
     stdout = await execCommand(
-      `nmap -sV -T4 --open -oX - ${target}`,
+      `nmap -sV -T4 --open -Pn ${ifaceFlag} -p ${catalogPorts},1-1024 -oX - ${target}`.trim(),
       timeout
     );
   } catch (err) {
