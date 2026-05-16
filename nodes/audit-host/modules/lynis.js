@@ -84,8 +84,7 @@ function parseLynisReport(content) {
   return { hardeningIndex, warnings, suggestions };
 }
 
-// ── API pública ─────────────────────────────────────────────────────────────
-
+/*******************************************************
 /**
  * Ejecuta Lynis y devuelve el resultado parseado.
  * Si Lynis no está instalado devuelve { skipped: true }.

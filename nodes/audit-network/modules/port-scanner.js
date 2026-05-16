@@ -105,7 +105,7 @@ const PORT_CATALOG = {
   80:    { service: "HTTP",       severity: "info",   fix: null },
   443:   { service: "HTTPS",      severity: "info",   fix: null },
   631:   { service: "CUPS",       severity: "info",   fix: null },
-  3000:  { service: "Dev-server", severity: "info",   fix: null },
+  3000:  { service: "Dev/Grafana", severity: "medium", fix: "Puerto 3000 usado por servidores de desarrollo o Grafana. Si es Grafana expuesto en red, asegúrate de que requiere autenticación." },
   5000:  { service: "Dev-server", severity: "info",   fix: "Si no usas el receptor AirPlay, desactívalo en Ajustes del Sistema → General → AirDrop y Handoff." },
   8000:  { service: "Dev-server", severity: "info",   fix: null },
   9000:  { service: "Dev-server", severity: "info",   fix: null },
@@ -116,6 +116,16 @@ const PORT_CATALOG = {
   5353:  { service: "mDNS",       severity: "info",   fix: null },
   7000:  { service: "AirPlay",    severity: "info",   fix: "Si no usas el receptor AirPlay, desactívalo en Ajustes → General → AirDrop y Handoff." },
   8021:  { service: "macOS-svc",  severity: "info",   fix: "Puerto usado por servicios internos de macOS. Si no reconoces este servicio, ejecuta 'lsof -i :8021' en Terminal para identificarlo." },
+
+  // ── MEDIUM — paneles de gestión de servidores/homelab expuestos en red ───────
+  8006:  { service: "Proxmox-UI",  severity: "medium", fix: "Panel de gestión Proxmox expuesto en red. Restringe el acceso por IP con el firewall de Proxmox o un firewall perimetral." },
+  9090:  { service: "Cockpit",     severity: "medium", fix: "Panel Cockpit expuesto en red. Restringe el acceso por IP o desactívalo si no lo usas: sudo systemctl stop cockpit." },
+  10000: { service: "Webmin",      severity: "medium", fix: "Panel Webmin expuesto en red. Restringe el acceso por IP en Webmin → Webmin Configuration → IP Access Control." },
+  2375:  { service: "Docker-API",  severity: "high",   fix: "API Docker sin TLS expuesta en red — riesgo crítico. Deshabilítala o protégela con TLS y autenticación de cliente." },
+  2376:  { service: "Docker-TLS",  severity: "medium", fix: "API Docker con TLS expuesta en red. Verifica que los certificados de cliente sean obligatorios." },
+  9200:  { service: "Elasticsearch-HTTP", severity: "medium", fix: "Elasticsearch expuesto en red. Activa autenticación (X-Pack) o restringe el acceso por firewall." },
+  5601:  { service: "Kibana",      severity: "medium", fix: "Kibana expuesto en red. Activa autenticación o ponlo detrás de un proxy con autenticación." },
+  9093:  { service: "Prometheus",  severity: "medium", fix: "Prometheus expuesto en red. Restringe el acceso por IP o añade autenticación básica con un proxy." },
 };
 
 const ALL_PORTS = Object.keys(PORT_CATALOG).map(Number);
@@ -165,12 +175,13 @@ function parsePortsInput(input) {
 }
 
 /**
- * Intenta conectar a 127.0.0.1:port con un timeout dado.
+ * Intenta conectar a host:port con un timeout dado.
  * @param {number} port
  * @param {number} timeout  ms
+ * @param {string} [host="127.0.0.1"]
  * @returns {Promise<boolean>}  true si el puerto está abierto
  */
-function probePort(port, timeout) {
+function probePort(port, timeout, host = "127.0.0.1") {
   return new Promise((resolve) => {
     const socket = new net.Socket();
 
@@ -184,7 +195,7 @@ function probePort(port, timeout) {
     socket.on("timeout",  () => cleanup(false));
     socket.on("error",    () => cleanup(false));  // ECONNREFUSED, EHOSTUNREACH, etc.
 
-    socket.connect(port, "127.0.0.1");
+    socket.connect(port, host);
   });
 }
 
@@ -214,11 +225,12 @@ async function runWithConcurrency(tasks, concurrency) {
 // ── API pública ───────────────────────────────────────────────────────────────
 
 /**
- * Escanea puertos TCP en 127.0.0.1 y devuelve los abiertos.
+ * Escanea puertos TCP en el host indicado y devuelve los abiertos.
  *
  * @param {object}  [options]
  * @param {number}  [options.timeout=500]        ms por intento TCP
  * @param {number}  [options.concurrency=20]     workers paralelos
+ * @param {string}  [options.host="127.0.0.1"]   IP o hostname objetivo
  * @param {string}  [options.mode="standard"]    modo de escaneo:
  *   - "standard" — solo los puertos del PORT_CATALOG (~27 puertos conocidos)
  *   - "full"     — puertos 1-1024 con concurrencia controlada
@@ -231,6 +243,7 @@ async function runWithConcurrency(tasks, concurrency) {
 async function scanPorts(options = {}) {
   const timeout     = options.timeout     ?? 500;
   const concurrency = options.concurrency ?? 20;
+  const host        = options.host        || "127.0.0.1";
   const mode        = options.mode        ?? "standard";
 
   let portsToScan;
@@ -243,7 +256,7 @@ async function scanPorts(options = {}) {
   }
 
   const tasks = portsToScan.map((port) => async () => {
-    const open = await probePort(port, timeout);
+    const open = await probePort(port, timeout, host);
     if (!open) return null;
 
     const meta = PORT_CATALOG[port] ?? {

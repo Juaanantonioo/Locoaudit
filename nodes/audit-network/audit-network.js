@@ -121,7 +121,7 @@ module.exports = function (RED) {
 
         if (portSource === "native" && enablePortScan) {
           try {
-            openPorts = await scanPorts({ timeout: scanTimeout, concurrency, mode: scanMode, customPorts });
+            openPorts = await scanPorts({ timeout: scanTimeout, concurrency, host: target, mode: scanMode, customPorts });
             modulesRun.push("port-scanner");
             node.log("[audit-network] escáner: native-fallback");
           } catch (err) {
