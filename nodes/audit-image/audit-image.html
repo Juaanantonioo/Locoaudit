@@ -5,7 +5,9 @@
     RED.nodes.registerType("audit-image", {
         category: "locoaudit",
         color: "#5ae08a",
-        defaults: {},
+        defaults: {
+            llmConfig: { value: "", type: "llm-config", required: false }
+        },
         inputs: 1,
         outputs: 1,
         icon: "audit-image.svg",
@@ -14,7 +16,21 @@
 </script>
 
 <script type="text/html" data-template-name="audit-image">
-    <!-- TODO: campos de configuración -->
+
+    <!-- ── Asistente IA (opcional) ── -->
+    <div class="form-row">
+        <label for="node-input-llmConfig">
+            <i class="fa fa-comment"></i> Asistente IA
+        </label>
+        <input type="text" id="node-input-llmConfig">
+    </div>
+    <div class="form-row" style="color: #666; font-size: 0.82em; line-height: 1.5; margin-top: -6px;">
+        <i class="fa fa-info-circle"></i>
+        <strong>Opcional.</strong> Configura un modelo local (Ollama) para poder preguntar
+        dudas sobre los hallazgos desde el dashboard. Si lo dejas vacío, el chat con IA no
+        estará disponible, pero la auditoría funciona igual.
+    </div>
+
 </script>
 
 <script type="text/html" data-help-name="audit-image">
