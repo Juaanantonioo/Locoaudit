@@ -1,0 +1,89 @@
+<!-- llm-config — Nodo de configuración del chat con LLM local (Ollama) -->
+
+<script type="text/javascript">
+    RED.nodes.registerType("llm-config", {
+        category: "config",
+        defaults: {
+            name:      { value: "" },
+            ollamaUrl: { value: "http://127.0.0.1:11434", required: true },
+            model:     { value: "qwen3:8b", required: true },
+            timeoutMs: { value: 120000, required: true, validate: RED.validators.number() }
+        },
+        label: function () {
+            return this.name || this.model || "llm-config";
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="llm-config">
+
+    <div class="form-row">
+        <label for="node-config-input-name">
+            <i class="fa fa-tag"></i> Nombre
+        </label>
+        <input type="text" id="node-config-input-name" placeholder="LLM local">
+    </div>
+
+    <hr style="margin: 12px 0;">
+
+    <div class="form-row">
+        <label for="node-config-input-ollamaUrl">
+            <i class="fa fa-server"></i> URL de Ollama
+        </label>
+        <input type="text" id="node-config-input-ollamaUrl" placeholder="http://127.0.0.1:11434">
+    </div>
+
+    <div class="form-row">
+        <label for="node-config-input-model">
+            <i class="fa fa-cube"></i> Modelo
+        </label>
+        <input type="text" id="node-config-input-model" placeholder="qwen3:8b">
+    </div>
+
+    <div class="form-row">
+        <label for="node-config-input-timeoutMs">
+            <i class="fa fa-clock-o"></i> Timeout (ms)
+        </label>
+        <input type="text" id="node-config-input-timeoutMs" placeholder="120000">
+    </div>
+
+    <hr style="margin: 12px 0;">
+
+    <div class="form-row" style="color: #666; font-size: 0.85em; line-height: 1.5;">
+        <i class="fa fa-info-circle"></i>
+        Configura la conexión a un modelo de lenguaje local servido por
+        <strong>Ollama</strong>. Este nodo habilita el endpoint
+        <code>/locoaudit/chat</code>, que el panel de hallazgos usa para que el
+        usuario pueda preguntar dudas sobre cada hallazgo y recibir explicaciones
+        en lenguaje claro. No ejecuta comandos del sistema.
+    </div>
+
+</script>
+
+<script type="text/html" data-help-name="llm-config">
+    <p>
+        Nodo de configuración para el asistente de chat con un LLM local
+        (vía <a href="https://ollama.com/">Ollama</a>). Almacena la URL del
+        servidor, el modelo a usar y el timeout de las consultas.
+    </p>
+
+    <h3>Campos</h3>
+    <dl class="message-properties">
+        <dt>URL de Ollama <span class="property-type">string</span></dt>
+        <dd>URL base del servidor Ollama. Por defecto <code>http://127.0.0.1:11434</code>.</dd>
+
+        <dt>Modelo <span class="property-type">string</span></dt>
+        <dd>Nombre del modelo cargado en Ollama. Por defecto <code>qwen3:8b</code>.</dd>
+
+        <dt>Timeout (ms) <span class="property-type">number</span></dt>
+        <dd>Tiempo máximo de espera por respuesta. Por defecto <code>120000</code> (2 min).</dd>
+    </dl>
+
+    <h3>Endpoint</h3>
+    <p>
+        Al desplegar al menos un nodo <code>llm-config</code> se registra el endpoint
+        <code>POST /locoaudit/chat</code>, que recibe
+        <code>{ finding, question, history }</code> y responde
+        <code>{ ok, content }</code> o <code>{ ok:false, error }</code>.
+    </p>
+</script>

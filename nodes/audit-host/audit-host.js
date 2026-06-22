@@ -29,6 +29,11 @@ module.exports = function (RED) {
     RED.nodes.createNode(this, config);
     const node = this;
 
+    // Referencia OPCIONAL al nodo de configuración del asistente IA (tipo "llm-config").
+    // Solo habilita crear/seleccionar el config desde el editor; el chat lo sirve el
+    // endpoint /locoaudit/chat. No interviene en la lógica de auditoría.
+    node.llmConfig = config.llmConfig ? RED.nodes.getNode(config.llmConfig) : null;
+
     node.on("input", async function (msg, send, done) {
       node.status({ fill: "blue", shape: "dot", text: "Auditando..." });
 

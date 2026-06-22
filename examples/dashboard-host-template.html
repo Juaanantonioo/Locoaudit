@@ -335,6 +335,47 @@
                   <div v-if="!f.fix" style="padding:12px 0;font-style:italic;color:#6B7280;font-size:12.5px;">
                     Este hallazgo es informativo. No requiere acción inmediata.
                   </div>
+
+                  <!-- ── Chat con IA ── -->
+                  <div class="lca-chat-wrap" v-if="llmAvailable === true">
+                    <button class="ai-ask-btn" @click.stop="toggleChat(g.key + '-' + fi, f)">
+                      🤖 {{ chatOpen[g.key + '-' + fi] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
+                    </button>
+                    <div class="lca-chat" v-if="chatOpen[g.key + '-' + fi]">
+                      <div class="lca-chat-msgs">
+                        <div v-for="(cm, ci) in (chatMessages[g.key + '-' + fi] || [])" :key="ci"
+                             class="chat-msg" :class="cm.role === 'user' ? 'chat-user' : 'chat-ai'">
+                          <div class="chat-bubble" :class="{ 'chat-error': cm.error }">
+                            <template v-for="(seg, si) in parseChatContent(cm.content)" :key="si">
+                              <div v-if="seg.type === 'text'" class="chat-text" v-html="seg.html"></div>
+                              <div v-else class="command-box">
+                                <code class="command-text">{{ seg.code }}</code>
+                                <button @click.stop="copyCommand(seg.code)"
+                                        :class="{ copied: copiedKey === seg.code }"
+                                        class="command-btn">
+                                  {{ copiedKey === seg.code ? '✓ Copiado' : 'Copiar' }}
+                                </button>
+                              </div>
+                            </template>
+                          </div>
+                        </div>
+                        <div v-if="chatLoading[g.key + '-' + fi]" class="chat-msg chat-ai">
+                          <div class="chat-bubble chat-loading">
+                            <span class="chat-dot"></span><span class="chat-dot"></span><span class="chat-dot"></span>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="lca-chat-input">
+                        <input type="text" v-model="chatInput[g.key + '-' + fi]"
+                               placeholder="Escribe tu pregunta…"
+                               :disabled="chatLoading[g.key + '-' + fi]"
+                               @keydown.enter.prevent="sendChat(g.key + '-' + fi, f)">
+                        <button class="chat-send-btn"
+                                :disabled="chatLoading[g.key + '-' + fi]"
+                                @click.stop="sendChat(g.key + '-' + fi, f)">Enviar</button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -368,7 +409,13 @@ export default {
       auditData: null,
       openGroups: {},
       openFindings: {},
-      copiedKey: null
+      copiedKey: null,
+      // ── Chat con LLM (asistente IA) ──
+      chatOpen: {},        // por findingKey: panel abierto/cerrado
+      chatMessages: {},    // por findingKey: [{ role, content, error? }]
+      chatInput: {},       // por findingKey: texto en curso
+      chatLoading: {},     // por findingKey: esperando respuesta
+      llmAvailable: null   // null = sin comprobar; true/false tras comprobar
     };
   },
 
@@ -675,7 +722,94 @@ export default {
         this.copiedKey = text;
         setTimeout(() => { this.copiedKey = null; }, 2000);
       }
+    },
+
+    // ── Chat con LLM ──────────────────────────────────────────
+    // Abre/cierra el panel de chat y, la primera vez, lanza una
+    // pregunta automática para que la IA explique el hallazgo.
+    toggleChat(findingKey, finding) {
+      var willOpen = !this.chatOpen[findingKey];
+      this.chatOpen = Object.assign({}, this.chatOpen, { [findingKey]: willOpen });
+      if (willOpen && !(this.chatMessages[findingKey] && this.chatMessages[findingKey].length)) {
+        this.sendChat(findingKey, finding,
+          'Explícame este hallazgo de forma sencilla: qué significa, por qué importa y cómo lo soluciono.');
+      }
+    },
+
+    async sendChat(findingKey, finding, presetQuestion) {
+      var question = presetQuestion != null
+        ? presetQuestion
+        : (this.chatInput[findingKey] || '').trim();
+      if (!question || this.chatLoading[findingKey]) return;
+
+      // Historial previo (sin la pregunta actual; el backend la añade aparte)
+      var history = (this.chatMessages[findingKey] || []).slice().map(function(m) {
+        return { role: m.role, content: m.content };
+      });
+
+      var withUser = (this.chatMessages[findingKey] || []).concat([{ role: 'user', content: question }]);
+      this.chatMessages = Object.assign({}, this.chatMessages, { [findingKey]: withUser });
+      this.chatInput = Object.assign({}, this.chatInput, { [findingKey]: '' });
+      this.chatLoading = Object.assign({}, this.chatLoading, { [findingKey]: true });
+
+      var reply;
+      try {
+        var res = await fetch('/locoaudit/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ finding: finding, question: question, history: history })
+        });
+        var data = await res.json();
+        reply = (data && data.ok)
+          ? { role: 'assistant', content: data.content }
+          : { role: 'assistant', content: (data && data.error) || 'Error desconocido del asistente.', error: true };
+      } catch (e) {
+        reply = { role: 'assistant', content: 'No se pudo contactar con el asistente: ' + (e.message || e), error: true };
+      }
+
+      var cur = (this.chatMessages[findingKey] || []).concat([reply]);
+      this.chatMessages = Object.assign({}, this.chatMessages, { [findingKey]: cur });
+      this.chatLoading = Object.assign({}, this.chatLoading, { [findingKey]: false });
+    },
+
+    // Divide la respuesta en segmentos de texto y bloques de código (```).
+    parseChatContent(content) {
+      var text = String(content || '');
+      var segments = [];
+      var regex = /```[a-zA-Z0-9_-]*\n?([\s\S]*?)```/g;
+      var lastIndex = 0;
+      var m;
+      while ((m = regex.exec(text)) !== null) {
+        if (m.index > lastIndex) {
+          segments.push({ type: 'text', html: this.mdInline(text.slice(lastIndex, m.index)) });
+        }
+        segments.push({ type: 'code', code: m[1].replace(/\n$/, '') });
+        lastIndex = regex.lastIndex;
+      }
+      if (lastIndex < text.length) {
+        segments.push({ type: 'text', html: this.mdInline(text.slice(lastIndex)) });
+      }
+      if (segments.length === 0) segments.push({ type: 'text', html: '' });
+      return segments;
+    },
+
+    // Markdown mínimo y seguro: escapa HTML, `código`, **negrita** y saltos de línea.
+    mdInline(str) {
+      var esc = String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      esc = esc.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
+      esc = esc.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      return esc.trim().replace(/\n/g, '<br>');
     }
+  },
+
+  mounted() {
+    // Detecta si hay un nodo llm-config desplegado para mostrar (o no) el chat.
+    var self = this;
+    fetch('/locoaudit/chat/status')
+      .then(function(r) { return r.json(); })
+      .then(function(d) { self.llmAvailable = !!(d && d.available); })
+      .catch(function() { self.llmAvailable = false; });
   }
 };
 </script>
@@ -1271,4 +1405,108 @@ export default {
   }
   .command-btn:hover  { background: #0284C7; }
   .command-btn.copied { background: #22C55E; }
+
+  /* ── Chat con IA ── */
+  .lca-chat-wrap { margin-top: 14px; }
+  .ai-ask-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--info-bg);
+    color: var(--info);
+    border: 1px solid var(--info-border);
+    border-radius: 100px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .ai-ask-btn:hover { background: #E0F2FE; }
+  .lca-chat {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    padding: 12px;
+  }
+  .lca-chat-msgs {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 360px;
+    overflow-y: auto;
+    margin-bottom: 10px;
+  }
+  .chat-msg { display: flex; }
+  .chat-user { justify-content: flex-end; }
+  .chat-ai   { justify-content: flex-start; }
+  .chat-bubble {
+    max-width: 85%;
+    padding: 10px 12px;
+    border-radius: 12px;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .chat-user .chat-bubble {
+    background: var(--info);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .chat-ai .chat-bubble {
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .chat-bubble.chat-error {
+    background: var(--critical-bg);
+    color: var(--critical);
+    border: 1px solid var(--critical-border);
+  }
+  .chat-text { word-break: break-word; }
+  .chat-text + .command-box { margin-top: 10px; }
+  .chat-inline-code {
+    font-family: "SF Mono", "Fira Code", monospace;
+    background: rgba(0,0,0,.07);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 11.5px;
+  }
+  .chat-user .chat-inline-code { background: rgba(255,255,255,.22); }
+  .chat-loading { display: flex; gap: 4px; align-items: center; }
+  .chat-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--text-secondary);
+    animation: chatBlink 1.2s infinite ease-in-out both;
+  }
+  .chat-dot:nth-child(2) { animation-delay: .2s; }
+  .chat-dot:nth-child(3) { animation-delay: .4s; }
+  @keyframes chatBlink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+  .lca-chat-input { display: flex; gap: 8px; }
+  .lca-chat-input input {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    font-size: 12.5px;
+    color: var(--text);
+    background: var(--card);
+    outline: none;
+  }
+  .lca-chat-input input:focus { border-color: var(--info); }
+  .chat-send-btn {
+    flex-shrink: 0;
+    background: var(--info);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 8px 16px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .2s;
+  }
+  .chat-send-btn:hover:not(:disabled) { background: #0284C7; }
+  .chat-send-btn:disabled { opacity: .5; cursor: not-allowed; }
 </style>
