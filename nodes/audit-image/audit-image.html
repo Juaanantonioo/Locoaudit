@@ -6,16 +6,66 @@
         category: "locoaudit",
         color: "#5ae08a",
         defaults: {
-            llmConfig: { value: "", type: "llm-config", required: false }
+            llmConfig:    { value: "", type: "llm-config", required: false },
+            scanMode:     { value: "local" },
+            imageRef:     { value: "" },
+            imageRefType: { value: "str" }
         },
         inputs: 1,
         outputs: 1,
         icon: "audit-image.svg",
-        label: function () { return "audit-image"; }
+        label: function () { return "audit-image"; },
+        oneditprepare: function () {
+            // typedInput para la referencia de imagen (texto fijo o tomado de msg)
+            $("#node-input-imageRef").typedInput({
+                types: ['str', 'msg'],
+                typeField: $("#node-input-imageRefType")
+            });
+
+            // Mostrar la fila de imageRef solo en modo "specific"
+            function toggleImageRefRow() {
+                if ($("#node-input-scanMode").val() === "specific") {
+                    $("#imageRef-row").show();
+                } else {
+                    $("#imageRef-row").hide();
+                }
+            }
+
+            $("#node-input-scanMode").on("change", toggleImageRefRow);
+            // Reflejar el estado guardado al abrir el diálogo
+            toggleImageRefRow();
+        }
     });
 </script>
 
 <script type="text/html" data-template-name="audit-image">
+
+    <!-- ── Modo de escaneo ── -->
+    <div class="form-row">
+        <label for="node-input-scanMode">
+            <i class="fa fa-search"></i> Modo
+        </label>
+        <select id="node-input-scanMode" style="width:70%">
+            <option value="local">Todas las imágenes locales</option>
+            <option value="specific">Una imagen específica (Docker Hub u otro registro)</option>
+        </select>
+    </div>
+
+    <!-- ── Referencia de imagen (solo modo "specific") ── -->
+    <div class="form-row" id="imageRef-row">
+        <label for="node-input-imageRef">
+            <i class="fa fa-cube"></i> Imagen
+        </label>
+        <input type="text" id="node-input-imageRef" placeholder="nginx:latest, mysql:latest" style="width:70%">
+        <input type="hidden" id="node-input-imageRefType">
+    </div>
+    <div class="form-row" style="color: #666; font-size: 0.82em; line-height: 1.5; margin-top: -6px;">
+        <i class="fa fa-info-circle"></i>
+        Una o varias imágenes separadas por comas (ej:
+        <code>nginx:latest, usuario/repo:tag</code>). Trivy las resuelve solas: si las
+        tienes en local las usa; si no, las descarga del registro. Las que no existan
+        o fallen se reportan como hallazgo informativo.
+    </div>
 
     <!-- ── Asistente IA (opcional) ── -->
     <div class="form-row">
