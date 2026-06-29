@@ -226,8 +226,14 @@
                 </div>
 
                 <div class="ia-image-info">
-                  <div class="ia-image-name">{{ img.repository }}:{{ img.tag }}</div>
-                  <div class="ia-image-meta">{{ fmtBytes(img.sizeBytes) }} · creada {{ img.created }}</div>
+                  <div class="ia-image-name">{{ img.name || (img.repository + ':' + img.tag) }}</div>
+                  <div class="ia-image-meta">
+                    <span v-if="img.os">{{ img.os }}</span>
+                    <span v-if="img.os && (img.sizeBytes || img.created)"> · </span>
+                    <span v-if="img.sizeBytes">{{ fmtBytes(img.sizeBytes) }}</span>
+                    <span v-if="img.sizeBytes && img.created"> · </span>
+                    <span v-if="img.created">creada {{ img.created }}</span>
+                  </div>
                 </div>
 
                 <div class="ia-image-badge-wrap">
@@ -269,7 +275,24 @@
           </div>
 
           <div v-else class="ia-findings-list">
-            <div v-for="(f, fi) in filteredFindings" :key="f.id || fi" class="ia-finding-item"
+            <template v-for="grp in findingGroups" :key="grp.key">
+            <div v-if="showFindingGroups" class="ia-group-header"
+                 :class="{ open: isGroupOpen(grp.key) }"
+                 @click="toggleGroup(grp.key)">
+              <span class="ia-group-chevron">{{ isGroupOpen(grp.key) ? '▾' : '▸' }}</span>
+              <span class="ia-group-name">🖼 {{ grp.label }}</span>
+              <span v-if="grp.os" class="ia-group-os">{{ grp.os }}</span>
+              <span class="ia-group-sevs">
+                <span v-if="grp.sev.critical" class="ia-gsev ia-badge-critical">{{ grp.sev.critical }}</span>
+                <span v-if="grp.sev.high"     class="ia-gsev ia-badge-high">{{ grp.sev.high }}</span>
+                <span v-if="grp.sev.medium"   class="ia-gsev ia-badge-medium">{{ grp.sev.medium }}</span>
+                <span v-if="grp.sev.low"      class="ia-gsev ia-badge-low">{{ grp.sev.low }}</span>
+                <span v-if="grp.sev.info"     class="ia-gsev ia-badge-info">{{ grp.sev.info }}</span>
+              </span>
+              <span class="ia-group-count">{{ grp.findings.length }}</span>
+            </div>
+            <div class="ia-group-body" v-show="!showFindingGroups || isGroupOpen(grp.key)">
+            <div v-for="(f, fi) in grp.findings" :key="f.id || fi" class="ia-finding-item"
                  :class="{ 'ia-finding-open': openFindings[f.id || fi] }">
               <button class="ia-finding-row" @click="toggleFinding(f.id || fi)">
                 <span class="ia-type-badge" :class="findingIsCVE(f) ? 'ia-type-cve' : 'ia-type-config'">
@@ -279,6 +302,7 @@
                   {{ sevLabel(f.severity) }}
                 </span>
                 <span class="ia-finding-title">{{ f.title }}</span>
+                <span v-if="f.image" class="ia-finding-img-badge">{{ f.image }}</span>
                 <span class="ia-finding-id">{{ f.id }}</span>
                 <span class="ia-finding-chevron" :class="{ open: openFindings[f.id || fi] }">▾</span>
               </button>
@@ -356,6 +380,8 @@
                 </div>
               </div>
             </div>
+            </div>
+            </template>
           </div>
         </section>
 
@@ -384,7 +410,8 @@ export default {
       chatMessages: {},    // por findingKey: [{ role, content, error? }]
       chatInput: {},       // por findingKey: texto en curso
       chatLoading: {},     // por findingKey: esperando respuesta
-      llmAvailable: null   // null = sin comprobar; true/false tras comprobar
+      llmAvailable: null,  // null = sin comprobar; true/false tras comprobar
+      openGroups: {}       // por grupo de imagen: desplegado (true) / colapsado (def. false)
     };
   },
 
@@ -443,7 +470,11 @@ export default {
     images() {
       var docker = this.auditData && this.auditData.raw && this.auditData.raw.docker;
       var imgs = docker && docker.images;
-      return Array.isArray(imgs) ? imgs : [];
+      // Modo local: usar los metadatos ricos de `docker images` (sin cambios).
+      if (Array.isArray(imgs) && imgs.length) return imgs;
+      // Imagen remota / sin daemon Docker: caer a la lista derivada de Trivy.
+      var scanned = this.auditData && this.auditData.scannedImages;
+      return Array.isArray(scanned) ? scanned : [];
     },
 
     filteredFindings() {
@@ -455,6 +486,45 @@ export default {
         if (self.filterType === 'config' && !self.findingIsConfig(f)) return false;
         return true;
       });
+    },
+
+    // Agrupa los hallazgos filtrados por imagen de origen (f.image). Los que no
+    // tienen imagen (config del daemon, resúmenes globales) caen en "General".
+    findingGroups() {
+      // SO por imagen, reutilizando el mismo dato de la tarjeta "Imágenes escaneadas"
+      var osByImage = {};
+      (this.images || []).forEach(function(img) {
+        var name = img.name || (img.repository + ':' + img.tag);
+        if (name) osByImage[name] = img.os || '';
+      });
+      var groups = [];
+      var byKey = {};
+      this.filteredFindings.forEach(function(f) {
+        var label = f.image || 'General';
+        if (!byKey[label]) {
+          byKey[label] = {
+            key: label, label: label, os: osByImage[label] || '', findings: [],
+            sev: { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
+          };
+          groups.push(byKey[label]);
+        }
+        byKey[label].findings.push(f);
+        var s = (f.severity || 'info').toLowerCase();
+        if (byKey[label].sev[s] !== undefined) byKey[label].sev[s]++;
+      });
+      // "General" siempre al final si hay grupos de imagen
+      groups.sort(function(a, b) {
+        if (a.label === 'General') return 1;
+        if (b.label === 'General') return -1;
+        return 0;
+      });
+      return groups;
+    },
+
+    // Solo mostrar cabeceras de grupo cuando hay 2+ imágenes con hallazgos
+    // (con una sola imagen las cabeceras serían redundantes).
+    showFindingGroups() {
+      return this.findingGroups.filter(function(g) { return g.label !== 'General'; }).length > 1;
     },
 
     donutTotal() {
@@ -531,6 +601,14 @@ export default {
       this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
     },
 
+    // ── Acordeón de grupos por imagen (estado local, colapsados por defecto) ──
+    isGroupOpen(key) {
+      return this.openGroups[key] === true;
+    },
+    toggleGroup(key) {
+      this.openGroups = Object.assign({}, this.openGroups, { [key]: !this.openGroups[key] });
+    },
+
     findingIsCVE(f) {
       return f.id && f.id.startsWith('IMG-CVE');
     },
@@ -539,30 +617,31 @@ export default {
       return f.id && !f.id.startsWith('IMG-CVE');
     },
 
-    // cuenta findings CVE asociados a una imagen
-    // soporta campo extra f.image (repository:tag) o coincidencia en evidence/title
+    // nombre canónico de la imagen, igual que el f.image que pone el normalizer
+    imageFullName(img) {
+      return img.name || (img.repository + ':' + img.tag);
+    },
+
+    // cuenta findings CVE asociados a una imagen.
+    // Match ESTRICTO por f.image: cada finding CVE ya lo lleva fiable. Antes se
+    // usaba un fallback difuso (title.includes(repository)) que cross-contaba
+    // imágenes con el mismo repository (nginx:latest vs nginx:alpine).
     cvesForImage(img) {
-      var fullName = img.repository + ':' + img.tag;
+      var fullName = this.imageFullName(img);
       var findings = (this.auditData && this.auditData.findings) || [];
       return findings.filter(function(f) {
-        if (!f.id || !f.id.startsWith('IMG-CVE')) return false;
-        return f.image === fullName ||
-               (f.evidence || '').includes(fullName) ||
-               (f.title    || '').includes(img.repository);
+        return f.id && f.id.startsWith('IMG-CVE') && f.image === fullName;
       }).length;
     },
 
-    // severidad máxima de findings asociados a una imagen
+    // severidad máxima de findings asociados a una imagen (match estricto por f.image)
     maxSevForImage(img) {
-      var fullName = img.repository + ':' + img.tag;
+      var fullName = this.imageFullName(img);
       var findings = (this.auditData && this.auditData.findings) || [];
       var order = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
       var best = null;
       findings.forEach(function(f) {
-        var match = f.image === fullName ||
-                    (f.evidence || '').includes(fullName) ||
-                    (f.title    || '').includes(img.repository);
-        if (!match) return;
+        if (f.image !== fullName) return;
         var sev = (f.severity || 'info').toLowerCase();
         if (!best || (order[sev] || 0) > (order[best] || 0)) best = sev;
       });
@@ -1167,6 +1246,71 @@ export default {
   .ia-clear-btn:hover { background: #FECACA; }
 
   .ia-findings-list { display: flex; flex-direction: column; gap: 6px; }
+
+  .ia-group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0 2px;
+    padding: 6px 10px;
+    background: var(--accent-soft, #f3effc);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--accent);
+    cursor: pointer;
+    user-select: none;
+    transition: background .15s;
+  }
+  .ia-group-header:hover { background: var(--accent-light); }
+  .ia-group-header:first-child { margin-top: 0; }
+  .ia-group-chevron {
+    font-size: 11px;
+    color: var(--accent-mid);
+    width: 12px;
+    flex: 0 0 auto;
+  }
+  .ia-group-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .ia-group-os {
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--accent-mid);
+  }
+  .ia-group-sevs {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+  }
+  .ia-gsev {
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 8px;
+    padding: 0 6px;
+    line-height: 16px;
+  }
+  .ia-group-count {
+    background: var(--accent);
+    color: #fff;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 11px;
+    flex: 0 0 auto;
+  }
+  .ia-group-body { display: flex; flex-direction: column; gap: 6px; }
+  .ia-finding-img-badge {
+    flex: 0 0 auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-light);
+    border: 1px solid var(--accent-border);
+    border-radius: 6px;
+    padding: 1px 7px;
+    margin-right: 8px;
+    white-space: nowrap;
+  }
 
   .ia-finding-item {
     background: #fff;

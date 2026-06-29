@@ -36,6 +36,76 @@ const { runTrivyImage }      = require("./modules/cve-checker");
 const { normalizeImage }     = require("../../lib/normalizer");
 const { summarize }          = require("../../lib/severity-map");
 const { createFinding }      = require("../../lib/finding-schema");
+const { commandExists }      = require("../../lib/executor");
+
+/**
+ * Si la referencia es una URL de Docker Hub, intenta extraer el nombre de
+ * imagen utilizable por `trivy image`. Si no se puede parsear con confianza,
+ * devuelve la referencia tal cual (extra de UX, nunca rompe el flujo).
+ *
+ *   https://hub.docker.com/_/nginx          → "nginx"
+ *   https://hub.docker.com/r/usuario/repo    → "usuario/repo"
+ *
+ * @param {string} ref
+ * @returns {string}
+ */
+function parseImageRef(ref) {
+  if (!/^https?:\/\/hub\.docker\.com\//i.test(ref)) return ref;
+  let m = ref.match(/hub\.docker\.com\/r\/([^/?#]+\/[^/?#]+)/i);
+  if (m) return m[1];
+  m = ref.match(/hub\.docker\.com\/_\/([^/?#]+)/i);
+  if (m) return m[1];
+  return ref;
+}
+
+/**
+ * Resume un error crudo de Trivy en un mensaje legible para el dashboard.
+ * El error completo se conserva en raw.trivy.failed para depuración.
+ *
+ * @param {string} err  stderr/mensaje crudo de Trivy
+ * @returns {string}
+ */
+function summarizeScanError(err) {
+  const e = String(err || "");
+  if (/MANIFEST_UNKNOWN|manifest unknown|No such image|unable to find the specified image|NAME_UNKNOWN|not found/i.test(e)) {
+    return "Imagen o tag no encontrado (ni en local ni en el registro). Revisa el nombre y el tag.";
+  }
+  if (/TOOMANYREQUESTS|toomanyrequests|429|rate limit/i.test(e)) {
+    return "Límite de descargas del registro alcanzado (rate limit de Docker Hub). Inicia sesión con 'docker login' o reintenta más tarde.";
+  }
+  if (/unauthorized|denied|authentication required/i.test(e)) {
+    return "Acceso denegado al registro (imagen privada o se requieren credenciales).";
+  }
+  if (/no such host|dial tcp|network is unreachable|i\/o timeout|connection refused|TLS handshake/i.test(e)) {
+    return "No se pudo contactar con el registro (problema de red o sin conexión).";
+  }
+  const firstLine = e.split("\n").map((s) => s.trim()).filter(Boolean)[0] || "Fallo al escanear con Trivy";
+  return firstLine.slice(0, 200);
+}
+
+/**
+ * Construye el payload de salida del nodo a partir de los findings y metadatos.
+ * @param {Array} findings
+ * @param {object} scanMeta
+ * @param {object} raw
+ * @returns {object}
+ */
+function buildImagePayload(findings, scanMeta, raw, scannedImages) {
+  return {
+    findings,
+    summary:   summarize(findings),
+    source:    "audit-image",
+    auditType: "image",
+    host: { hostname: os.hostname(), platform: process.platform },
+    scanMeta,
+    // Lista de imágenes escaneadas derivada del informe de Trivy (idéntica en
+    // local y remoto). La tarjeta del dashboard cae a este campo cuando no hay
+    // metadatos de `docker images` (caso imagen remota).
+    scannedImages: Array.isArray(scannedImages) ? scannedImages : [],
+    raw,
+    timestamp: new Date().toISOString(),
+  };
+}
 
 module.exports = function (RED) {
   function AuditImageNode(config) {
@@ -48,14 +118,138 @@ module.exports = function (RED) {
     node.llmConfig = config.llmConfig ? RED.nodes.getNode(config.llmConfig) : null;
 
     node.on("input", async function (msg, send, done) {
-      node.status({ fill: "blue", shape: "dot", text: "Auditando imágenes..." });
-
+      const scanMode     = config.scanMode || "local";
       const enableConfig = config.enableConfig !== false;
       const enableTrivy  = config.enableTrivy  !== false;
 
       const startTime = Date.now();
 
       try {
+        // ── Modo "specific": escanear una o varias imágenes (locales o de un registro remoto) ──
+        // Se admite una lista separada por comas: "nginx:latest, mysql:latest, debian:12".
+        // trivy image resuelve solo: si la imagen no está en local la descarga del
+        // registro. NO requiere el daemon Docker (cae a remote si no hay daemon).
+        if (scanMode === "specific") {
+          node.status({ fill: "blue", shape: "dot", text: "Auditando imágenes..." });
+
+          // Resolver la referencia (texto fijo o tomado de msg)
+          let rawRef = "";
+          try {
+            rawRef = (RED.util.evaluateNodeProperty(
+              config.imageRef, config.imageRefType || "str", node, msg
+            ) || "").toString();
+          } catch (_) { rawRef = ""; }
+
+          // Separar por comas → lista de referencias, normalizando URLs de Docker Hub
+          const refs = rawRef
+            .split(",")
+            .map((s) => parseImageRef(s.trim()))
+            .filter(Boolean);
+
+          // Sin referencias: finding informativo y salida limpia (no peta el flujo)
+          if (refs.length === 0) {
+            const findings = [
+              createFinding({
+                id:       "IMG-IMAGE-NONE",
+                title:    "No se indicó ninguna imagen a escanear",
+                severity: "info",
+                evidence: "scanMode='specific' pero la referencia de imagen está vacía",
+                fix:      "Indica una imagen en el nodo (ej: nginx:latest) o proporciónala vía msg.",
+                category: "image",
+                source:   "native",
+              }),
+            ];
+            msg.payload = buildImagePayload(
+              findings,
+              { modulesRun: [], imagesFound: 0, containersFound: 0, containersRunning: 0, durationMs: Date.now() - startTime },
+              { docker: null, configFindings: [], trivy: null }
+            );
+            node.status({ fill: "grey", shape: "dot", text: "Sin imagen indicada" });
+            send(msg);
+            done();
+            return;
+          }
+
+          // trivy es la única herramienta requerida en este modo
+          const trivyAvailable = await commandExists("trivy");
+          if (!trivyAvailable) {
+            const findings = [
+              createFinding({
+                id:       "IMG-TRIVY-OFF",
+                title:    "Trivy no disponible",
+                severity: "info",
+                evidence: "trivy not installed",
+                fix:      "Instalar Trivy: https://trivy.dev/latest/getting-started/installation/",
+                category: "image",
+                source:   "native",
+              }),
+            ];
+            msg.payload = buildImagePayload(
+              findings,
+              { modulesRun: [], imagesFound: 0, containersFound: 0, containersRunning: 0, durationMs: Date.now() - startTime },
+              { docker: null, configFindings: [], trivy: null }
+            );
+            node.status({ fill: "grey", shape: "dot", text: "Trivy no disponible" });
+            send(msg);
+            done();
+            return;
+          }
+
+          // Escaneo: un target por referencia. Objeto sintético → imageRef() en
+          // cve-checker devuelve la ref tal cual (repository vacío ⇒ usa el campo id).
+          const targets = refs.map((r) => ({ id: r, repository: "", tag: "" }));
+          const trivy   = await runTrivyImage(targets);
+
+          // CVEs de las imágenes que SÍ se escanearon (vacío si todas fallaron)
+          const findings = (trivy && !trivy.skipped)
+            ? normalizeImage(trivy, "trivy")
+            : [];
+
+          // Una imagen que no existe / no se detecta / falla → finding explicativo
+          // por cada una (no se cae el flujo, y se reporta cuál y por qué).
+          const failed = (trivy && trivy.failed) || [];
+          failed.forEach((fa, i) => {
+            findings.push(
+              createFinding({
+                id:       `IMG-SCAN-ERR-${String(i + 1).padStart(3, "0")}`,
+                title:    `No se pudo escanear la imagen «${fa.ref || "desconocida"}»`,
+                severity: "info",
+                evidence: summarizeScanError(fa.error),
+                fix:      "Verifica el nombre/tag de la imagen, la conexión de red y los límites de descarga del registro (rate limit de Docker Hub).",
+                category: "image",
+                source:   "trivy",
+                image:    fa.ref || null,
+              })
+            );
+          });
+
+          const scannedImages = (trivy && trivy.scannedImages) || [];
+
+          msg.payload = buildImagePayload(
+            findings,
+            { modulesRun: ["trivy-image"], imagesFound: scannedImages.length, containersFound: 0, containersRunning: 0, durationMs: Date.now() - startTime },
+            { docker: null, configFindings: [], trivy },
+            scannedImages
+          );
+
+          const maxSev = msg.payload.summary.maxSeverity || "info";
+          const statusColor =
+            maxSev === "critical" || maxSev === "high" ? "red"
+            : maxSev === "medium"                      ? "yellow"
+            :                                            "green";
+          const statusTxt = failed.length
+            ? `${scannedImages.length} ok · ${failed.length} fallo(s) · riesgo: ${maxSev}`
+            : `${scannedImages.length} imagen(es) · riesgo: ${maxSev}`;
+          node.status({ fill: statusColor, shape: "dot", text: statusTxt });
+
+          send(msg);
+          done();
+          return;
+        }
+
+        // ── Modo "local" (comportamiento original): todas las imágenes locales ──
+        node.status({ fill: "blue", shape: "dot", text: "Auditando imágenes..." });
+
         // 1. Recoger información de Docker
         const docker = await getDockerInfo();
 
@@ -143,6 +337,9 @@ module.exports = function (RED) {
             containersRunning: docker.containers.filter((c) => c.running).length,
             durationMs,
           },
+          // Imágenes escaneadas según Trivy; el dashboard usa raw.docker.images
+          // en local (sin cambios) y cae a este campo en remoto.
+          scannedImages: (trivy && trivy.scannedImages) || [],
           raw: { docker, configFindings, trivy },
           timestamp: new Date().toISOString(),
         };
