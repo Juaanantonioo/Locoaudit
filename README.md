@@ -32,7 +32,8 @@ Cada finding sigue el mismo contrato:
 | `audit-host` | CPU, RAM, disco, software instalado, hardening del SO, CVEs | nativo + Lynis + Trivy |
 | `audit-network` | Puertos abiertos, versiones de servicios expuestos | nativo + Nmap |
 | `audit-image` | CVEs en imágenes Docker, configuración insegura de contenedores | Docker + Trivy |
-| `audit-reporter` | Genera reportes HTML/JSON a partir de los findings de cualquier nodo | Handlebars |
+
+Los reportes se visualizan y descargan (HTML + JSON) directamente desde los dashboards de Node-RED (nodos `ui_template`), sin nodo generador aparte.
 
 ---
 
