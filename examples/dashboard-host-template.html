@@ -54,6 +54,10 @@
             <span class="pill" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">
               <span class="pill-label">Duración</span> {{ fmtDuration(auditData.scanMeta.durationMs) }}
             </span>
+            <span class="dl-group">
+              <button class="dl-btn" @click="downloadHtml" title="Descargar informe HTML (imprimible a PDF)">⬇ HTML</button>
+              <button class="dl-btn" @click="downloadJson" title="Descargar datos JSON">⬇ JSON</button>
+            </span>
           </div>
         </div>
 
@@ -640,6 +644,103 @@ export default {
       this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
     },
 
+    // ── Descarga de reporte (HTML imprimible + JSON) ──────────────────────────
+    _escHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    },
+    _reportBasename(ext) {
+      var d = new Date();
+      var p = function(n) { return String(n).padStart(2, '0'); };
+      var stamp = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+                  '_' + p(d.getHours()) + p(d.getMinutes());
+      var type = (this.auditData && this.auditData.auditType) || 'audit';
+      return 'locoaudit-' + type + '-' + stamp + '.' + ext;
+    },
+    _triggerDownload(filename, content, mime) {
+      var blob = new Blob([content], { type: mime });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+    },
+    downloadJson() {
+      if (!this.auditData) return;
+      this._triggerDownload(this._reportBasename('json'),
+        JSON.stringify(this.auditData, null, 2), 'application/json');
+    },
+    downloadHtml() {
+      if (!this.auditData) return;
+      this._triggerDownload(this._reportBasename('html'),
+        this._buildHtmlReport(), 'text/html;charset=utf-8');
+    },
+    _buildHtmlReport() {
+      var esc = this._escHtml;
+      var a = this.auditData || {};
+      var host = a.host || {};
+      var counts = (a.summary && a.summary.counts) || {};
+      var findings = a.findings || [];
+      var meta = a.scanMeta || {};
+      var sevOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+      var sevLabelMap = { critical: 'Crítico', high: 'Alto', medium: 'Medio', low: 'Bajo', info: 'Info' };
+      var sevColor = { critical: '#B91C1C', high: '#C2410C', medium: '#A16207', low: '#15803D', info: '#0369A1' };
+
+      var rank = function(f) {
+        var r = sevOrder[(f.severity || 'info').toLowerCase()];
+        return r === undefined ? 9 : r;
+      };
+      var sorted = findings.slice().sort(function(x, y) { return rank(x) - rank(y); });
+
+      var rows = sorted.map(function(f) {
+        var sev = (f.severity || 'info').toLowerCase();
+        var origen = f.image || f.category || '—';
+        return '<tr>' +
+          '<td><span class="sev" style="background:' + sevColor[sev] + '">' + esc(sevLabelMap[sev] || sev) + '</span></td>' +
+          '<td class="mono">' + esc(f.id) + '</td>' +
+          '<td class="mono">' + esc(origen) + '</td>' +
+          '<td>' + esc(f.title) + '</td>' +
+          '<td>' + esc(f.evidence) + '</td>' +
+          '<td>' + (f.fix ? '<code>' + esc(f.fix) + '</code>' : '—') + '</td>' +
+          '</tr>';
+      }).join('');
+
+      var sumChips = ['critical', 'high', 'medium', 'low', 'info'].map(function(s) {
+        return '<span class="chip" style="border-color:' + sevColor[s] + ';color:' + sevColor[s] + '">' +
+          (sevLabelMap[s]) + ': <b>' + (counts[s] || 0) + '</b></span>';
+      }).join(' ');
+
+      var dur = meta.durationMs ? (meta.durationMs / 1000).toFixed(1) + ' s' : '—';
+      var titleMap = { image: 'Imagen', host: 'Host', network: 'Red' };
+      var auditTitle = titleMap[a.auditType] || 'Auditoría';
+
+      return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">' +
+        '<title>LoCoAudit — ' + esc(auditTitle) + ' — ' + esc(host.hostname || '') + '</title>' +
+        '<style>' +
+        'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e1b2e;margin:32px;background:#fff}' +
+        'h1{color:#7C3AED;margin:0 0 4px}.sub{color:#666;margin:0 0 20px}' +
+        '.meta{font-size:13px;color:#444;margin-bottom:16px}.meta b{color:#1e1b2e}' +
+        '.chips{margin:12px 0 24px}.chip{display:inline-block;border:1px solid;border-radius:12px;padding:2px 10px;margin-right:6px;font-size:12px}' +
+        'table{border-collapse:collapse;width:100%;font-size:12.5px}' +
+        'th,td{border:1px solid #e5dcfa;padding:6px 8px;text-align:left;vertical-align:top}' +
+        'th{background:#f3effc;color:#7C3AED}.mono{font-family:ui-monospace,Menlo,monospace;font-size:11px;white-space:nowrap}' +
+        '.sev{color:#fff;border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700}' +
+        'code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f6f4fc;padding:1px 4px;border-radius:4px}' +
+        'footer{margin-top:24px;color:#999;font-size:11px}@media print{body{margin:0}}' +
+        '</style></head><body>' +
+        '<h1>LoCoAudit · Auditoría de ' + esc(auditTitle) + '</h1>' +
+        '<p class="sub">' + esc(host.hostname || '') + ' · ' + esc(host.platform || '') + '</p>' +
+        '<div class="meta">Fecha: <b>' + esc(this.scanTime || new Date().toLocaleString()) + '</b> · ' +
+        'Duración: <b>' + esc(dur) + '</b> · Hallazgos: <b>' + findings.length + '</b></div>' +
+        '<div class="chips">' + sumChips + '</div>' +
+        '<table><thead><tr><th>Severidad</th><th>ID</th><th>Origen</th><th>Título</th><th>Evidencia</th><th>Recomendación</th></tr></thead>' +
+        '<tbody>' + (rows || '<tr><td colspan="6">Sin hallazgos.</td></tr>') + '</tbody></table>' +
+        '<footer>Generado por LoCoAudit · ' + esc(new Date().toISOString()) + '</footer>' +
+        '</body></html>';
+    },
+
     parseFixSteps(fix) {
       if (!fix) return [];
       if (fix.indexOf('\n') >= 0) {
@@ -927,6 +1028,18 @@ export default {
     border: 1px solid var(--border);
   }
   .pill-label { color: #94A3B8; font-size: 11px; }
+  .dl-group { margin-left: auto; display: flex; gap: 6px; }
+  .dl-btn {
+    display: inline-flex; align-items: center;
+    padding: 3px 11px;
+    background: #fff;
+    border: 1px solid var(--accent, #7C3AED);
+    color: var(--accent, #7C3AED);
+    border-radius: 100px;
+    font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: background .15s, color .15s;
+  }
+  .dl-btn:hover { background: var(--accent, #7C3AED); color: #fff; }
 
   /* Gauge circular */
   .gauge-wrap {

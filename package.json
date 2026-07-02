@@ -21,7 +21,6 @@
             "audit-host":     "nodes/audit-host/audit-host.js",
             "audit-network":  "nodes/audit-network/audit-network.js",
             "audit-image":    "nodes/audit-image/audit-image.js",
-            "audit-reporter": "nodes/audit-reporter/audit-reporter.js",
             "llm-config":     "nodes/llm-config/llm-config.js"
         }
     },
