@@ -7,12 +7,14 @@
  *   msg.payload = {
  *     findings: Finding[],
  *     source: 'audit-host',
- *     raw: { cpuMemory, disk, swInventory, osInfo, lynis, trivy },
+ *     raw: { cpuMemory, disk, swInventory, osInfo, lynis, trivy, securityEvents },
+ *     securityEvents?: { windowHours, events: [{ts,type,user,origin,detail}], truncated },
  *     timestamp: string (ISO 8601)
  *   }
  *
  * La UI (audit-host.html) expone checkboxes para activar/desactivar módulos.
- * Configuración en config: enableCpu, enableDisk, enableSw, enableLynis, enableTrivy
+ * Configuración en config: enableCpu, enableDisk, enableSw, enableLynis, enableTrivy,
+ * securityEvents (default false) + securityEventsWindow (horas, 1-168, default 24)
  */
 
 const { runSystemModule } = require("./modules/cpu-memory");
@@ -21,6 +23,7 @@ const { getSwInventory } = require("./modules/sw-inventory");
 const { getOsInfo } = require("./modules/os-info");
 const { runLynis } = require("./modules/lynis");
 const { runTrivyFs } = require("./modules/trivy-fs");
+const { runSecurityEvents, buildEventList } = require("./modules/security-events");
 const { normalizeHost } = require("../../lib/normalizer");
 const { summarize } = require("../../lib/severity-map");
 
@@ -43,18 +46,22 @@ module.exports = function (RED) {
       const enableSw = config.enableSw !== false;
       const enableLynis = config.enableLynis !== false;
       const enableTrivy = config.enableTrivy !== false;
+      // Eventos de seguridad: desactivado por defecto (opt-in)
+      const enableSecEvents = config.securityEvents === true;
+      const secWindow = Math.min(168, Math.max(1, parseInt(config.securityEventsWindow, 10) || 24));
 
       const startTime = Date.now();
 
       try {
         // Lanzar todos los módulos habilitados en paralelo
-        const [cpuResult, diskResult, swResult, lynisResult, trivyResult] =
+        const [cpuResult, diskResult, swResult, lynisResult, trivyResult, secResult] =
           await Promise.allSettled([
             enableCpu ? Promise.resolve(runSystemModule()) : Promise.resolve(null),
             enableDisk ? getDiskInfo() : Promise.resolve(null),
             enableSw ? getSwInventory() : Promise.resolve(null),
             enableLynis ? runLynis() : Promise.resolve({ skipped: true, reason: "disabled" }),
             enableTrivy ? runTrivyFs() : Promise.resolve({ skipped: true, reason: "disabled" }),
+            enableSecEvents ? runSecurityEvents(secWindow) : Promise.resolve(null),
           ]);
 
         // Extraer valores (null si el módulo falló o estaba desactivado)
@@ -63,6 +70,7 @@ module.exports = function (RED) {
         const swInventory = swResult.status === "fulfilled" ? swResult.value : null;
         const lynis = lynisResult.status === "fulfilled" ? lynisResult.value : null;
         const trivy = trivyResult.status === "fulfilled" ? trivyResult.value : null;
+        const securityEvents = secResult.status === "fulfilled" ? secResult.value : null;
 
         // Si el usuario activó Lynis o Trivy y la herramienta no está instalada → error explícito
         if (enableLynis && lynis && lynis.skipped) {
@@ -101,9 +109,14 @@ module.exports = function (RED) {
         if (trivyResult.status === "rejected") {
           node.warn(`[audit-host] trivy-fs falló: ${trivyResult.reason}`);
         }
+        if (secResult.status === "rejected") {
+          node.warn(`[audit-host] security-events falló: ${secResult.reason}`);
+        }
 
         // Normalizar todo a findings[]
-        const raw = { cpuMemory, disk, swInventory, lynis, trivy };
+        // Nota: security-events skipped NO es error del nodo (a diferencia de
+        // Lynis/Trivy): el normalizador lo convierte en un finding informativo.
+        const raw = { cpuMemory, disk, swInventory, lynis, trivy, securityEvents };
         const findings = normalizeHost(raw, { platform: process.platform });
         const summary = summarize(findings);
         const durationMs = Date.now() - startTime;
@@ -130,12 +143,19 @@ module.exports = function (RED) {
               enableSw && "sw-inventory",
               enableLynis && !lynis?.skipped && "lynis",
               enableTrivy && !trivy?.skipped && "trivy-fs",
+              enableSecEvents && !securityEvents?.skipped && "security-events",
             ].filter(Boolean),
             durationMs,
           },
           raw: { ...raw, osInfo },
           timestamp: new Date().toISOString(),
         };
+
+        // Eventos parseados para la tabla de log del dashboard (grupo
+        // "Logs del sistema"): lista plana ordenada por ts desc, tope 200.
+        if (enableSecEvents && securityEvents) {
+          msg.payload.securityEvents = buildEventList(securityEvents);
+        }
 
         const count = findings.length;
         const maxSev = summary.maxSeverity || "info";

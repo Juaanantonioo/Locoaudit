@@ -159,46 +159,90 @@ function applyMeta(parsed) {
  * @returns {Promise<NmapResult>}
  */
 async function runNmap(options = {}) {
-  const target  = options.target  || "127.0.0.1";
-  const timeout = options.timeout || 30000;
+  const target   = options.target  || "127.0.0.1";
+  const scanMode = options.scanMode || "standard";
+  // -Pn sobre un host tras firewall (puertos filtrados) puede tardar >45s solo
+  // con 1-1024; el timeout por defecto debe cubrirlo o el escaneo se corta y
+  // produce un falso "0 puertos". El nodo pasa un timeout explícito acorde al modo.
+  const timeout  = options.timeout || 90000;
 
   const available = await commandExists("nmap");
   if (!available) {
     return { skipped: true, reason: "nmap not installed" };
   }
 
-  // Construir lista de puertos: catálogo conocido + top 1000 de nmap.
-  // Sin -p, nmap solo escanea sus propios top-1000 y omite puertos como 8006
-  // (Proxmox), 10000 (Webmin) u otros paneles de gestión no estándar.
-  const catalogPorts = Object.keys(PORT_CATALOG).join(",");
+  // Rango de puertos según modo. El catálogo (servicios de gestión: 8006, 10000,
+  // 2375…) va SIEMPRE explícito porque nmap lo omitiría; el rango numérico añade
+  // cobertura general. Cada rango tiene una etiqueta HONESTA en la UI del nodo.
+  //   rapido   → catálogo + 1-1024   (~1000 puertos; segundos en local, ~45s tras firewall)
+  //   standard → catálogo + 1-3000   (incluye 2222 SSH-alt; ~2 min tras firewall)
+  //   full     → catálogo + 1-10000  (lento: varios minutos tras un firewall)
+  //   custom   → lista del usuario
+  // NOTA (dato medido contra host filtrado): cada puerto filtrado obliga a nmap a
+  // esperar reintentos → el tiempo crece con el nº de puertos, no con los abiertos.
+  // 10.000 filtrados ≈ 500s; por eso "full" avisa de su lentitud. --host-timeout NO
+  // se usa: cortaría el host antes de sondear los puertos altos y daría un falso 0.
+  // Rango numérico por modo. El catálogo se añade SOLO con los puertos por encima
+  // del rango (los de dentro ya están cubiertos): así se evita el aviso "Duplicate
+  // port number(s)" de nmap y el escaneo redundante de los mismos puertos.
+  const RANGE_MAX = { rapido: 1024, standard: 3000, full: 10000 };
+  let portSpec;
+  if (scanMode === "custom" && options.customPorts && options.customPorts.trim()) {
+    portSpec = options.customPorts.trim();
+  } else {
+    const max = RANGE_MAX[scanMode] || RANGE_MAX.standard;
+    const highPorts = Object.keys(PORT_CATALOG)
+      .map(Number)
+      .filter((p) => p > max)
+      .sort((a, b) => a - b);
+    portSpec = highPorts.length ? `1-${max},${highPorts.join(",")}` : `1-${max}`;
+  }
 
   // En macOS con varias interfaces en la misma subred, nmap falla con SO_ERROR 50
   // si no se especifica explícitamente qué interfaz usar.
   const iface = findInterfaceForTarget(target);
   const ifaceFlag = iface ? `-e ${iface}` : "";
+  // --max-retries 2: acota los reintentos por puerto filtrado (por defecto son
+  // más), reduciendo el tiempo sin perder detección de puertos abiertos.
+  const cmd = `nmap -sV -T4 --open -Pn --max-retries 2 ${ifaceFlag} -p ${portSpec} -oX - ${target}`.trim();
 
   let stdout;
+  let inconclusive = false;
   try {
-    stdout = await execCommand(
-      `nmap -sV -T4 --open -Pn ${ifaceFlag} -p ${catalogPorts},1-1024 -oX - ${target}`.trim(),
-      timeout
-    );
+    stdout = await execCommand(cmd, timeout);
   } catch (err) {
     // nmap puede salir con código != 0 en algunos sistemas aunque haya producido
     // XML válido (ej: advertencias de permisos en macOS sin sudo).
     stdout = err.stdout || "";
-    if (!stdout.includes("<nmaprun")) {
+    // Un escaneo VÁLIDO termina con <runstats>...<finished>. Si falta (timeout,
+    // proceso matado, error de red), el resultado NO es concluyente: NO se puede
+    // afirmar "0 puertos abiertos" — sería un falso "sin riesgo".
+    if (!stdout.includes("<runstats") && !stdout.includes("/finished")) {
       return {
         skipped: true,
-        reason: `nmap failed: ${(err.stderr || err.message || "unknown error").trim()}`,
+        inconclusive: true,
+        reason: `escaneo no concluyente: ${(err.stderr || err.message || "timeout o proceso interrumpido").trim()}`,
+        scan: { target, portSpec, scanMode, hostUp: null, completed: false },
       };
     }
   }
 
+  // Estado del escaneo: ¿respondió el host al descubrimiento?
+  const hostsMatch = stdout.match(/<hosts\s+up="(\d+)"\s+down="(\d+)"/);
+  const hostUp = hostsMatch ? parseInt(hostsMatch[1], 10) > 0 : null;
+  const completed = stdout.includes("<runstats") || stdout.includes("/finished");
+  const filteredMatch = stdout.match(/<extraports\s+state="filtered"\s+count="(\d+)"/);
+  const filteredCount = filteredMatch ? parseInt(filteredMatch[1], 10) : 0;
+
   const parsed = parseNmapXml(stdout);
   const ports  = parsed.map(applyMeta);
 
-  return { skipped: false, ports };
+  return {
+    skipped: false,
+    ports,
+    inconclusive,
+    scan: { target, portSpec, scanMode, hostUp, completed, filteredCount },
+  };
 }
 
 module.exports = { runNmap };

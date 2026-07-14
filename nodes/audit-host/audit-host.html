@@ -11,6 +11,11 @@
             enableSw:     { value: true },
             enableLynis:  { value: true },
             enableTrivy:  { value: true },
+            securityEvents:       { value: false },
+            securityEventsWindow: { value: 24, validate: function (v) {
+                const n = parseInt(v, 10);
+                return !isNaN(n) && n >= 1 && n <= 168;
+            } },
             llmConfig:    { value: "", type: "llm-config", required: false }
         },
         inputs: 1,
@@ -22,6 +27,16 @@
         },
         labelStyle: function () {
             return this.name ? "node_label_italic" : "";
+        },
+        oneditprepare: function () {
+            // Campo "Ventana (horas)" visible solo si el checkbox está activo
+            const toggleWindow = function () {
+                $("#security-events-window-row").toggle(
+                    $("#node-input-securityEvents").is(":checked")
+                );
+            };
+            $("#node-input-securityEvents").on("change", toggleWindow);
+            toggleWindow();
         }
     });
 </script>
@@ -111,6 +126,25 @@
                 </div>
             </div>
 
+            <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <input type="checkbox" id="node-input-securityEvents" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                <div style="width: 100%;">
+                    <label for="node-input-securityEvents" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
+                        <i class="fa fa-user-secret"></i> Eventos de seguridad
+                        <span style="color: #27ae60; font-size: 0.8em; font-weight: normal; margin-left: 4px;">● nativo</span>
+                    </label>
+                    <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
+                        Foto fija de los eventos de seguridad recientes del host: accesos SSH (correctos y fallidos), usos de sudo/su y sesiones activas, dentro de la ventana temporal configurada. No es monitorización continua: se ejecuta, recoge y termina. Usa los logs del sistema (journalctl/auth.log en Linux, log de macOS); si no son accesibles, lo indica con un hallazgo informativo sin fallar.
+                    </div>
+                    <div id="security-events-window-row" style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
+                        <label for="node-input-securityEventsWindow" style="width: auto; margin: 0; font-size: 0.85em;">
+                            <i class="fa fa-clock-o"></i> Ventana (horas)
+                        </label>
+                        <input type="number" id="node-input-securityEventsWindow" min="1" max="168" step="1" style="width: 80px;">
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -146,7 +180,9 @@
     <p>
         Auditoría de seguridad del host local. Recopila información de CPU, memoria,
         disco, software instalado y ejecuta herramientas de seguridad opcionales
-        (Lynis, Trivy).
+        (Lynis, Trivy). Opcionalmente audita los eventos de seguridad recientes
+        (accesos SSH, usos de sudo/su y sesiones activas) en una ventana temporal
+        configurable — foto fija, no monitorización continua.
     </p>
 
     <h3>Entrada</h3>

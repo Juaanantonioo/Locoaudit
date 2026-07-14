@@ -57,6 +57,8 @@
         <div class="header-row2">
           <span class="pill"><span class="pill-label">Fuente</span><span class="pill-sep">·</span>{{ srcLabel }}</span>
           <span class="pill"><span class="pill-label">Modo</span><span class="pill-sep">·</span>{{ modeLabel }}</span>
+          <span class="pill" v-if="targetLabel"><span class="pill-label">Target</span><span class="pill-sep">·</span>{{ targetLabel }}</span>
+          <span class="pill" v-if="rangeLabel"><span class="pill-label">Puertos</span><span class="pill-sep">·</span>{{ rangeLabel }}</span>
           <span class="pill" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">
             <span class="pill-label">Duración</span><span class="pill-sep">·</span>{{ durLabel }}
           </span>
@@ -67,6 +69,15 @@
           </span>
         </div>
       </header>
+
+      <!-- ══ AVISO: escaneo no concluyente ══ -->
+      <div v-if="scanWarn" class="scan-warn">
+        <span class="scan-warn-ico">⚠️</span>
+        <div>
+          <div class="scan-warn-title">{{ scanWarn.title }}</div>
+          <div class="scan-warn-desc">{{ scanWarn.desc }}</div>
+        </div>
+      </div>
 
       <!-- ══ MAIN ══ -->
       <main class="main">
@@ -315,6 +326,25 @@ export default {
       return MAP[this.maxSev] || this.maxSev;
     },
 
+    scanWarn() {
+      var meta = this.auditData && this.auditData.scanMeta;
+      var st = meta && meta.scanStatus;
+      if (!st || st === 'ok') return null;
+      if (st === 'inconclusive') {
+        return {
+          title: 'Escaneo no concluyente',
+          desc: 'El escaneo no terminó (posible firewall que lo ralentiza). ' +
+                'Un resultado de 0 puertos NO garantiza que el host sea seguro. ' +
+                'Prueba el modo Completo o aumenta el timeout.'
+        };
+      }
+      return {
+        title: 'El host no respondió al descubrimiento',
+        desc: 'Puede estar protegido por un firewall. El nodo ya usa -Pn; ' +
+              'prueba el modo Completo para un rango de puertos mayor.'
+      };
+    },
+
     scanTime() {
       var ts = this.auditData && this.auditData.timestamp;
       if (!ts) return '—';
@@ -333,9 +363,20 @@ export default {
     },
 
     modeLabel() {
-      var MAP = { standard: 'Estándar', full: 'Completo', custom: 'Personalizado' };
+      var MAP = { rapido: 'Rápido', standard: 'Estándar', full: 'Completo', custom: 'Personalizado' };
       var mode = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.scanMode;
       return MAP[mode] || mode || 'Estándar';
+    },
+
+    targetLabel() {
+      var meta = this.auditData && this.auditData.scanMeta;
+      if (!meta) return null;
+      return meta.target || meta.customTarget || null;
+    },
+
+    rangeLabel() {
+      var meta = this.auditData && this.auditData.scanMeta;
+      return (meta && meta.portRange) || null;
     },
 
     sortedPorts() {
@@ -811,6 +852,18 @@ export default {
     color: #CBD5E1;
     font-family: var(--mono);
   }
+  .scan-warn {
+    display: flex; align-items: flex-start; gap: 10px;
+    margin: 14px 0 0;
+    padding: 12px 14px;
+    background: rgba(245, 158, 11, .12);
+    border: 1px solid rgba(245, 158, 11, .45);
+    border-left-width: 4px;
+    border-radius: 8px;
+  }
+  .scan-warn-ico { font-size: 18px; line-height: 1.2; }
+  .scan-warn-title { font-weight: 700; font-size: 13.5px; color: #F59E0B; }
+  .scan-warn-desc { font-size: 12px; color: #CBD5E1; margin-top: 2px; }
   .dl-group { margin-left: auto; display: flex; gap: 6px; }
   .dl-btn {
     display: inline-flex; align-items: center;

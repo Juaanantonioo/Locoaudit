@@ -67,14 +67,33 @@ function parseImageRef(ref) {
  */
 function summarizeScanError(err) {
   const e = String(err || "");
-  if (/MANIFEST_UNKNOWN|manifest unknown|No such image|unable to find the specified image|NAME_UNKNOWN|not found/i.test(e)) {
-    return "Imagen o tag no encontrado (ni en local ni en el registro). Revisa el nombre y el tag.";
+  // Causas de infraestructura (marcadas por cve-checker) primero: son las que el
+  // mensaje genérico "revisa el nombre" enmascaraba erróneamente.
+  if (/^MAXBUFFER:|maxBuffer/i.test(e)) {
+    return "El informe del análisis es demasiado grande para procesarlo (imagen muy voluminosa con cientos de paquetes). " +
+           "El límite de memoria ya se ha ampliado; si persiste, escanea la imagen directamente con 'trivy image <ref>'.";
   }
+  if (/^TIMEOUT:|context deadline exceeded|ETIMEDOUT|timed out/i.test(e)) {
+    return "El análisis excedió el tiempo límite (imagen grande: la descarga puede tardar varios minutos). " +
+           "Aumenta el 'Timeout por imagen' en la configuración del nodo.";
+  }
+  if (/no space left on device|disk quota exceeded/i.test(e)) {
+    return "Sin espacio en disco para descargar la imagen. Libera espacio con 'docker image prune' y reintenta.";
+  }
+  // El rate limit se comprueba antes que auth: su mensaje también contiene "denied".
   if (/TOOMANYREQUESTS|toomanyrequests|429|rate limit/i.test(e)) {
     return "Límite de descargas del registro alcanzado (rate limit de Docker Hub). Inicia sesión con 'docker login' o reintenta más tarde.";
   }
-  if (/unauthorized|denied|authentication required/i.test(e)) {
-    return "Acceso denegado al registro (imagen privada o se requieren credenciales).";
+  // Autenticación ANTES que "no encontrada": cuando la imagen no está en local
+  // y el registro exige credenciales, el error de Trivy contiene AMBOS patrones
+  // ("No such image" del daemon local + "401 Unauthorized" del registro remoto)
+  // y la causa real es la falta de credenciales, no el nombre.
+  if (/unauthorized|authentication required|access.*denied|denied:/i.test(e) || /\b401\b/.test(e)) {
+    return "La imagen está en un registro privado que requiere autenticación ('docker login <registro>'). " +
+           "LoCoAudit soporta imágenes públicas; los registros privados quedan como trabajo futuro.";
+  }
+  if (/MANIFEST_UNKNOWN|manifest unknown|No such image|unable to find the specified image|NAME_UNKNOWN|not found/i.test(e)) {
+    return "Imagen o tag no encontrado (ni en local ni en el registro). Revisa el nombre y el tag.";
   }
   if (/no such host|dial tcp|network is unreachable|i\/o timeout|connection refused|TLS handshake/i.test(e)) {
     return "No se pudo contactar con el registro (problema de red o sin conexión).";
@@ -121,6 +140,10 @@ module.exports = function (RED) {
       const scanMode     = config.scanMode || "local";
       const enableConfig = config.enableConfig !== false;
       const enableTrivy  = config.enableTrivy  !== false;
+      // Timeout por imagen (segundos → ms). Configurable: las imágenes grandes
+      // (modelos de IA de varios GB) necesitan más tiempo para descargarse antes
+      // de escanearse. Rango 30–1800 s, por defecto 300 s (5 min).
+      const imageTimeout = Math.min(1800, Math.max(30, parseInt(config.imageTimeout, 10) || 300)) * 1000;
 
       const startTime = Date.now();
 
@@ -198,7 +221,7 @@ module.exports = function (RED) {
           // Escaneo: un target por referencia. Objeto sintético → imageRef() en
           // cve-checker devuelve la ref tal cual (repository vacío ⇒ usa el campo id).
           const targets = refs.map((r) => ({ id: r, repository: "", tag: "" }));
-          const trivy   = await runTrivyImage(targets);
+          const trivy   = await runTrivyImage(targets, imageTimeout);
 
           // CVEs de las imágenes que SÍ se escanearon (vacío si todas fallaron)
           const findings = (trivy && !trivy.skipped)
@@ -215,7 +238,9 @@ module.exports = function (RED) {
                 title:    `No se pudo escanear la imagen «${fa.ref || "desconocida"}»`,
                 severity: "info",
                 evidence: summarizeScanError(fa.error),
-                fix:      "Verifica el nombre/tag de la imagen, la conexión de red y los límites de descarga del registro (rate limit de Docker Hub).",
+                // La evidencia ya explica la causa concreta y qué hacer; el fix
+                // remite a ella para no contradecirla con un consejo genérico.
+                fix:      "Consulta el detalle del error arriba: indica la causa (tiempo de espera, tamaño, red, credenciales o nombre) y cómo resolverla.",
                 category: "image",
                 source:   "trivy",
                 image:    fa.ref || null,
@@ -295,7 +320,7 @@ module.exports = function (RED) {
         // 2. Auditorías en paralelo
         const [configResult, trivyResult] = await Promise.allSettled([
           enableConfig ? auditDockerConfig(docker)         : Promise.resolve([]),
-          enableTrivy  ? runTrivyImage(docker.images)      : Promise.resolve({ skipped: true, reason: "disabled" }),
+          enableTrivy  ? runTrivyImage(docker.images, imageTimeout) : Promise.resolve({ skipped: true, reason: "disabled" }),
         ]);
 
         const configFindings = configResult.status === "fulfilled" ? configResult.value : [];
