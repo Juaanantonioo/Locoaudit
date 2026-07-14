@@ -382,6 +382,35 @@
                   </div>
                 </div>
               </div>
+
+              <!-- ── Subsección: tabla de eventos (solo grupo "Logs del sistema") ── -->
+              <div v-if="g.key === 'system-logs' && secEvents" class="seclog">
+                <div class="seclog-title">Eventos (últimas {{ secEvents.windowHours }} h)</div>
+                <div v-if="!secEvents.events || secEvents.events.length === 0" class="seclog-empty">
+                  Sin eventos en la ventana analizada ({{ secEvents.windowHours }} h).
+                </div>
+                <div v-else>
+                  <div class="seclog-table-wrap">
+                    <table class="seclog-table">
+                      <thead>
+                        <tr><th>Hora</th><th>Tipo</th><th>Usuario</th><th>Origen</th><th>Detalle</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(ev, ei) in secEvents.events" :key="'ev-' + ei">
+                          <td class="seclog-mono">{{ ev.ts || '—' }}</td>
+                          <td><span class="seclog-badge" :class="evBadgeClass(ev.type)">{{ evTypeLabel(ev.type) }}</span></td>
+                          <td>{{ ev.user || '—' }}</td>
+                          <td class="seclog-mono">{{ ev.origin || '—' }}</td>
+                          <td class="seclog-detail">{{ ev.detail || '—' }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div v-if="secEvents.truncated" class="seclog-truncated">
+                    Mostrando los {{ secEvents.events.length }} más recientes.
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </template>
@@ -545,7 +574,8 @@ export default {
         memory:        { icon: '🧠', label: 'Memoria RAM',              order: 2 },
         system:        { icon: '🖥️', label: 'Sistema & Actualizaciones', order: 3 },
         network:       { icon: '🌐', label: 'Red & Firewall',           order: 4 },
-        other:         { icon: '📋', label: 'Otros',                    order: 99 }
+        'system-logs': { icon: '📋', label: 'Logs del sistema',         order: 5 },
+        other:         { icon: '📦', label: 'Otros',                    order: 99 }
       };
       var SEV_ORDER = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
       var catMap = {};
@@ -566,6 +596,11 @@ export default {
         var meta = CATS[c] || { icon: '📋', label: c, order: 50 };
         return { key: c, icon: meta.icon, label: meta.label, order: meta.order, items: catMap[c] };
       }).sort(function(a, b) { return a.order - b.order; });
+    },
+
+    secEvents() {
+      // payload.securityEvents = { windowHours, events: [{ts,type,user,origin,detail}], truncated }
+      return (this.auditData && this.auditData.securityEvents) || null;
     },
 
     catBars() {
@@ -765,9 +800,31 @@ export default {
     catLabel(cat) {
       var MAP = {
         vulnerability: 'Vulnerab.', cpu: 'CPU', memory: 'RAM',
-        system: 'Sistema', network: 'Red', disk: 'Disco', other: 'Otros'
+        system: 'Sistema', network: 'Red', disk: 'Disco',
+        'system-logs': 'Logs', other: 'Otros'
       };
       return MAP[(cat || '').toLowerCase()] || cat || '?';
+    },
+
+    evTypeLabel(type) {
+      var MAP = {
+        'ssh-accepted': 'SSH OK', 'ssh-failed': 'SSH fallido',
+        'sudo': 'sudo', 'sudo-failed': 'sudo fallido',
+        'session': 'Sesión',
+        'logon-remote': 'Login remoto', 'logon-failed': 'Login fallido',
+        'logon-privileged': 'Admin'
+      };
+      return MAP[type] || type || '?';
+    },
+
+    evBadgeClass(type) {
+      var FAILED = ['ssh-failed', 'sudo-failed', 'logon-failed'];
+      if (FAILED.indexOf(type) === -1) return 'ev-ok'; // verde: logins/sudo correctos y sesiones
+      // Ráfaga: nº total de fallos en la ventana >= 10 (mismo umbral que el
+      // finding de fuerza bruta de severity-map) → rojo; aislados → amarillo
+      var evs = (this.secEvents && this.secEvents.events) || [];
+      var fails = evs.filter(function(e) { return FAILED.indexOf(e.type) !== -1; }).length;
+      return fails >= 10 ? 'ev-burst' : 'ev-fail';
     },
 
     fmtEvidence(ev) {
@@ -1380,6 +1437,52 @@ export default {
     border: 1px solid var(--border);
     flex-shrink: 0;
   }
+
+  /* ── Logs del sistema: tabla de eventos ── */
+  .seclog { padding: 12px 16px 16px; border-top: 1px dashed var(--border); }
+  .seclog-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--info);
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    margin-bottom: 8px;
+  }
+  .seclog-empty { font-size: 12.5px; font-style: italic; color: var(--text-secondary); }
+  .seclog-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .seclog-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .seclog-table th {
+    background: var(--info-bg);
+    color: var(--info);
+    text-align: left;
+    padding: 6px 10px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    white-space: nowrap;
+  }
+  .seclog-table td { padding: 5px 10px; border-top: 1px solid var(--border); vertical-align: top; }
+  .seclog-table tr:nth-child(even) td { background: #F8FAFC; }
+  .seclog-mono {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 11px;
+    white-space: nowrap;
+    color: var(--text-secondary);
+  }
+  .seclog-detail { color: var(--text); }
+  .seclog-badge {
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    padding: 1px 7px;
+    border-radius: 100px;
+    white-space: nowrap;
+  }
+  .seclog-badge.ev-ok    { background: var(--low-bg);      color: var(--low);      border: 1px solid var(--low-border); }
+  .seclog-badge.ev-fail  { background: var(--medium-bg);   color: var(--medium);   border: 1px solid var(--medium-border); }
+  .seclog-badge.ev-burst { background: var(--critical-bg); color: var(--critical); border: 1px solid var(--critical-border); }
+  .seclog-truncated { font-size: 11px; color: var(--text-secondary); font-style: italic; margin-top: 6px; }
 
   .finding-title {
     font-size: 13px;

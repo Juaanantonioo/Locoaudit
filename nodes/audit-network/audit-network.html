@@ -80,8 +80,9 @@
                     Modo de escaneo
                 </label>
                 <select id="node-input-scanMode" style="width: 100%;">
-                    <option value="standard">Estándar — Escanea ~27 puertos conocidos. Recomendado.</option>
-                    <option value="full">Completo 1-1024 — Escanea todos los puertos conocidos. Más lento.</option>
+                    <option value="rapido">Rápido — Puertos 1-1024 + servicios de gestión (~1000). Segundos en local, ~45 s tras un firewall. No cubre puertos altos.</option>
+                    <option value="standard">Estándar — Puertos 1-3000 + gestión (incluye 2222). Recomendado. ~2 min tras un firewall.</option>
+                    <option value="full">Completo — Puertos 1-10000 + gestión. Cobertura máxima pero LENTO: varios minutos tras un firewall (cada puerto filtrado añade espera).</option>
                     <option value="custom">Personalizado — Define tú mismo qué puertos auditar.</option>
                 </select>
             </div>

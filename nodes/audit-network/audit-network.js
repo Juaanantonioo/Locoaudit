@@ -107,16 +107,32 @@ module.exports = function (RED) {
         let openPorts  = [];
         let portSource = "native";
         const modulesRun = [];
+        // Estado del escaneo nmap: distingue "host up + 0 puertos" (verde legítimo)
+        // de "escaneo no concluyente / host no respondió" (advertencia, no verde).
+        let nmapScan = null;
+        let scanInconclusive = false;
 
         if (enableNmap) {
           try {
-            const nmapResult = await runNmap({ target, timeout: 30000 });
+            // Timeout del executor por modo, alineado con el tiempo real medido
+            // sobre un host filtrado (cada puerto filtrado añade espera). NO se usa
+            // --host-timeout de nmap (cortaría antes de sondear puertos altos y
+            // daría falso 0): si el escaneo excede este timeout, el executor lo mata
+            // y el resultado se marca "no concluyente" (banner de aviso).
+            const NMAP_TIMEOUT_BY_MODE = { rapido: 90000, standard: 240000, full: 620000, custom: 90000 };
+            const nmapTimeout = NMAP_TIMEOUT_BY_MODE[scanMode] || 240000;
+            const nmapResult = await runNmap({ target, scanMode, customPorts, timeout: nmapTimeout });
             if (!nmapResult.skipped) {
               openPorts  = nmapResult.ports;
               portSource = "nmap";
+              nmapScan   = nmapResult.scan || null;
               modulesRun.push("nmap");
               node.log("[audit-network] escáner: nmap");
             } else {
+              if (nmapResult.inconclusive) {
+                scanInconclusive = true;
+                nmapScan = nmapResult.scan || null;
+              }
               node.log(`[audit-network] nmap omitido (${nmapResult.reason}), usando fallback nativo`);
             }
           } catch (err) {
@@ -148,6 +164,43 @@ module.exports = function (RED) {
         // 4. Normalizar a findings[]
         const nmapSource = portSource === "nmap" ? "nmap" : "native";
         const findings   = normalizeNetwork(ports, nmapSource);
+
+        // 4b. Falso "sin riesgo": distinguir escaneo concluyente de host que no
+        // respondió. Un resultado de 0 puertos SOLO es tranquilizador si el
+        // escaneo terminó y el host estaba activo. Casos de advertencia:
+        //   - nmap no concluyó (timeout / proceso interrumpido)
+        //   - nmap terminó pero el host no respondió al descubrimiento (down)
+        // En ambos, se antepone un finding "medium" para que el dashboard NO
+        // pinte verde "SIN RIESGO".
+        let scanStatus = "ok";
+        const isRemote = target !== "127.0.0.1" && target !== "localhost";
+        if (scanInconclusive) {
+          scanStatus = "inconclusive";
+          findings.unshift(createFinding({
+            id:       "NET-SCAN-WARN",
+            title:    "Escaneo no concluyente: el resultado NO garantiza que no haya puertos abiertos",
+            severity: "medium",
+            evidence: `El escaneo de ${target} no terminó (timeout o interrupción). ` +
+                      "No se puede afirmar que el host esté seguro con estos datos.",
+            fix:      "El host puede estar protegido por un firewall que ralentiza el escaneo. " +
+                      "Reintenta con el modo Completo (más tiempo) o aumenta el timeout del nodo.",
+            category: "network",
+            source:   "nmap",
+          }));
+        } else if (portSource === "nmap" && nmapScan && nmapScan.hostUp === false && isRemote) {
+          scanStatus = "host-down";
+          findings.unshift(createFinding({
+            id:       "NET-SCAN-WARN",
+            title:    "El host no respondió al descubrimiento (puede estar protegido por firewall)",
+            severity: "medium",
+            evidence: `${target} no respondió. No se detectaron puertos, pero el resultado no es concluyente.`,
+            fix:      "Si sabes que el host está encendido, está filtrando el descubrimiento. " +
+                      "El nodo ya usa -Pn; prueba el modo Completo para un rango de puertos mayor.",
+            category: "network",
+            source:   "nmap",
+          }));
+        }
+
         const summary    = summarize(findings);
         const durationMs = Date.now() - startTime;
 
@@ -168,6 +221,23 @@ module.exports = function (RED) {
             portsOpen:    openPorts.length,
             durationMs,
             scanMode,
+            // Estado del escaneo: 'ok' | 'inconclusive' | 'host-down'.
+            // El dashboard usa esto para NO pintar verde cuando no es concluyente.
+            scanStatus,
+            hostUp: nmapScan ? nmapScan.hostUp : null,
+            filteredPorts: nmapScan ? nmapScan.filteredCount : null,
+            // Transparencia del escaneo: target y rango exactos para que el
+            // resultado sea reproducible (un `nmap localhost` manual escanea
+            // otro conjunto de puertos — top-1000 de nmap — y puede diferir).
+            target,
+            portRange:
+              nmapScan && nmapScan.portSpec
+                ? nmapScan.portSpec
+                : portSource === "nmap"
+                ? `1-1024 + catálogo (${Object.keys(PORT_CATALOG).length} puertos conocidos)`
+                : scanMode === "custom"
+                ? customPorts.trim()
+                : `catálogo (${Object.keys(PORT_CATALOG).length} puertos conocidos)`,
             customTarget: target !== "127.0.0.1" ? target : null,
           },
           raw: { ports },
@@ -184,7 +254,9 @@ module.exports = function (RED) {
         node.status({
           fill:  statusColor,
           shape: "dot",
-          text:  `${openPorts.length} puertos abiertos · riesgo: ${maxSev}`,
+          text:  scanStatus !== "ok"
+            ? `escaneo no concluyente (${scanStatus})`
+            : `${openPorts.length} puertos abiertos · riesgo: ${maxSev}`,
         });
 
         send(msg);
