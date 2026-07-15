@@ -91,7 +91,8 @@
 
       <!-- ══ SEVERITY COUNTERS ══ -->
       <div class="counters-row">
-        <div class="counter-card critical">
+        <div class="counter-card critical" :class="{ 'counter-active': filterSev === 'critical' }"
+             @click="toggleSevFilter('critical')" title="Filtrar por severidad Crítico">
           <div class="counter-top">
             <span class="counter-severity">Crítico</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2.5">
@@ -103,7 +104,8 @@
           <div class="counter-num" :style="counts.critical === 0 ? {color:'#CBD5E1'} : {}">{{ counts.critical }}</div>
           <div class="counter-sub">Acción inmediata</div>
         </div>
-        <div class="counter-card high">
+        <div class="counter-card high" :class="{ 'counter-active': filterSev === 'high' }"
+             @click="toggleSevFilter('high')" title="Filtrar por severidad Alto">
           <div class="counter-top">
             <span class="counter-severity">Alto</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EA580C" stroke-width="2.5">
@@ -115,7 +117,8 @@
           <div class="counter-num" :style="counts.high === 0 ? {color:'#CBD5E1'} : {}">{{ counts.high }}</div>
           <div class="counter-sub">Resolver esta semana</div>
         </div>
-        <div class="counter-card medium">
+        <div class="counter-card medium" :class="{ 'counter-active': filterSev === 'medium' }"
+             @click="toggleSevFilter('medium')" title="Filtrar por severidad Medio">
           <div class="counter-top">
             <span class="counter-severity">Medio</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2.5">
@@ -127,7 +130,8 @@
           <div class="counter-num" :style="counts.medium === 0 ? {color:'#CBD5E1'} : {}">{{ counts.medium }}</div>
           <div class="counter-sub">Cuando puedas</div>
         </div>
-        <div class="counter-card low">
+        <div class="counter-card low" :class="{ 'counter-active': filterSev === 'low' }"
+             @click="toggleSevFilter('low')" title="Filtrar por severidad Bajo">
           <div class="counter-top">
             <span class="counter-severity">Bajo</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#65A30D" stroke-width="2.5">
@@ -323,8 +327,8 @@
                           <span class="fix-num">{{ si + 1 }}</span>{{ step }}
                         </div>
                       </div>
-                      <p v-if="f.isCommand" style="font-size:12.5px;color:var(--text-secondary);line-height:1.5;margin-bottom:10px;">
-                        {{ f.title }}. Ejecuta el siguiente comando para aplicar la corrección:
+                      <p v-if="f.isCommand" class="cmd-intro">
+                        Comando sugerido<span class="cmd-origin">{{ originLabel(f.source) }}</span>:
                       </p>
                       <div v-if="f.isCommand" class="command-box">
                         <code class="command-text">{{ f.fix }}</code>
@@ -335,17 +339,16 @@
                         </button>
                       </div>
                       <div v-if="f.isCommand" class="cmd-warn">
-                        ⚠️ LoCoAudit no ejecuta el comando por ti. Cópialo y ejecútalo en tu terminal tras revisarlo.
+                        <strong>LoCoAudit no ejecuta este comando por ti.</strong>
+                        Cópialo y ejecútalo en tu terminal después de revisarlo.
+                      </div>
+                      <div v-if="f.isCommand && /(^|\s)sudo(\s|$)/.test(f.fix || '')" class="cmd-sudo">
+                        🔒 Requiere privilegios de administrador: pedirá tu contraseña de usuario. Revísalo bien antes de ejecutarlo.
                       </div>
                     </div>
                   </div>
                   <div v-if="!f.fix" style="padding:12px 0;font-style:italic;color:#6B7280;font-size:12.5px;">
                     Este hallazgo es informativo. No requiere acción inmediata.
-                  </div>
-
-                  <!-- ── Acciones del hallazgo ── -->
-                  <div class="finding-actions" v-if="f.isCommand">
-                    <button class="fix-btn" @click.stop="openFixModal(g.key + '-' + fi, f)">🛠️ Cómo lo arreglo</button>
                   </div>
 
                   <!-- ── Chat con IA ── -->
@@ -438,42 +441,6 @@
         LoCoAudit · Módulos: {{ (auditData.scanMeta.modulesRun || []).join(', ') }} · {{ scanTime }}
       </div>
 
-      <!-- ══ MODAL "Cómo lo arreglo" — solo muestra el comando, NO lo ejecuta ══ -->
-      <div class="lca-modal-overlay" v-if="modalFinding" @click.self="closeFixModal">
-        <div class="lca-modal">
-          <div class="lca-modal-head">
-            <span class="sev-badge" :class="sevClass(modalFinding.severity)">{{ sevLabel(modalFinding.severity) }}</span>
-            <span class="lca-modal-title">{{ modalFinding.title }}</span>
-            <button class="lca-modal-close" @click="closeFixModal" aria-label="Cerrar">✕</button>
-          </div>
-          <div class="lca-modal-body">
-            <div class="lca-modal-sec">El problema</div>
-            <p class="lca-modal-text">{{ modalFinding.evidence }}</p>
-            <div class="lca-modal-sec">Comando sugerido<span class="lca-modal-origin">{{ originLabel(modalFinding.source) }}</span></div>
-            <div class="command-box">
-              <code class="command-text">{{ modalFinding.fix }}</code>
-              <button @click.stop="copyCommand(modalFinding.fix)"
-                      :class="{ copied: copiedKey === modalFinding.fix }"
-                      class="command-btn">
-                {{ copiedKey === modalFinding.fix ? '✓ Copiado' : 'Copiar' }}
-              </button>
-            </div>
-            <div class="lca-modal-warn">
-              <strong>LoCoAudit no ejecuta este comando por ti.</strong>
-              Cópialo y ejecútalo en tu terminal después de revisarlo.
-            </div>
-            <div class="lca-modal-sudo" v-if="/(^|\s)sudo(\s|$)/.test(modalFinding.fix || '')">
-              🔒 Requiere privilegios de administrador: pedirá tu contraseña de usuario.
-              Revísalo bien antes de ejecutarlo.
-            </div>
-          </div>
-          <div class="lca-modal-foot">
-            <button v-if="llmAvailable === true" class="ai-ask-btn" @click="askAiFromModal">🤖 Preguntar a la IA</button>
-            <button class="lca-modal-btn" @click="closeFixModal">Cerrar</button>
-          </div>
-        </div>
-      </div>
-
     </div>
   </div>
 </template>
@@ -482,9 +449,8 @@
 export default {
   data() {
     return {
-      // Modal "Cómo lo arreglo" (solo muestra el comando; NO ejecuta nada).
-      modalFinding: null,
-      modalKey: null,
+      // Filtro por severidad: clic en una tarjeta (Crítico/Alto/Medio/Bajo).
+      filterSev: 'all',
       state: 'idle',
       auditData: null,
       openGroups: {},
@@ -615,6 +581,7 @@ export default {
     groups() {
       var findings = this.auditData && this.auditData.findings;
       if (!findings) return [];
+      var fsev = this.filterSev;   // filtro por severidad (tarjetas clicables)
       var CATS = {
         vulnerability: { icon: '🔒', label: 'Vulnerabilidades',        order: 0 },
         cpu:           { icon: '⚙️', label: 'Procesador (CPU)',         order: 1 },
@@ -627,6 +594,7 @@ export default {
       var SEV_ORDER = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
       var catMap = {};
       findings.forEach(function(f) {
+        if (fsev !== 'all' && (f.severity || '').toLowerCase() !== fsev) return;
         var c = (f.category || 'other').toLowerCase();
         if (c === 'disk') return;
         var key = CATS[c] ? c : 'other';
@@ -725,16 +693,11 @@ export default {
     toggleFinding(key) {
       this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
     },
+    // Filtro por severidad: clic en la tarjeta activa/desactiva ese filtro.
+    toggleSevFilter(sev) {
+      this.filterSev = this.filterSev === sev ? 'all' : sev;
+    },
 
-    // ── Modal "Cómo lo arreglo" (solo muestra el comando; NO ejecuta nada) ─────
-    openFixModal(key, finding) {
-      this.modalKey = key;
-      this.modalFinding = finding;
-    },
-    closeFixModal() {
-      this.modalFinding = null;
-      this.modalKey = null;
-    },
     // Origen HONESTO del comando: lo genera LoCoAudit; si el hallazgo vino de una
     // herramienta, se indica a partir de qué análisis (Trivy/Lynis/Nmap).
     originLabel(source) {
@@ -745,15 +708,6 @@ export default {
         native: '· recomendación de LoCoAudit',
       };
       return M[source] || '· recomendación de LoCoAudit';
-    },
-    askAiFromModal() {
-      // Reutiliza el chat inline existente con el MISMO finding de contexto.
-      var key = this.modalKey, finding = this.modalFinding;
-      this.closeFixModal();
-      if (finding) {
-        if (this.openFindings && key != null) this.openFindings = Object.assign({}, this.openFindings, { [key]: true });
-        this.toggleChat(key, finding);
-      }
     },
 
     // ── Descarga de reporte (HTML imprimible + JSON) ──────────────────────────
@@ -807,7 +761,7 @@ export default {
       var root = (this.$el && this.$el.querySelector && this.$el.querySelector('.lca-report-root')) || document.querySelector('.lca-report-root') || this.$el;
       var clone = root.cloneNode(true);
       // Quitar lo que necesita servidor (chat IA) y los botones de descarga.
-      clone.querySelectorAll('.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn,.finding-actions,.fix-btn,.lca-modal-overlay,[class*="chat"]').forEach(function (n) { n.remove(); });
+      clone.querySelectorAll('.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn,[class*="chat"]').forEach(function (n) { n.remove(); });
       // 3. Convertir los grupos y hallazgos en acordeón interactivo (como el
       //    ui_template): la cabecera lleva data-lca-acc y su cuerpo (el hermano
       //    siguiente) se abre/cierra con el toggle vanilla embebido. Estado
@@ -824,7 +778,7 @@ export default {
         if (b) { b.classList.remove('open'); b.setAttribute('data-lca-open', '0'); }
       });
       // 4. CSS extra del export + toggle/copiar (vanilla) + documento autocontenido.
-      var extra = '.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn,.finding-actions,.fix-btn,.lca-modal-overlay{display:none!important}'
+      var extra = '.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn{display:none!important}'
         + '[data-lca-acc]{cursor:pointer}.command-btn,.ia-copy-btn{cursor:pointer}'
         + '@media print{[class*="finding-detail"],[class*="finding-body"],[class*="group-body"],[class*="group-findings"]{display:block!important;max-height:none!important;opacity:1!important;overflow:visible!important}}';
       var toggleJs = "(function(){document.addEventListener('click',function(e){var cb=e.target.closest('.command-btn,.ia-copy-btn');if(cb){var box=cb.parentElement,c=box&&box.querySelector('code');var t=c?c.textContent:'';try{navigator.clipboard.writeText(t);}catch(_){}var o=cb.textContent;cb.textContent='\\u2713 Copiado';setTimeout(function(){cb.textContent=o;},1500);return;}var h=e.target.closest('[data-lca-acc]');if(!h)return;var b=h.nextElementSibling;if(!b)return;var willOpen=b.getAttribute('data-lca-open')==='0';b.style.display=willOpen?'':'none';b.classList.toggle('open',willOpen);b.setAttribute('data-lca-open',willOpen?'1':'0');var cv=h.querySelector('[class*=chevron]');if(cv)cv.classList.toggle('open',willOpen);});})();";
@@ -1857,63 +1811,20 @@ export default {
   .chat-send-btn:hover:not(:disabled) { background: #0284C7; }
   .chat-send-btn:disabled { opacity: .5; cursor: not-allowed; }
 
-  /* ── Botón "Cómo lo arreglo" + aviso inline ─────────────────────────────── */
-  .finding-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-  .fix-btn {
-    background: #0EA5E9; color: #fff; border: none; border-radius: 7px;
-    padding: 7px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer;
-    transition: background .2s;
-  }
-  .fix-btn:hover { background: #0284C7; }
-  .cmd-warn {
-    margin-top: 8px; font-size: 11.5px; line-height: 1.5; color: #B45309;
-    background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 6px; padding: 7px 10px;
-  }
+  /* ── Filtro por severidad: tarjetas clicables ───────────────────────────── */
+  .counter-card { cursor: pointer; transition: box-shadow .15s, transform .15s; }
+  .counter-card:hover { transform: translateY(-1px); }
+  .counter-card.counter-active { box-shadow: 0 0 0 2px #0EA5E9, 0 6px 16px rgba(14,165,233,.22); }
 
-  /* ── Modal "Cómo lo arreglo" (host · azul #0EA5E9) ──────────────────────── */
-  .lca-modal-overlay {
-    position: fixed; inset: 0; background: rgba(15,23,42,.55);
-    display: flex; align-items: center; justify-content: center;
-    padding: 20px; z-index: 9999;
+  /* ── Resolución inline: origen + avisos (host · azul #0EA5E9) ────────────── */
+  .cmd-intro { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 10px; }
+  .cmd-origin { color: #0EA5E9; font-weight: 600; margin-left: 4px; }
+  .cmd-warn {
+    margin-top: 8px; font-size: 12px; line-height: 1.55; color: var(--text);
+    background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 9px 11px;
   }
-  .lca-modal {
-    background: var(--card); color: var(--text); width: 100%; max-width: 560px;
-    max-height: 88vh; overflow-y: auto; border-radius: 14px;
-    border-top: 4px solid #0EA5E9; box-shadow: 0 20px 60px rgba(2,132,199,.28);
+  .cmd-sudo {
+    margin-top: 8px; font-size: 12px; line-height: 1.55; color: #92400E;
+    background: #FEF3C7; border: 1px solid #FCD34D; border-radius: 8px; padding: 9px 11px;
   }
-  .lca-modal-head {
-    display: flex; align-items: center; gap: 10px;
-    padding: 16px 18px; border-bottom: 1px solid var(--border);
-  }
-  .lca-modal-title { font-size: 14.5px; font-weight: 700; flex: 1; line-height: 1.3; }
-  .lca-modal-close {
-    background: none; border: none; font-size: 17px; color: var(--text-secondary);
-    cursor: pointer; line-height: 1; padding: 2px 6px; border-radius: 6px;
-  }
-  .lca-modal-close:hover { background: var(--border); color: var(--text); }
-  .lca-modal-body { padding: 16px 18px; }
-  .lca-modal-sec {
-    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
-    color: #0EA5E9; margin: 14px 0 8px;
-  }
-  .lca-modal-sec:first-child { margin-top: 0; }
-  .lca-modal-origin { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-secondary); margin-left: 6px; }
-  .lca-modal-text { font-size: 13px; line-height: 1.55; color: var(--text); margin: 0; white-space: pre-wrap; }
-  .lca-modal-warn {
-    margin-top: 14px; font-size: 12.5px; line-height: 1.55; color: var(--text);
-    background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 10px 12px;
-  }
-  .lca-modal-sudo {
-    margin-top: 10px; font-size: 12px; line-height: 1.55; color: #92400E;
-    background: #FEF3C7; border: 1px solid #FCD34D; border-radius: 8px; padding: 10px 12px;
-  }
-  .lca-modal-foot {
-    display: flex; gap: 8px; justify-content: flex-end;
-    padding: 14px 18px; border-top: 1px solid var(--border);
-  }
-  .lca-modal-btn {
-    background: #0EA5E9; color: #fff; border: none; border-radius: 7px;
-    padding: 8px 16px; font-size: 12.5px; font-weight: 600; cursor: pointer;
-  }
-  .lca-modal-btn:hover { background: #0284C7; }
 </style>
