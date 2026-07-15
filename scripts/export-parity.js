@@ -107,7 +107,6 @@ const cbox = det.append(El("div", "command-box"));
 cbox.append(El("code", "command-text", { text: "sudo cosa" }));
 cbox.append(El("button", "command-btn", { text: "Copiar" }));
 det.append(El("div", "cmd-warn", { text: "LoCoAudit no ejecuta el comando" }));
-det.append(El("div", "finding-actions")).append(El("button", "fix-btn", { text: "Cómo lo arreglo" }));
 
 const $el = El("div");
 $el.append(reportRoot);
@@ -139,10 +138,8 @@ ok(body.includes('data-lca-open="0"'), "el detalle no inicia cerrado (como el da
 ok(html.includes("data-lca-open"), "falta el toggle vanilla del acordeón");
 ok(body.includes("command-btn"), "eliminó el botón Copiar (debe conservarse)");
 ok(body.includes("sudo cosa"), "perdió el comando del hallazgo");
-// PASO 3: el export NO lleva el botón "Cómo lo arreglo" (modal muerto sin Vue)…
-ok(!body.includes("fix-btn"), "el export no debe llevar el botón 'Cómo lo arreglo'");
-ok(!body.includes("Cómo lo arreglo"), "quedó texto del botón de arreglo en el export");
-// …pero SÍ conserva el aviso inline (comando + copiar + aviso).
+// PASO 3: el export conserva el aviso inline (comando + copiar + aviso) —
+// la resolución vive en un solo sitio (inline), sin botón/modal redundante.
 ok(body.includes("cmd-warn") && body.includes("no ejecuta"), "perdió el aviso inline en el export");
 ok(html.includes("--accent"), "no embebió el CSS del dashboard");
 if (fails === before) console.log("  ✓ prune IA/descargas · acordeón interactivo (grupos abiertos, detalles cerrados) · copiar conservado");
