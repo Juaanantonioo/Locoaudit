@@ -25,22 +25,17 @@ locoaudit/
 │   │       ├── nmap-wrapper.js
 │   │       ├── service-detect.js
 │   │       └── vuln-check.js
-│   ├── audit-image/
-│   │   ├── audit-image.js
-│   │   ├── audit-image.html
-│   │   └── modules/
-│   │       ├── docker-api.js
-│   │       ├── layer-scan.js
-│   │       ├── cve-checker.js
-│   │       └── config-audit.js
-│   └── audit-reporter/
-│       ├── audit-reporter.js
-│       ├── audit-reporter.html
+│   └── audit-image/
+│       ├── audit-image.js
+│       ├── audit-image.html
 │       └── modules/
-│           ├── html-renderer.js
-│           ├── json-exporter.js
-│           ├── timestamp-logger.js
-│           └── template-engine.js
+│           ├── docker-api.js
+│           ├── layer-scan.js
+│           ├── cve-checker.js
+│           └── config-audit.js
+│
+│   (Sin nodo audit-reporter: los dashboards ui_template visualizan y descargan
+│    los reportes en HTML + JSON desde el navegador.)
 ├── lib/
 │   ├── executor.js        ← motor multiplataforma (child_process)
 │   ├── normalizer.js      ← convierte raw data a findings[]

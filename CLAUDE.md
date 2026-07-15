@@ -7,12 +7,15 @@ Contiene las decisiones de arquitectura, convenciones y guías de desarrollo.
 
 ## Qué es este proyecto
 
-**LoCoAudit** es un paquete npm para Node-RED que añade 4 nodos de auditoría:
+**LoCoAudit** es un paquete npm para Node-RED que añade 3 nodos de auditoría:
 
 - `audit-host` — inventario de hardware/software, métricas del sistema y vulnerabilidades del host
 - `audit-network` — escaneo de puertos y detección de servicios expuestos
 - `audit-image` — auditoría de imágenes Docker (capas, CVEs, configuración)
-- `audit-reporter` — generación de reportes HTML/JSON a partir de findings
+
+Los resultados se visualizan en dashboards de Node-RED (`ui_template`, Dashboard 2.0)
+y se descargan en HTML + JSON desde el propio dashboard. No hay nodo generador de
+reportes: los dashboards lo sustituyen (el antiguo `audit-reporter` fue eliminado).
 
 **Contexto académico:** TFG del Grado en Ingeniería Informática, Escuela Superior de Ingeniería.
 Director: Juan Boubeta Puig. Codirector: Jesús Rosa Bilbao.
@@ -33,7 +36,7 @@ Las herramientas **requeridas** bloquean el nodo si faltan.
 | `audit-network` | `nmap` | opcional | Puertos, servicios, versiones, OS fingerprint, NSE scripts |
 | `audit-image` | `docker` | requerida | Acceso a imágenes y contenedores — sin él el nodo no tiene sentido |
 | `audit-image` | `trivy image` | opcional | CVEs, secretos expuestos, misconfigs en imágenes Docker |
-| `audit-reporter` | Handlebars | nativo | Plantillas HTML/JSON — sin dependencias externas |
+| dashboards | `ui_template` (Dashboard 2.0) | nativo | Visualización + descarga de reportes HTML/JSON en el navegador |
 
 ### Herramientas evaluadas y descartadas
 
@@ -240,7 +243,6 @@ Ver `ROADMAP.md` para el plan completo y el estado de cada tarea.
 - [x] `lib/severity-map.js` — `rank()`, `max()`, `fromTrivy()`, `fromLynis()`, `fromNuclei()`, `summarize()`
 - [x] `lib/normalizer.js` — `normalizeHost()`, `normalizeNetwork()`, `normalizeImage()`
 - [x] `lib/utils.js` — utilidades genéricas (bytes, escHtml, safeFileName)
-- [x] `nodes/audit-reporter/modules/html-renderer.js` — dashboard HTML (movido de lib/)
 - [x] `nodes/audit-network/modules/network-utils.js` — utilidades de red (parsePortsList, etc.)
 - [x] `nodes/audit-host/modules/cpu-memory.js` — renombrado desde systemInfo.js, import corregido
 
