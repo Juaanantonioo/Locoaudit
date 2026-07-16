@@ -38,7 +38,6 @@
 
 const { execCommand }    = require("../../../lib/executor");
 const { createFinding }  = require("../../../lib/finding-schema");
-const { getFixForProcess } = require("../../../lib/process-fix");
 
 const INSPECT_TIMEOUT_MS = 8000;
 
@@ -111,10 +110,6 @@ function findingId(base, n) {
 async function auditContainer(container, idx) {
   const findings = [];
   const name = container.name || container.id;
-  // Extraer nombre de servicio de la imagen (ej: "mysql:8.0" → "mysql")
-  const imageFix = container.image
-    ? getFixForProcess(container.image, process.platform)
-    : null;
 
   // Inspecciones en paralelo para minimizar la latencia total
   const [userOut, envOut, bindsOut] = await Promise.all([
@@ -153,9 +148,11 @@ async function auditContainer(container, idx) {
 
   // ── MEDIUM: puertos publicados en todas las interfaces ────────────────────
   if (container.ports && container.ports.includes("0.0.0.0:")) {
-    const portsFix = imageFix
-      ? `Limitar el binding a 127.0.0.1: -p 127.0.0.1:<puerto>:<puerto>.\nAdemás, para este servicio: ${imageFix}`
-      : "Limitar el binding a 127.0.0.1 si el servicio es solo local: -p 127.0.0.1:<puerto>:<puerto>.";
+    // El binding se corrige en el arranque del contenedor (docker run / Compose),
+    // no con comandos del host. Por eso no se anexa el fix de proceso del host.
+    const portsFix =
+      "Limitar el binding a 127.0.0.1 si el servicio es solo local: " +
+      "-p 127.0.0.1:<puerto>:<puerto> en docker run, o el mapeo de puertos equivalente en Docker Compose.";
     findings.push(createFinding({
       id:       findingId("IMG-CFG-003", idx),
       title:    `Contenedor ${name} expone puertos en todas las interfaces`,

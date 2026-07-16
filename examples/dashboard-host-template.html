@@ -323,8 +323,22 @@
                     <div class="detail-col">
                       <div class="detail-col-title">Pasos de Resolución</div>
                       <div class="fix-steps" v-if="!f.isCommand">
-                        <div class="fix-step" v-for="(step, si) in parseFixSteps(f.fix)" :key="si">
-                          <span class="fix-num">{{ si + 1 }}</span>{{ step }}
+                        <div class="fix-step" v-for="(st, si) in parseFixStepsRich(f.fix)" :key="si">
+                          <span class="fix-num">{{ si + 1 }}</span>
+                          <template v-if="st.cmd">
+                            <span class="fix-step-body">
+                              <span v-if="st.label" class="fix-step-label">{{ st.label }}</span>
+                              <span class="command-box command-inline">
+                                <code class="command-text">{{ st.cmd }}</code>
+                                <button @click.stop="copyCommand(st.cmd)"
+                                        :class="{ copied: copiedKey === st.cmd }"
+                                        class="command-btn">
+                                  {{ copiedKey === st.cmd ? '✓ Copiado' : 'Copiar' }}
+                                </button>
+                              </span>
+                            </span>
+                          </template>
+                          <template v-else>{{ st.text }}</template>
                         </div>
                       </div>
                       <p v-if="f.isCommand" class="cmd-intro">
@@ -872,6 +886,32 @@ export default {
       return [fix];
     },
 
+    // Detecta si un paso de resolución es (o contiene) un comando ejecutable.
+    // Soporta dos formas: la línea entera es comando, o "Etiqueta: comando".
+    // Devuelve { label, cmd } o null. Mismo criterio que finding-schema::_isCmd
+    // más los verbos que aparecen embebidos en prosa (ufw/netstat/apachectl…).
+    stepCmd(step) {
+      var s = (step || '').trim();
+      var CMD = /^(sudo|brew|npm|yarn|pip|composer|go|apt|dnf|yum|winget|choco|lsof|nslookup|kill|systemctl|launchctl|bundle|cargo|rabbitmqctl|jupyter|auditpol|nginx|netsh|net\s+stop|netstat|ufw|apachectl|systemsetup)\b/i;
+      if (CMD.test(s)) return { label: '', cmd: s };
+      var idx = s.indexOf(': ');
+      if (idx >= 0) {
+        var after = s.slice(idx + 2).trim();
+        if (CMD.test(after)) return { label: s.slice(0, idx + 1), cmd: after };
+      }
+      return null;
+    },
+
+    // Pasos enriquecidos: cada paso es { label, cmd } (comando copiable) o { text }.
+    parseFixStepsRich(fix) {
+      var self = this;
+      return this.parseFixSteps(fix).map(function(step) {
+        var c = self.stepCmd(step);
+        return c ? { label: c.label, cmd: c.cmd, text: null }
+                 : { label: null, cmd: null, text: step };
+      });
+    },
+
     sevClass(sev) {
       return (sev || 'info').toLowerCase();
     },
@@ -999,7 +1039,11 @@ export default {
         var res = await fetch('/locoaudit/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ finding: finding, question: question, history: history })
+          body: JSON.stringify({
+            finding: finding, question: question, history: history,
+            auditType: this.auditData && this.auditData.auditType,
+            platform: this.auditData && this.auditData.host && this.auditData.host.platform
+          })
         });
         var data = await res.json();
         reply = (data && data.ok)
@@ -1706,6 +1750,11 @@ export default {
   }
   .command-btn:hover  { background: #0284C7; }
   .command-btn.copied { background: #22C55E; }
+
+  /* Paso de resolución con comando embebido (template híbrido) */
+  .fix-step-body   { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .fix-step-label  { color: var(--text); }
+  .command-inline  { margin-top: 0; }
 
   /* ── Chat con IA ── */
   .lca-chat-wrap { margin-top: 14px; }

@@ -14,7 +14,7 @@
  * Si no hay ninguno, devuelve un error claro.
  */
 
-const { chatWithLLM, buildSystemPrompt } = require("../../lib/llm-client");
+const { chatWithLLM, buildSystemPrompt, buildFollowupSystemPrompt } = require("../../lib/llm-client");
 
 module.exports = function (RED) {
   function LlmConfigNode(config) {
@@ -58,6 +58,10 @@ function registerChatEndpoint(RED) {
       const finding = body.finding || {};
       const question = body.question;
       const history = Array.isArray(body.history) ? body.history : [];
+      // Contexto del escaneo: imprescindible para dar soluciones válidas
+      // (imagen vs host vs red; y en host, el SO). Lo envía el cliente desde
+      // payload.auditType y payload.host.platform.
+      const context = { auditType: body.auditType, platform: body.platform };
 
       if (!question || typeof question !== "string") {
         res.status(400).json({ ok: false, error: "Falta la pregunta (campo 'question')." });
@@ -76,8 +80,22 @@ function registerChatEndpoint(RED) {
         return;
       }
 
-      const systemPrompt = buildSystemPrompt(finding);
+      // Distinción PRIMER turno vs SEGUIMIENTO en SERVIDOR, según si el historial
+      // recibido está vacío (no se confía en un flag del cliente).
+      //   - Primer turno  → plantilla estructurada + contexto completo del finding.
+      //   - Seguimientos  → prompt conversacional y directo, sin repetir plantilla
+      //     ni reinyectar el finding entero (ya vive en el historial).
+      const isFirstTurn = history.length === 0;
+      const systemPrompt = isFirstTurn
+        ? buildSystemPrompt(finding, context)
+        : buildFollowupSystemPrompt(finding, context);
       const messages = [...history, { role: "user", content: question }];
+
+      console.log(
+        `[locoaudit/chat] turno=${isFirstTurn ? "1-apertura" : "seguimiento"} ` +
+          `history=${history.length} auditType=${context.auditType || "(derivado)"} ` +
+          `platform=${context.platform || "?"} · system(1ª línea)="${systemPrompt.split("\n")[0]}"`
+      );
 
       const result = await chatWithLLM({
         ollamaUrl: cfg.ollamaUrl,
