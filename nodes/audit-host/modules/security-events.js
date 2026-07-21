@@ -63,29 +63,63 @@ const AUTH_LOG = "/var/log/auth.log";
 /** Extrae un timestamp legible del inicio de una línea de log (syslog o ISO). */
 function extractTimestamp(line) {
   // `log show --style syslog`: 2026-07-02 10:15:30.123456+0200
-  const iso = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
-  if (iso) return iso[1];
-  // syslog clásico (auth.log): Jul  2 10:15:30
-  const syslog = line.match(/^([A-Z][a-z]{2}\s+\d{1,2} \d{2}:\d{2}:\d{2})/);
+  const iso = line.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/);
+  if (iso) return `${iso[1]} ${iso[2]}`;
+  // journalctl -o short-iso: 2026-07-16T12:57:23+0200 (sin locale, con año)
+  const shortIso = line.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/);
+  if (shortIso) return `${shortIso[1]} ${shortIso[2]}`;
+  // syslog clásico (auth.log): "Jul  2 10:15:30" — o "jul 16 12:57:23" en
+  // locales que emiten el mes en minúscula (ES): aceptar ambas capitalizaciones.
+  const syslog = line.match(/^([A-Za-z]{3}\s+\d{1,2} \d{2}:\d{2}:\d{2})/);
   if (syslog) return syslog[1];
   return null;
 }
 
+/** PID de la línea de journal/syslog: "sshd-session[5775]:" → "5775".
+ *  Identifica la sesión/proceso para deduplicar eventos redundantes. */
+function tagPid(line, tagRe) {
+  const m = line.match(tagRe);
+  return m ? m[1] : null;
+}
+
+/** PID de una línea sshd/sshd-session/sshd-auth: "sshd-session[5775]:" → "5775". */
+const SSHD_PID_RE = /sshd(?:-session|-auth)?\[(\d+)\]/;
+
 /**
  * Parsea líneas de sshd → logins aceptados y fallidos.
  * Formatos cubiertos (Linux y macOS comparten OpenSSH):
- *   Accepted password|publickey|keyboard-interactive/pam for <user> from <ip> port ...
+ *   Accepted password|publickey|keyboard-interactive/pam for [invalid user] <user> from <ip> port ...
  *   Failed password|... for [invalid user] <user> from <ip> port ...
  *   error: PAM: authentication error for [illegal user] <user> from <host>  (macOS)
+ *
+ * ── Deduplicación (fuente canónica: "Failed password") ──────────────────────
+ * Un solo intento fallido emite varias líneas en la MISMA sesión (mismo PID):
+ *   "Failed password for root from ::1 port N ssh2"          ← canónica (1/intento)
+ *   "pam_unix(sshd:auth): authentication failure; ... user=root"   ← resumen, se descarta
+ *   "PAM N more authentication failures; ... user=root"            ← resumen, se descarta
+ *   "Connection closed by authenticating user root ::1 [preauth]"  ← desconexión, se descarta
+ * Solo se cuenta "Failed password" (un evento por intento real de contraseña).
+ * Las líneas "Connection closed by (authenticating|invalid) user ..." e
+ * "Invalid user ..." se usan SOLO como respaldo para conexiones que nunca
+ * emitieron un "Failed password" (p.ej. fallos de publickey), a razón de un
+ * único evento por PID, para no inflar el conteo de fuerza bruta.
+ *
+ * El [PID] procede del prefijo de `-o short-iso`; con `-o cat` (sin prefijo)
+ * `pid` es null y el respaldo se añade en modo best-effort sin correlación.
  */
 function parseSshdLines(text) {
   const accepted = [];
   const failed = [];
+  const failedPids = new Set();        // PIDs con al menos un "Failed password"
+  const fallbackByPid = new Map();     // pid → evento de respaldo (uno por conexión)
+  let noPidSeq = 0;                     // clave sintética cuando no hay PID (-o cat)
+
   for (const rawLine of String(text || "").split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
+    const pid = tagPid(line, SSHD_PID_RE);
 
-    let m = line.match(/Accepted (\S+) for (\S+) from (\S+)/);
+    let m = line.match(/Accepted (\S+) for (?:invalid user )?(\S+) from (\S+)/);
     if (m) {
       accepted.push({
         method: m[1],
@@ -97,6 +131,7 @@ function parseSshdLines(text) {
       continue;
     }
 
+    // Canónica: un evento por intento fallido de contraseña.
     m = line.match(/Failed \S+ for (?:invalid user )?(\S+) from (\S+)/);
     if (!m) {
       m = line.match(/error: PAM: authentication error for (?:illegal user )?(\S+) from (\S+)/);
@@ -108,8 +143,34 @@ function parseSshdLines(text) {
         timestamp: extractTimestamp(line),
         line,
       });
+      if (pid) failedPids.add(pid);
+      continue;
+    }
+
+    // Resúmenes redundantes del mismo intento → descartar (el "Failed password"
+    // ya lo cuenta; contarlos duplicaría el evento).
+    if (/authentication failure|more authentication failures/.test(line)) continue;
+
+    // Respaldo (solo para conexiones sin "Failed password"): un evento por PID.
+    m = line.match(/Connection closed by (?:authenticating|invalid) user (\S+) (\S+) port/);
+    if (!m) m = line.match(/\bInvalid user (\S+) from (\S+)/);
+    if (m) {
+      const key = pid || `nopid:${noPidSeq++}`;
+      if (!fallbackByPid.has(key)) {
+        fallbackByPid.set(key, {
+          pid,
+          ev: { user: m[1], ip: m[2], timestamp: extractTimestamp(line), line },
+        });
+      }
     }
   }
+
+  // Añadir respaldos cuyo PID nunca produjo un "Failed password".
+  for (const { pid, ev } of fallbackByPid.values()) {
+    if (pid && failedPids.has(pid)) continue;
+    failed.push(ev);
+  }
+
   return { accepted, failed };
 }
 
@@ -167,8 +228,12 @@ function parseSudoLines(text) {
       continue;
     }
 
-    m = line.match(/session opened for user (\S+) by (\S+)/);
-    if (m) {
+    // su REAL → "pam_unix(su:session): session opened for user root(uid=0) by X(uid=1000)".
+    // El equivalente de sudo — "pam_unix(sudo:session): session opened ..." — se
+    // DESCARTA: la línea COMMAND= de arriba ya cuenta ese uso de sudo. Contar
+    // ambas duplicaría cada invocación (el "13 usos" inflado del dashboard).
+    m = line.match(/session opened for user ([^\s(]+)(?:\(uid=\d+\))? by ([^\s(]+)/);
+    if (m && !/pam_unix\(sudo:/.test(line)) {
       ok.push({
         user: m[2],
         command: `su → ${m[1]}`,
@@ -220,16 +285,26 @@ async function collectLinux(windowHours, sources, partial) {
   let sudoText = "";
 
   if (await commandExists("journalctl")) {
+    // OpenSSH >= 9.8 divide el binario: el listener sigue siendo `sshd`, pero
+    // TODOS los eventos de autenticación los registra `sshd-session` (y
+    // `sshd-auth` en >= 9.9). Filtrar solo _COMM=sshd devuelve cero en esas
+    // versiones. Varios _COMM= del mismo campo se combinan con OR; en OpenSSH
+    // <9.8 los nombres extra no matchean nada, así que es retrocompatible.
+    //
+    // `-o short-iso` (NO `-o cat`): `cat` emite solo el MESSAGE, sin timestamp
+    // ni el prefijo `sshd-session[PID]:`. Necesitamos ambos: el ISO para la
+    // columna HORA (locale-independiente, sin el problema de "jul"/"Jul") y el
+    // [PID] para deduplicar líneas redundantes del mismo intento/sesión.
     sshText = await tryExec(
-      `journalctl _COMM=sshd --since "-${windowHours}h" --no-pager -o cat`,
+      `journalctl _COMM=sshd _COMM=sshd-session _COMM=sshd-auth --since "-${windowHours}h" --no-pager -o short-iso`,
       CMD_TIMEOUT_MS, "journalctl(sshd)", partial
     );
     sudoText = await tryExec(
-      `journalctl _COMM=sudo --since "-${windowHours}h" --no-pager -o cat`,
+      `journalctl _COMM=sudo --since "-${windowHours}h" --no-pager -o short-iso`,
       CMD_TIMEOUT_MS, "journalctl(sudo)", partial
     );
     const suText = await tryExec(
-      `journalctl _COMM=su --since "-${windowHours}h" --no-pager -o cat`,
+      `journalctl _COMM=su --since "-${windowHours}h" --no-pager -o short-iso`,
       CMD_TIMEOUT_MS, "journalctl(su)", partial
     );
     if (suText) sudoText += "\n" + suText;

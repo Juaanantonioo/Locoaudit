@@ -8,7 +8,12 @@
  *   parseTargets(input)               → string[]
  *   isLocalTarget(target)             → boolean
  *   toBaseUrl(protocol, host, port)   → string
+ *   getFixForPort(port, platform)     → string|null
  */
+
+// La parada de un servicio systemd (con su .socket) tiene una única definición
+// compartida: si se duplica aquí, acaba divergiendo de la de los fixes de proceso.
+const { systemdDisable, getFixForProcess } = require("../../../lib/process-fix");
 
 /**
  * Parsea una cadena de puertos con rangos ("80,443,8000-8080") a un array
@@ -107,7 +112,7 @@ function getFixForPort(port, platform) {
         );
       }
       return (
-        "Para deshabilitar: sudo systemctl stop ssh && sudo systemctl disable ssh\n" +
+        "Para deshabilitar: " + systemdDisable("ssh") + "\n" +
         "Para asegurar: edita /etc/ssh/sshd_config → PermitRootLogin no, PasswordAuthentication no.\n" +
         "Luego: sudo systemctl restart ssh"
       );
@@ -117,18 +122,19 @@ function getFixForPort(port, platform) {
         return "Desactiva el servicio FTP en Panel de control → Características de Windows → IIS → Servidor FTP.";
       }
       if (plat === "darwin") {
-        return "sudo launchctl disable system/ftp";
+        // Label real desconocido (macOS no trae servidor FTP): ver process-fix.js.
+        return getFixForProcess("vsftpd", "darwin");
       }
-      return "sudo systemctl stop vsftpd && sudo systemctl disable vsftpd";
+      return systemdDisable("vsftpd");
 
     case 23: // Telnet
       if (plat === "win32") {
         return "Desactiva el cliente Telnet en Panel de control → Características de Windows → Cliente Telnet.";
       }
       if (plat === "darwin") {
-        return "sudo launchctl disable system/telnet";
+        return getFixForProcess("telnetd", "darwin");
       }
-      return "sudo systemctl stop telnet && sudo apt remove telnetd";
+      return systemdDisable("telnet") + "\nSi no lo usas, desinstálalo: sudo apt remove telnetd";
 
     case 80:  // HTTP
     case 443: // HTTPS
@@ -139,7 +145,7 @@ function getFixForPort(port, platform) {
         );
       }
       return (
-        "Si no necesitas servidor web: sudo systemctl stop nginx || sudo systemctl stop apache2\n" +
+        "Si no necesitas servidor web: " + systemdDisable("nginx") + " (o apache2 en vez de nginx)\n" +
         "Si lo necesitas: asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
       );
 
@@ -191,27 +197,11 @@ function getFixForPort(port, platform) {
         "Habilita autenticación: security.authorization: enabled"
       );
 
-    default: {
-      if (plat === "win32") {
-        return (
-          `Identifica el proceso: netstat -ano | findstr :${port}\n` +
-          "Si no reconoces el servicio, bloquea el puerto en el firewall:\n" +
-          `netsh advfirewall firewall add rule name="Block ${port}" dir=in action=block protocol=TCP localport=${port}`
-        );
-      }
-      if (plat === "darwin") {
-        return (
-          `Identifica el proceso: sudo lsof -i :${port}\n` +
-          "Si no reconoces el servicio, bloquea el puerto en el firewall:\n" +
-          "sudo /usr/libexec/ApplicationFirewall/socketfilterfw --blockapp <app>"
-        );
-      }
-      return (
-        `Identifica el proceso: sudo lsof -i :${port}\n` +
-        "Si no reconoces el servicio, bloquea el puerto en el firewall:\n" +
-        `sudo ufw deny ${port}`
-      );
-    }
+    default:
+      // Sin guía por-puerto: la construye buildPortFix() (lib/normalizer.js) con
+      // el bind real, el proceso detectado y el tipo de servicio. Duplicarla aquí
+      // producía dos versiones divergentes de los mismos pasos.
+      return null;
   }
 }
 

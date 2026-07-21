@@ -1,210 +1,213 @@
-# Inventario de fixes estáticos de LoCoAudit
+# Inventario de fixes estáticos — LoCoAudit
 
-> Generado en la auditoría de calidad de correcciones (Tarea G).
-> **No modifica código.** Es una foto de TODOS los `fix` que emiten los normalizadores/módulos.
->
-> `isCommand` = valor que calcula `createFinding` vía `_isCmd(fix)` en `lib/finding-schema.js`.
-> `_isCmd` es **ancla-inicio**: sólo es `true` si el texto **empieza** por
-> `brew|sudo|npm|yarn|pip|composer|go|apt|dnf|yum|winget|choco|lsof|nslookup|kill|systemctl|launchctl` (+`\s`).
-> Prosa que *contenga* un comando en medio → `isCommand=false`.
->
-> Marcas de sospecha (PASO 2):
-> - 🟥 **P1** — image sugiere comando de gestor de paquetes del host / comando en plataforma equivocada.
-> - 🟧 **P2** — comando real que NO se marca `isCommand` (falso negativo → sin botón copiar) o comando con `sudo` sin aviso.
-> - 🟨 **P3** — fix genérico poco accionable.
+Mapa de los **pasos de resolución estáticos** (campo `fix` de un finding, generado por
+código, sin intervención del LLM), con las sospechas clasificadas por categoría.
 
----
+Fecha: 2026-07-21 · Rama `main` · **3ª pasada: 0 sospechosos.**
+Las versiones anteriores (esquema 🟥/🟧/🟨 del commit `f9bc811`, y la 1ª pasada de este
+mismo esquema) quedan en el historial de git.
 
-## HOST — módulo `cpu-memory` (`fromCpuMemory`)
+## Qué cambió en esta pasada
 
-| ID | Plataforma | fix | isCommand | Comando literal | Sospecha |
-|---|---|---|---|---|---|
-| HOST-CPU-001 | todas | `Revisar procesos con alto consumo con top/htop.` (sólo si sev≠info; si no, `null`) | false | — | — |
-| HOST-MEM-INF | darwin | `null` | false | — | — |
-| HOST-MEM-001 | linux/win32 | `Identificar procesos con alto consumo de RAM. Considerar ampliar memoria.` (sólo si sev≠info) | false | — | — |
-
-## HOST — módulo `disk-storage` (`fromDisk`)
-
-| ID | Plataforma | fix | isCommand | Comando literal | Sospecha |
-|---|---|---|---|---|---|
-| HOST-DISK-NNN | todas | `Liberar espacio en <mount>. Eliminar ficheros temporales o ampliar volumen.` (sólo si sev≠info) | false | — | — |
-
-## HOST — módulo `sw-inventory` (`fromSwInventory`)
-
-| ID | Plataforma | fix | isCommand | Comando literal | Sospecha |
-|---|---|---|---|---|---|
-| HOST-SW-001 | todas | `null` (info) | false | — | — |
-| HOST-SW-DANGER-NNN | todas | `getFixForProcess(name, platform)` — ver tabla process-fix; o fallback `Desinstala <name> si no lo necesitas activamente.` | según fix | ver process-fix | 🟧 los servicios de `DANGEROUS_SERVICES` sin entrada en `FIXES` (telnet, rsh-server, rsh-client, rlogin, tftpd, tftpd-hpa, nis, yp-tools, talk, ntalk) caen siempre al fallback `Desinstala X` — nunca dan comando |
-
-## HOST — módulo `lynis` (`fromLynisRaw` + `getLynisFixText`)
-
-| ID | Plataforma | fix | isCommand | Comando literal | Sospecha |
-|---|---|---|---|---|---|
-| HOST-LYN-IDX | todas | `Revisar las advertencias y sugerencias de Lynis para mejorar el hardening.` (o `null` si info) | false | — | — |
-| HOST-LYN-NNN | todas | `getLynisFixText(id)` → prosa por prefijo (NETW/SSH/FIRE/AUTH/KRNL/PKGS/LOGG/TIME/CRYP/MAIL/USB/BANN/ACCT/STRG/TOOL) | false | — | 🟨 el fallback `Revisar la configuración del sistema relacionada con <id>.` es genérico |
-| HOST-LYN-WARN-EXTRA | todas | `Ejecutar 'lynis show warnings'…` (+nota nslookup si hay NETW) | false | `lynis show warnings` (entre comillas, no ejecutable) | 🟨 genérico |
-| HOST-LYN-SUG | todas | `Consultar 'lynis show suggestions' para el detalle.` | false | — | 🟨 genérico |
-
-### `getLynisFixText` — textos por prefijo (todos prosa, isCommand=false)
-
-| Prefijo | Texto |
+| Cambio | Qué resuelve |
 |---|---|
-| NETW | Verificar la configuración de red… (incluye `nslookup google.com` como comprobación de falso positivo) |
-| SSH | Revisar la configuración de SSH en /etc/ssh/sshd_config… |
-| FIRE | Activar el firewall… |
-| AUTH | Revisar la política de contraseñas… |
-| KRNL | Revisar los parámetros del kernel (sysctl)… |
-| PKGS | `Actualizar paquetes del sistema con el gestor de paquetes correspondiente.` |
-| LOGG | Revisar la configuración del sistema de logs en /etc/rsyslog.conf… |
-| TIME | Configurar sincronización NTP… |
-| CRYP/MAIL/USB/BANN/ACCT/STRG/TOOL | prosa de revisión |
-| (fallback) | `Revisar la configuración del sistema relacionada con <id>.` 🟨 |
+| **1. `platform` + gestor real a todos los generadores** (`lib/pkg-manager.js`, nuevo) | `[PLATAFORMA]` — ningún fix asume ya el SO ni el gestor. En Linux se detecta pacman/apt/dnf/zypper/apk/emerge con `commandExists`; en macOS brew/port; en Windows winget/choco/scoop. |
+| **2. Trivy sin `Type` → prosa, nunca adivinar** | `[ECOSISTEMA]` — borradas la heurística por ruta (`/Cellar/`→brew) y el fallback por plataforma (linux→apt). Añadidos `arch`, `gentoo`, `azurelinux`… a `TRIVY_OS_TYPES`. |
+| **3. Comando ≠ nota** (`finding.command` nuevo) | `[PROSA-COMO-COMANDO]` — `_isCmd` exige una sola línea sin prosa; `command` guarda solo la línea ejecutable y es lo único que copia el dashboard. |
+| **4. Borrado de código muerto** | `PORT_CATALOG[*].fix` (35 textos) y las ramas `context==="image"` de `getTrivyFixCommand`. |
+| **5. Aviso de elevación en el modal** | `[SUDO-SIN-AVISO]` — el aviso 🔒 ya no depende de `isCommand`: aparece siempre que el paso contenga `sudo`. Los 29 fixes no se tocan. |
+| **6. `RDP_HARDEN_FIX` separa cerrar de filtrar** | `[FILTRAR≠CERRAR]` — misma regla que se aplicó en audit-network. |
+| **7. Nada de identificadores de servicio supuestos** | `[OTRO]` — si el label de launchctl o la unidad de systemd no se pueden conocer con seguridad, el copiable pasa a ser el paso de AVERIGUACIÓN (solo lectura) y la acción va en prosa. |
 
-## HOST — módulo `security-events` (`fromSecurityEvents` / `fromSecurityEventsWin32`)
+`isCommand` / `command` los calcula `createFinding()` (`lib/finding-schema.js`):
+`command` = primera línea del fix **si por sí sola** es un comando (una línea, sin prosa);
+`isCommand` = `Boolean(command)`. La nota explicativa sigue en `fix`, fuera del portapapeles.
 
-| ID | Plataforma | fix | isCommand | Sospecha |
+## Categorías de sospecha
+
+| Etiqueta | Significado |
+|---|---|
+| `[ECOSISTEMA]` | Gestor de paquetes que no corresponde al tipo del paquete. |
+| `[IMAGEN]` | Comando de host / "actualizar paquetes" en un finding de imagen Docker. |
+| `[PLATAFORMA]` | Comando o ruta de un SO distinto al del finding. |
+| `[FILTRAR≠CERRAR]` | Cortafuegos presentado como si cerrara el puerto. |
+| `[SERVICIO-SISTEMA]` | Deshabilitar un servicio propio del SO sin explicar el impacto. |
+| `[PROSA-COMO-COMANDO]` | `isCommand=true` con un texto que no es un comando ejecutable. |
+| `[SUDO-SIN-AVISO]` | Usa `sudo`/elevación sin advertirlo. |
+| `[OTRO]` | Nombre de unidad/servicio adivinado, código muerto, etc. |
+
+---
+
+## 1. audit-host — nativo, Lynis y eventos (`lib/normalizer.js`)
+
+| # | Prefijo | Fuente | Fix | isCmd | Plataforma | Gestor | Sospechoso |
+|---|---|---|---|---|---|---|---|
+| 1 | `HOST-CPU-001` | `cpuInspectFix()` :91 | win32 → Administrador de tareas · darwin → Monitor de Actividad · linux → top/htop | no | **las 3, ramificado** | — | no *(antes `[PLATAFORMA]`)* |
+| 2 | `HOST-MEM-001` | :166 | "Identificar procesos con alto consumo de RAM…" | no | ninguna | — | no |
+| 3 | `HOST-DISK-nnn` | :193 | "Liberar espacio en `<mount>`…" | no | ninguna | — | no |
+| 4 | `HOST-SW-DANGER-nnn` | `fromSwInventory()` :208 | `getFixForProcess(name, platform, pkgManager)` (§7) | según §7 | recibida | **real detectado** | no *(antes `[PLATAFORMA]`)* |
+| 5 | `HOST-LYN-IDX` | :318 | "Revisar advertencias y sugerencias de Lynis…" | no | ninguna | lynis | no |
+| 6 | `HOST-LYN-nnn` | `getLynisFixText(id, platform, pkgManager)` :286 | 15 prefijos × plataforma. Si un prefijo no aplica a un SO → guía genérica, nunca los pasos del otro | no | **ramificado** | real (PKGS) | no *(antes `[PLATAFORMA]`)* |
+| 7 | `HOST-LYN-WARN-EXTRA` | :359 | "Ejecutar 'lynis show warnings'…" | no | ninguna | lynis | no |
+| 8 | `HOST-LYN-SUG` | :392 | "Consultar 'lynis show suggestions'…" | no | ninguna | lynis | no |
+| 9 | `HOST-SEC-SKIP` | :431 | Acceso a logs en Linux / macOS / Windows | no | las 3 | — | no |
+| 10 | `HOST-SEC-SRC` | :451 | "Revisar permisos de lectura de logs." | no | ninguna | — | no |
+| 11 | `HOST-SEC-SSH-R-nnn` | `sshHardenFix(platform)` :475 | linux → sshd_config + fail2ban · darwin → sshd_config + Sesión remota · win32 → OpenSSH Server | no | **ramificado** | — | no *(antes `[PLATAFORMA]`)* |
+| 12 | `HOST-SEC-SSH-nnn` | :569 | "Revisar sshd_config y authorized_keys." | no | Unix | — | no |
+| 13 | `HOST-SEC-SSHF-001` | :611 | `sshHardenFix(platform)` | no | **ramificado** | — | no *(antes `[PLATAFORMA]`)* |
+| 14 | `HOST-SEC-SUDOF-001` | :645 | "Verificar qué usuario falla… visudo…" | no | Unix | visudo | no |
+| 15 | `HOST-SEC-SES-nnn` | :663 | "Ciérrala manualmente…" | no | Unix | — | no |
+| 16 | `HOST-SEC-WIN-PERM` | :731 | "Ejecuta Node-RED como administrador." | no | win32 | — | no |
+| 17 | `HOST-SEC-WIN-RDP-nnn` | `RDP_HARDEN_FIX` :710 | 1) CERRAR: desactivar Escritorio remoto · 2) si se necesita: NLA + contraseñas · nota: el firewall solo FILTRA | no | win32 | — | no *(antes `[FILTRAR≠CERRAR]`)* |
+| 18 | `HOST-SEC-WINF-001` | :802 | `RDP_HARDEN_FIX` | no | win32 | — | no *(ídem)* |
+| 19 | `HOST-SEC-WIN-PRIV-nnn` | :821 | prosa + `RDP_HARDEN_FIX` | no | win32 | — | no *(ídem)* |
+| 20 | `HOST-SEC-WIN-UAC` | :855 | `auditpol /set /subcategory:…` | no | win32 | auditpol | no |
+| 21 | `HOST-SEC-SES-nnn` (win) | :876 | "Ciérrala desde el Administrador de tareas…" | no | win32 | — | no |
+
+`fix: null` (informativos): `HOST-MEM-INF`, `HOST-SW-001`, `HOST-SEC-SSH-EXTRA`,
+`HOST-SEC-SUDO-001`, `HOST-SEC-INF`, `HOST-SEC-WIN-RDP-EXTRA`, `HOST-SEC-WIN-LOC`,
+`HOST-SEC-WIN-PRIVL`, `HOST-SEC-SES-LOC` → **9**.
+
+---
+
+## 2. CVEs de Trivy — host (`getTrivyFixCommand` :1008)
+
+Regla nueva: **el ecosistema sale del campo `Type` de Trivy o no sale.** Sin `Type` no se
+adivina — se emite prosa con `isCommand=false`.
+
+| # | Prefijo | Rama | Fix | isCmd | Gestor | Sospechoso |
+|---|---|---|---|---|---|---|
+| 22 | `HOST-CVE-nnn` | Type de SO (`osHostUpdateCmd` :979) | `managerForTrivyType(Type)` → pacman · apt · dnf · zypper · apk · emerge; si el Type no se reconoce, el gestor **realmente detectado** | sí | real | no *(antes `[ECOSISTEMA]`: faltaban Arch y Gentoo)* |
+| 23 | `HOST-CVE-nnn` | Type de lenguaje | `cargo update -p` · `npm update` · `pnpm` · `yarn` · `pip install --upgrade` · `poetry` · `go get -u` · `bundle` · `composer` | sí | el del ecosistema | no |
+| 24 | `HOST-CVE-nnn` | Type sin comando fiable (jar, pom, nuget, conan, cocoapods, hex, cran…) | prosa | no | — | no |
+| 25 | `HOST-CVE-nnn` | Binario Go (`gobinary` o path de módulo) | "actualiza la herramienta que lo incluye con `<gestor real>`" | no | real | no *(antes `[PLATAFORMA]`: asumía brew)* |
+| 26 | `HOST-CVE-nnn` | Type presente no mapeado | "Actualiza `<pkg>` con el gestor de `<type>`" | no | — | no |
+| 27 | `HOST-CVE-nnn` | **Sin Type** | "Trivy no ha indicado a qué ecosistema pertenece…; comprueba de dónde viene y usa su propio gestor" | **no** | — | no *(antes `[ECOSISTEMA]`: heurística por ruta + fallback por plataforma — **borradas**)* |
+| 28 | `HOST-CVE-nnn` | sin FixedVersion | "No hay versión corregida aún… monitorizar" | no | — | no |
+| 29 | `HOST-CVE-MED-nnn` | :1297 | "Actualizar los paquetes afectados en `<target>`" | no | — | no |
+| 30 | `HOST-CVE-LOW` | :1323 | "Revisar y actualizar paquetes cuando sea posible" | no | — | no |
+
+---
+
+## 3. CVEs de Trivy — imagen (`IMG-CVE-*`)
+
+| # | Prefijo | Fuente | Fix | isCmd | Sospechoso |
+|---|---|---|---|---|---|
+| 31 | `IMG-CVE-nnn` (crit/high) | `buildImageFix()` :1121 | tag corregido → base más pequeña/mantenida → esperar parche → rebuild propio | **no** (forzado) | no |
+| 32 | `IMG-CVE-MED-nnn` | :1297 | `buildImageFix()` | **no** | no |
+| 33 | `IMG-CVE-LOW` | :1323 | `buildImageFix()` | **no** | no |
+
+*(Las ramas `context === "image"` de `getTrivyFixCommand` — inalcanzables — se han **borrado**.)*
+
+---
+
+## 4. audit-image — nodo y configuración
+
+| # | Prefijo | Fuente | Fix | isCmd | Sospechoso |
+|---|---|---|---|---|---|
+| 34 | `IMG-IMAGE-NONE` | audit-image.js:180 | "Indica una imagen en el nodo…" | no | no |
+| 35 | `IMG-TRIVY-OFF` | :205 | "Instalar Trivy: https://trivy.dev/…" | no | no |
+| 36 | `IMG-SCAN-ERR-nnn` | :243 | "Consulta el detalle del error arriba…" | no | no |
+| 37 | `IMG-DOCKER-OFF` | :289 | "Instalar Docker Desktop…" | no | no |
+| 38 | `IMG-CFG-001` | config-audit.js:129 | "Añadir `USER <usuario>` no root en el Dockerfile." | no | no |
+| 39 | `IMG-CFG-002` | :143 | "Usar Docker secrets…" | no | no |
+| 40 | `IMG-CFG-003` | :151-161 | "`-p 127.0.0.1:<puerto>:<puerto>`…" | no | no |
+| 41 | `IMG-CFG-004` | :179 | "Evitar montar docker.sock…" | no | no |
+
+---
+
+## 5. audit-network — findings del nodo
+
+| # | Prefijo | Fuente | Fix | isCmd | Sospechoso |
+|---|---|---|---|---|---|
+| 42 | `NET-PORTS-BAD` | audit-network.js:87 | "Configura los puertos en el nodo…" | no | no |
+| 43 | `NET-SCAN-WARN` (timeout) | :198 | "Reintenta con el modo Completo…" | no | no |
+| 44 | `NET-SCAN-WARN` (host down) | :210 | "Prueba el modo Completo." | no | no |
+| 45 | `NET-PORT-INF` | normalizer.js:1637 | `null` | — | no |
+
+---
+
+## 6. audit-network — fixes de puerto (`buildPortFix` :1386)
+
+Corregidos en la ronda anterior: el fix estático propone **una sola acción fiable**
+(cerrar el puerto parando el servicio, siempre condicional). El cortafuegos vive en el
+prompt del LLM; el detectado va a la evidencia.
+
+| # | Caso | Fix | isCmd | Sospechoso |
 |---|---|---|---|---|
-| HOST-SEC-SKIP | todas | prosa: cómo dar permiso de lectura de logs | false | — |
-| HOST-SEC-SRC | todas | prosa | false | — |
-| HOST-SEC-SSH-R-NNN | unix | `SSH_HARDEN_FIX` (prosa: revisar sshd_config, fail2ban, macOS Sesión remota) | false | — |
-| HOST-SEC-SSH-NNN | unix | prosa: revisar sshd_config y authorized_keys | false | — |
-| HOST-SEC-SSH-EXTRA | unix | `null` | false | — |
-| HOST-SEC-SSHF-001 | unix | `SSH_HARDEN_FIX` | false | — |
-| HOST-SEC-SUDO-001 | unix | `null` | false | — |
-| HOST-SEC-SUDOF-001 | unix | prosa: verificar usuario, visudo | false | — |
-| HOST-SEC-SES-NNN | unix | prosa: cerrar sesión manualmente | false | — |
-| HOST-SEC-INF | todas | `null` | false | — |
-| HOST-SEC-WIN-PERM | win32 | `Para auditar… ejecuta Node-RED como administrador.` | false | — |
-| HOST-SEC-WIN-RDP-NNN | win32 | prosa + `RDP_HARDEN_FIX` | false | — |
-| HOST-SEC-WIN-RDP-EXTRA | win32 | `null` | false | — |
-| HOST-SEC-WIN-LOC | win32 | `null` | false | — |
-| HOST-SEC-WINF-001 | win32 | `RDP_HARDEN_FIX` (prosa) | false | — |
-| HOST-SEC-WIN-PRIV-NNN | win32 | prosa + `RDP_HARDEN_FIX` | false | — |
-| HOST-SEC-WIN-PRIVL | win32 | `null` | false | — |
-| HOST-SEC-WIN-UAC | win32 | prosa + `auditpol /set /subcategory:"Creación del proceso" …` | false | 🟧 comando real `auditpol …` embebido en prosa → no se ofrece como copiable; además es dependiente del idioma de Windows |
-| HOST-SEC-SES-NNN (win) | win32 | prosa: cerrar desde Administrador de tareas | false | — |
-| HOST-SEC-SES-LOC | win32 | `null` | false | — |
+| 46 | Terceros, expuesto | lsof/netstat + parada condicional (con `.socket` en Linux) | no | no |
+| 47 | Servicio del SO (`SYSTEM_SERVICES`) | Qué es + vía soportada del SO + aviso de impacto | no | no |
+| 48 | Bind en loopback | "No expuesto a la red, no hay nada que cerrar" | no | no |
+| 49 | Target remoto | "Actúa en ese dispositivo" | no | no |
+| 50 | Proceso desconocido | Identificación + guía de parada por SO | no | no |
+| 51 | `getFixForPort()` — 22, 21, 23, 80/443, 3306, 5432, 6379, 27017 | Notas por puerto, por plataforma (`default` → `null`) | varía | no |
 
-## HOST — módulo `trivy-fs` (`fromTrivyJson` con idPrefix `HOST-CVE`, context `host`)
-
-Ver tabla común **CVE / Trivy** más abajo (misma función `getTrivyFixCommand`, context=`host`).
+*(`PORT_CATALOG[*].fix` — 35 textos muertos — **borrado**: ni `port-scanner.js` ni
+`nmap-wrapper.js` lo leían; solo usaban `service` y `severity`.)*
 
 ---
 
-## NETWORK — `port-scanner` + `network-utils.getFixForPort` + `process-fix`
+## 7. `lib/process-fix.js` — catálogo compartido
 
-`fromPortScanner`/`fromNmap` asignan `fix = processFix || p.fix`, donde
-`processFix = getFixForProcess(process, platform)` (si hay proceso conocido) y
-`p.fix = getFixForPort(port, platform)`.
-**Nota:** el campo `fix` del `PORT_CATALOG` en `port-scanner.js` está **efectivamente muerto**: la línea 273 sobrescribe con `getFixForPort(port)`. Los textos del catálogo (líneas 86-128) no llegan al finding.
-
-### `getFixForPort(port, platform)`
-
-| Puerto | darwin | linux | win32 | isCommand (darwin/linux/win32) | Sospecha |
-|---|---|---|---|---|---|
-| 22 SSH | `Para deshabilitar: sudo systemsetup…` (prosa multilínea) | `Para deshabilitar: sudo systemctl…` | prosa services.msc | false / false / false | 🟧 contiene `sudo` sin marcarse comando (empieza por "Para") |
-| 21 FTP | `sudo launchctl disable system/ftp` | `sudo systemctl stop vsftpd && sudo systemctl disable vsftpd` | prosa | **true** / **true** / false | ✔ comandos con `sudo` → deben mostrar aviso sudo |
-| 23 Telnet | `sudo launchctl disable system/telnet` | `sudo systemctl stop telnet && sudo apt remove telnetd` | prosa | **true** / **true** / false | ✔ |
-| 80/443 | `Si no necesitas…: sudo systemctl stop nginx…` | idem | `Si no necesitas…: net stop w3svc…` | false / false / false | 🟧 `sudo`/`net stop` embebidos, no copiables |
-| 3306 MySQL | `Limita acceso: edita…` | idem | prosa | false | — |
-| 5432 Postgres | `Limita acceso: edita…` | idem | prosa | false | — |
-| 6379 Redis | `Edita /etc/redis…` | idem | prosa | false | — |
-| 27017 Mongo | `Edita /etc/mongod.conf…` | idem | prosa | false | — |
-| default | `Identifica el proceso: sudo lsof -i :<port>…` | `…sudo lsof…` / `sudo ufw deny <port>` | `netstat -ano | findstr…` / `netsh advfirewall…` | false | 🟧 comandos (`lsof`, `ufw`, `netsh`) embebidos en prosa, no copiables |
-
-### `process-fix.getFixForProcess(name, platform)` (compartida host-sw / network / image)
-
-| Servicio | darwin | linux | win32 | isCommand (d/l/w) | Sospecha |
-|---|---|---|---|---|---|
-| sshd | `sudo systemsetup -setremotelogin off` | `sudo systemctl stop ssh && sudo systemctl disable ssh` | prosa services.msc | **true**/**true**/false | ✔ sudo |
-| vsftpd/ftpd | `sudo launchctl disable system/ftp` | `sudo systemctl stop vsftpd…` | prosa | **true**/**true**/false | ✔ |
-| proftpd/pure-ftpd | (delega vsftpd) | `sudo systemctl stop proftpd…` | prosa | true/true/false | ✔ |
-| telnetd | `sudo launchctl disable system/telnet` | `sudo systemctl stop telnet && sudo apt remove telnetd` | prosa | true/true/false | ✔ |
-| mysqld/mysql | `Limita acceso: edita…` | idem | prosa | false | — |
-| mariadbd/mariadb | `Limita acceso: edita…` | idem | prosa | false | — |
-| postgres(ql) | `Edita postgresql.conf…` | idem | prosa | false | — |
-| redis(-server) | `Edita /etc/redis…` | idem | prosa | false | — |
-| mongod(b)/mongo | `Edita /etc/mongod.conf…` | idem | prosa | false | — |
-| nginx | `Si no necesitas nginx: sudo systemctl stop nginx…` | idem | `Si no necesitas nginx: nginx -s stop…` | false | 🟧 sudo embebido |
-| apache/apache2/httpd | `sudo apachectl stop && sudo launchctl disable …` | `sudo systemctl stop apache2 && sudo systemctl disable apache2` | `net stop Apache2.4` | **true**/**true**/**false** | 🟧 win32 `net stop Apache2.4` es comando real pero NO se marca (net∉patrones) |
-| node/python/ruby/java | prosa (bind 127.0.0.1) | idem | idem | false | — |
-| smbd/samba | `sudo launchctl disable system/smbd` | `sudo systemctl stop smbd…` | prosa | true/true/false | ✔ |
-| elasticsearch | `Limita Elasticsearch…: edita elasticsearch.yml…` | idem | idem | false | — |
-| rabbitmq | `Limita RabbitMQ: edita rabbitmq.conf…` | idem | `Limita RabbitMQ: rabbitmqctl…` | false | 🟧 `rabbitmqctl…` real embebido, no copiable |
-| registry | prosa (TLS) | idem | idem | false | — |
-| jupyter | `Jupyter expuesto…: jupyter notebook password…` | idem | idem | false | 🟧 `jupyter …` real embebido, no copiable |
-
-### Catálogo de puertos (líneas 86-128 de `port-scanner.js`) — **fix muerto** (no llega al finding)
-
-Textos prosa (`Desactiva…`, `Restringe…`, `Si…`, `Este puerto…`, `Comprueba…`, `API Docker…`, `Panel…`). isCommand irrelevante (no se usan). 🟨 código muerto a limpiar.
+| # | Familia | Fix (Linux / macOS / Windows) | isCmd | Sospechoso |
+|---|---|---|---|---|
+| 52 | `sshd`, `ssh` | `systemctl disable --now ssh.*` / `systemsetup -setremotelogin off` / services.msc | sí | no |
+| 53 | `vsftpd`, `ftpd`, `ftp`, `proftpd`, `pure-ftpd` | `systemctl disable --now …` / **`launchctl list \| grep -i ftp`** + acción en prosa / Características de Windows | sí (solo el listado) | no *(antes `[OTRO]`: label `system/ftp` supuesto)* |
+| 54 | `telnetd` | `systemctl disable --now telnet.*` + nota con el gestor real / **`launchctl list \| grep -i telnet`** + acción en prosa / Panel de control | sí (solo el listado) | no *(antes `[OTRO]`)* |
+| 55 | `mysqld`/`mariadb*`, `postgres*`, `redis*`, `mongo*` | rebind a 127.0.0.1 + autenticación | no | no |
+| 56 | `nginx`, `apache*`, `httpd` | parada del servicio por SO | sí (parcial) | no |
+| 57 | `node`, `python`, `ruby`, `java` | "Escucha en 127.0.0.1, no en 0.0.0.0" | no | no |
+| 58 | `vnc`, `rdp` | **`systemctl list-units --type=service \| grep -i vnc`** + acción en prosa / `xrdp.*` / Ajustes | sí (solo el listado) | no *(antes `[OTRO]`: unidad `vncserver` supuesta)* |
+| 59 | `smbd`, `samba` | parada del servicio por SO | sí | no |
+| 60 | `elasticsearch`, `rabbitmq`, `registry`, `jupyter` | rebind / autenticación / TLS | **no** | no *(antes `[PROSA-COMO-COMANDO]` en jupyter)* |
+| 61 | `cupsd`, `cups` | `systemctl disable --now cups.*` + nota `.path` en línea aparte | sí (solo el comando) | no *(antes `[PROSA-COMO-COMANDO]`)* |
+| 62 | `removeFix()` — telnet, rsh-*, rlogin, tftpd*, nis, yp-tools, talk, ntalk | `removeCmd(gestor real, pkg)` + nota en línea aparte | sí (solo el comando) | no *(antes `[PLATAFORMA]` + `[PROSA-COMO-COMANDO]`)* |
+| 63 | `SYSTEM_SERVICES` (12 fichas) | Qué es + vía soportada + impacto | no | no |
+| 64 | Global | `sudo` presente en muchas variantes | — | no *(cubierto por el aviso 🔒 del modal)* |
 
 ---
 
-## IMAGE — `config-audit` (`auditContainer`)
+## 8. RESUMEN
 
-| ID | fix | isCommand | Sospecha |
+### Totales
+
+| Métrica | Antes | Ahora |
+|---|---|---|
+| Sitios que generan fix estático | 72 | **64** (−8: código muerto borrado y ramas fusionadas) |
+| Findings informativos con `fix: null` | 10 | 10 |
+| **Filas sospechosas** | **17** | **0** |
+
+### Conteo por categoría
+
+| Categoría | Antes | Ahora | Qué lo resolvió |
 |---|---|---|---|
-| IMG-CFG-001 (root) | `Añadir USER <usuario> no root en el Dockerfile.` | false | — |
-| IMG-CFG-002 (env sensibles) | `Usar Docker secrets o variables de entorno en tiempo de ejecución…` | false | — |
-| IMG-CFG-003 (0.0.0.0) | `Limitar el binding a 127.0.0.1: -p 127.0.0.1:<puerto>:<puerto>.` (+`imageFix` de `getFixForProcess(image)` si existe) | false | 🟥 el `imageFix` anexado usa fixes de **host** (p.ej. mysql → `edita /etc/mysql/…`, systemctl) para un **contenedor** → rutas/servicios del host, no del contenedor |
-| IMG-CFG-004 (docker.sock) | `Evitar montar docker.sock salvo en herramientas de CI/CD…` | false | — |
+| `[PLATAFORMA]` | 7 | **0** | Cambio 1: `platform` + gestor real en todos los generadores |
+| `[PROSA-COMO-COMANDO]` | 4 | **0** | Cambio 3: `command` separado de la nota; `_isCmd` de una línea |
+| `[FILTRAR≠CERRAR]` | 4 | **0** | `RDP_HARDEN_FIX` reescrito + borrado del catálogo muerto |
+| `[OTRO]` | 4 | **0** | Cambio 7: paso de averiguación copiable + acción en prosa |
+| `[ECOSISTEMA]` | 3 | **0** | Cambio 2: sin `Type` no se adivina; +arch/gentoo |
+| `[SUDO-SIN-AVISO]` | 1 | **0** | Aviso 🔒 genérico en el modal, sin tocar los 29 fixes |
+| `[SERVICIO-SISTEMA]` | 1 | **0** | Muere con el catálogo muerto |
+| `[IMAGEN]` | 0 | **0** | Ya resuelto (`buildImageFix`) |
 
-## IMAGE — `trivy image` (`fromTrivyJson` con idPrefix `IMG-CVE`, context `image`)
+### Sin sospechosos pendientes
 
-Ver tabla común **CVE / Trivy** (context=`image`).
+Los 3 casos que quedaban (`launchctl disable system/ftp`, `system/telnet` y
+`systemctl disable --now vncserver.service`) compartían el mismo defecto: un identificador
+de servicio **supuesto**. Resueltos con la misma regla que ya se aplica en Trivy y en red —
+*si no se puede conocer con seguridad, no se emite un comando que falla*:
 
----
+| Caso | Copiable ahora (solo lectura) | Acción |
+|---|---|---|
+| FTP en macOS | `launchctl list \| grep -i ftp` | prosa: deshabilitar el label REAL que devuelva |
+| Telnet en macOS | `launchctl list \| grep -i telnet` | prosa: ídem |
+| VNC en Linux | `systemctl list-units --type=service \| grep -i vnc` | prosa: `systemctl disable --now <unidad>` con la unidad real |
 
-## CVE / Trivy — `getTrivyFixCommand(target, pkg, fixedVersion, process.platform, context)`
+El paso de averiguación sí es copiable porque es una línea inofensiva de solo lectura:
+no falla ni destruye nada. Lo que ya no se ofrece como comando es el `disable` con un
+nombre inventado. El mismo texto se reutiliza desde `network-utils.js` (puertos 21 y 23),
+que antes duplicaba los labels supuestos.
 
-**Importante:** `platform` que recibe es `process.platform` = **el host que corre Node-RED**, NO el sistema de la imagen escaneada.
-
-| Caso (prioridad) | Rama | fix | isCommand | Sospecha |
-|---|---|---|---|---|
-| 0. Módulo Go (`github.com/…`) · image | prosa | `…actualizar la imagen base… y reconstruir.` | false | — |
-| 0. Módulo Go · host | prosa | `…brew upgrade <herramienta>… o esperar…` | false | — |
-| 0b. context=image + target **sin** `/` (OS layer) | prosa | `…actualizar la imagen base (FROM …) en el Dockerfile y reconstruir.` | false | — |
-| 1. target `/Cellar/` o `/homebrew/lib/` | cmd | `brew upgrade <pkg>` | **true** | 🟥 si context=image y el target de app empieza por `/` cae aquí → `brew upgrade` para una imagen |
-| 1. target `node_modules`/`yarn.lock`/`package-lock.json` | cmd | `npm update <pkg>` | **true** | 🟥 image + `/app/package-lock.json` → `npm update` del host, no arregla la imagen |
-| 1. `composer.*` | cmd | `composer update <pkg>` | **true** | 🟥 idem image |
-| 1. `go.mod/go.sum` | cmd | `go get -u <pkg>@<ver>` | **true** | 🟥 idem image |
-| 1. `requirements.txt`/`Pipfile` | cmd | `pip install --upgrade <pkg>[==ver]` | **true** | 🟥 idem image |
-| 1. `Gemfile(.lock)` | cmd | `bundle update <pkg>` | **false** | 🟧 comando real pero `bundle`∉patrones → sin botón; 🟥 idem image |
-| 1. `Cargo.toml` | cmd | `cargo update <pkg>` | **false** | 🟧 `cargo`∉patrones → sin botón; 🟥 idem image |
-| 1. `pom.xml`/`build.gradle` | prosa | `Actualizar <pkg> a la versión <ver> en tu fichero…` | false | — |
-| 2. fallback darwin | cmd | `brew upgrade <pkg>` | **true** | 🟥 se dispara para image si target-path no casó ningún patrón |
-| 2. fallback linux (rpm) | cmd | `sudo dnf update <pkg>` | **true** | 🟥 idem image · ✔ sudo |
-| 2. fallback linux (apt) | cmd | `sudo apt update && sudo apt install --only-upgrade <pkg>` | **true** | 🟥 idem image · ✔ sudo |
-| 2. fallback win32 | cmd | `winget upgrade <pkg>\n(o … choco upgrade <pkg>)` | **true** | 🟥 idem image |
-| — sin FixedVersion | prosa | `No hay versión corregida disponible aún para <pkg>. Monitorizar actualizaciones…` | false | 🟨 |
-| — medium (resumen) | prosa | `Actualizar los paquetes afectados en <label>` | false | 🟨 genérico |
-| — low/info (resumen) | prosa | `Revisar y actualizar paquetes cuando sea posible` | false | 🟨 genérico |
-
----
-
-## Observaciones transversales
-
-1. **Doble definición de "¿es comando?"** — `lib/finding-schema.js::_isCmd` (fija `isCommand`) y
-   `lib/normalizer.js::isExecutableCommand` **no coinciden**: la segunda incluye `netsh` y `net stop`, la primera no.
-   Ninguna incluye `bundle`, `cargo`, `rabbitmqctl`, `jupyter`, `auditpol`, `nginx`, `net`. Fuente de los 🟧 "comando real sin botón".
-2. **`_isCmd` es ancla-inicio** → cualquier fix que empiece por prosa ("Si no necesitas…: sudo …", "Para deshabilitar: sudo …", "Limita acceso: edita…") nunca es `isCommand`, aunque contenga un comando perfectamente ejecutable. Es conservador (evita falsos positivos) pero deja comandos útiles sin botón copiar.
-3. **CVE de imagen (🟥 P1, el más serio)** — `getTrivyFixCommand` sólo redirige a "actualizar imagen base" cuando el target **no** empieza por `/`. Los CVE de dependencias de aplicación dentro de la imagen (`/app/package-lock.json`, `/app/go.mod`, `/src/requirements.txt`, `/Gemfile.lock`…) caen en las reglas por-path o en el fallback por-plataforma → emiten `npm update`/`pip install`/`brew upgrade`/`sudo apt`/`winget` como si se ejecutaran en el host. Ninguno arregla la vulnerabilidad dentro de la imagen (haría falta editar el manifiesto de dependencias y **reconstruir**).
-4. **`process.platform` en CVE de imagen** — el fallback por plataforma usa el SO del host, no el de la imagen; un host macOS escaneando una imagen Linux podría sugerir `brew upgrade`.
-5. **`getFixForProcess` reutilizada en imagen** (IMG-CFG-003) mezcla remediación de host (systemctl, /etc/…) en el contexto de un contenedor.
-6. **Catálogo de puertos con `fix` muerto** en `port-scanner.js` (sobreescrito por `getFixForPort`).
-
----
-
-## PASO 3 — Informe
-
-- **Fixes distintos catalogados:** ~70 ramas de texto (contando variantes por plataforma de `process-fix`, `getFixForPort`, `getTrivyFixCommand`, security-events, lynis, config-audit).
-- **Con comando real ejecutable (independiente de que se marque `isCommand`):** ~30
-  (process-fix sshd/ftp/telnet/apache/smbd darwin+linux; getFixForPort 21/23 darwin+linux + default lsof/ufw/netsh; CVE brew/npm/composer/go/pip/bundle/cargo/dnf/apt/winget; auditpol; net stop; rabbitmqctl; jupyter).
-- **Marcados `isCommand=true` por `createFinding`:** ~18 (los que empiezan literalmente por un patrón).
-- **Sospechosos:**
-  - 🟥 **P1 (image → comando de host):** las 8 ramas por-path + 4 fallback de `getTrivyFixCommand` cuando `context=image` y target empieza por `/`; + `imageFix` de host anexado en IMG-CFG-003. **Es el problema de corrección más grave.**
-  - 🟧 **P2 (comando real sin botón / sudo sin aviso):** `bundle update`, `cargo update`, `net stop Apache2.4`, `rabbitmqctl…`, `jupyter…`, `auditpol…` (falsos negativos de `_isCmd`); `getFixForPort` 22/80/443/default y `nginx` con `sudo`/`ufw`/`netsh` embebidos en prosa. ~10 casos.
-  - 🟨 **P3 (genéricos poco accionables):** `HOST-LYN-SUG`, `HOST-LYN-WARN-EXTRA`, fallback `getLynisFixText`, CVE medium/low/sin-fixedVersion. ~5 casos.
-  - 🟧 servicios en `DANGEROUS_SERVICES` sin entrada en `FIXES` (10) → siempre fallback `Desinstala X`.
-
-> **Sin cambios de código.** Pendiente revisar la tabla caso por caso y decidir correcciones.
+Observación (no contabilizada): los fixes de rebind de bases de datos (fila 55) citan rutas
+de Debian (`/etc/mysql/mysql.conf.d/`), distintas en Arch o RHEL. Es prosa de configuración,
+no un comando, así que no rompe nada al ejecutarse.

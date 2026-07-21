@@ -44,7 +44,8 @@
 const os = require("os");
 const { scanPorts, PORT_CATALOG } = require("./modules/port-scanner");
 const { runNmap }                 = require("./modules/nmap-wrapper");
-const { enrichPorts }             = require("./modules/service-detect");
+const { enrichPorts, detectFirewall } = require("./modules/service-detect");
+const { isLocalTarget }           = require("./modules/network-utils");
 const { normalizeNetwork }        = require("../../lib/normalizer");
 const { summarize }               = require("../../lib/severity-map");
 const { createFinding }           = require("../../lib/finding-schema");
@@ -150,9 +151,12 @@ module.exports = function (RED) {
           }
         }
 
-        // 3. Enriquecimiento con información de proceso (independiente de la fuente)
+        // 3. Enriquecimiento con información de proceso — SOLO para localhost:
+        // lsof/netstat inspeccionan ESTE equipo; en un target remoto atribuirían
+        // el puerto a un proceso local que no tiene nada que ver.
+        const targetIsLocal = isLocalTarget(target);
         let ports = openPorts;
-        if (enableEnrich && openPorts.length > 0) {
+        if (enableEnrich && openPorts.length > 0 && targetIsLocal) {
           try {
             ports = await enrichPorts(openPorts);
             modulesRun.push("service-detect");
@@ -161,9 +165,18 @@ module.exports = function (RED) {
           }
         }
 
+        // 3b. Firewall real del sistema (solo relevante para target local):
+        // los fixes solo sugieren reglas del firewall detectado Y activo.
+        let firewall = null;
+        if (targetIsLocal && openPorts.length > 0) {
+          try {
+            firewall = await detectFirewall();
+          } catch (_) { /* nunca bloquear la auditoría por esto */ }
+        }
+
         // 4. Normalizar a findings[]
         const nmapSource = portSource === "nmap" ? "nmap" : "native";
-        const findings   = normalizeNetwork(ports, nmapSource);
+        const findings   = normalizeNetwork(ports, nmapSource, { firewall, targetIsLocal });
 
         // 4b. Falso "sin riesgo": distinguir escaneo concluyente de host que no
         // respondió. Un resultado de 0 puertos SOLO es tranquilizador si el
@@ -173,7 +186,7 @@ module.exports = function (RED) {
         // En ambos, se antepone un finding "medium" para que el dashboard NO
         // pinte verde "SIN RIESGO".
         let scanStatus = "ok";
-        const isRemote = target !== "127.0.0.1" && target !== "localhost";
+        const isRemote = !targetIsLocal;
         if (scanInconclusive) {
           scanStatus = "inconclusive";
           findings.unshift(createFinding({
