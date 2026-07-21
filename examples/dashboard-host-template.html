@@ -345,18 +345,19 @@
                         Comando sugerido<span class="cmd-origin">{{ originLabel(f.source) }}</span>:
                       </p>
                       <div v-if="f.isCommand" class="command-box">
-                        <code class="command-text">{{ f.fix }}</code>
-                        <button @click.stop="copyCommand(f.fix)"
-                                :class="{ copied: copiedKey === f.fix }"
+                        <code class="command-text">{{ f.command || f.fix }}</code>
+                        <button @click.stop="copyCommand(f.command || f.fix)"
+                                :class="{ copied: copiedKey === (f.command || f.fix) }"
                                 class="command-btn">
-                          {{ copiedKey === f.fix ? '✓ Copiado' : 'Copiar' }}
+                          {{ copiedKey === (f.command || f.fix) ? '✓ Copiado' : 'Copiar' }}
                         </button>
                       </div>
-                      <div v-if="f.isCommand" class="cmd-warn">
+                      <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
+                      <div v-if="fixHasCmd(f)" class="cmd-warn">
                         <strong>LoCoAudit no ejecuta este comando por ti.</strong>
                         Cópialo y ejecútalo en tu terminal después de revisarlo.
                       </div>
-                      <div v-if="f.isCommand && /(^|\s)sudo(\s|$)/.test(f.fix || '')" class="cmd-sudo">
+                      <div v-if="/(^|\s)sudo(\s|$)/.test(f.fix || '')" class="cmd-sudo">
                         🔒 Requiere privilegios de administrador: pedirá tu contraseña de usuario. Revísalo bien antes de ejecutarlo.
                       </div>
                     </div>
@@ -408,11 +409,15 @@
                 </div>
               </div>
 
-              <!-- ── Subsección: tabla de eventos (solo grupo "Logs del sistema") ── -->
+              <!-- ── Subsección: eventos (solo grupo "Logs del sistema") ──────────── -->
+              <!-- Dos tablas distintas: intentos de acceso (eventos que ocurrieron)
+                   vs sesiones activas ahora mismo (estado presente). -->
               <div v-if="g.key === 'system-logs' && secEvents" class="seclog">
-                <div class="seclog-title">Eventos (últimas {{ secEvents.windowHours }} h)</div>
-                <div v-if="!secEvents.events || secEvents.events.length === 0" class="seclog-empty">
-                  Sin eventos en la ventana analizada ({{ secEvents.windowHours }} h).
+
+                <!-- (a) Intentos de acceso — SSH OK/fallido, sudo, su, logins -->
+                <div class="seclog-title">Intentos de acceso (últimas {{ secEvents.windowHours }} h)</div>
+                <div v-if="accessEvents.length === 0" class="seclog-empty">
+                  Sin intentos en la ventana analizada ({{ secEvents.windowHours }} h).
                 </div>
                 <div v-else>
                   <div class="seclog-table-wrap">
@@ -421,7 +426,7 @@
                         <tr><th>Hora</th><th>Tipo</th><th>Usuario</th><th>Origen</th><th>Detalle</th></tr>
                       </thead>
                       <tbody>
-                        <tr v-for="(ev, ei) in secEvents.events" :key="'ev-' + ei">
+                        <tr v-for="(ev, ei) in accessEvents" :key="'acc-' + ei">
                           <td class="seclog-mono">{{ ev.ts || '—' }}</td>
                           <td><span class="seclog-badge" :class="evBadgeClass(ev.type)">{{ evTypeLabel(ev.type) }}</span></td>
                           <td>{{ ev.user || '—' }}</td>
@@ -432,8 +437,31 @@
                     </table>
                   </div>
                   <div v-if="secEvents.truncated" class="seclog-truncated">
-                    Mostrando los {{ secEvents.events.length }} más recientes.
+                    Mostrando los {{ secEvents.events.length }} eventos más recientes.
                   </div>
+                </div>
+
+                <!-- (b) Sesiones activas ahora — estado presente (`who`). La hora
+                     es la de INICIO de sesión, no la de un evento. -->
+                <div class="seclog-title seclog-title-sessions">Sesiones activas ahora</div>
+                <div v-if="sessionEvents.length === 0" class="seclog-empty">
+                  Sin sesiones remotas activas.
+                </div>
+                <div v-else class="seclog-table-wrap">
+                  <table class="seclog-table">
+                    <thead>
+                      <tr><th>Inicio de sesión</th><th>Tipo</th><th>Usuario</th><th>Origen</th><th>Detalle</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(ev, ei) in sessionEvents" :key="'ses-' + ei">
+                        <td class="seclog-mono">{{ ev.ts || '—' }}</td>
+                        <td><span class="seclog-badge" :class="evBadgeClass(ev.type)">{{ evTypeLabel(ev.type) }}</span></td>
+                        <td>{{ ev.user || '—' }}</td>
+                        <td class="seclog-mono">{{ ev.origin || '—' }}</td>
+                        <td class="seclog-detail">{{ ev.detail || '—' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -630,6 +658,19 @@ export default {
     secEvents() {
       // payload.securityEvents = { windowHours, events: [{ts,type,user,origin,detail}], truncated }
       return (this.auditData && this.auditData.securityEvents) || null;
+    },
+
+    // Intentos de acceso (eventos que OCURRIERON): SSH OK/fallido, sudo, su,
+    // logins remotos/fallidos, admin. Todo menos las sesiones activas ahora.
+    accessEvents() {
+      var evs = (this.secEvents && this.secEvents.events) || [];
+      return evs.filter(function(e) { return e.type !== 'session'; });
+    },
+
+    // Sesiones activas AHORA MISMO (estado presente, salida de `who`): type 'session'.
+    sessionEvents() {
+      var evs = (this.secEvents && this.secEvents.events) || [];
+      return evs.filter(function(e) { return e.type === 'session'; });
     },
 
     catBars() {
@@ -903,6 +944,20 @@ export default {
     },
 
     // Pasos enriquecidos: cada paso es { label, cmd } (comando copiable) o { text }.
+    // El fix puede traer el comando en la 1ª línea y una nota explicativa debajo.
+    // El botón copia SOLO el comando (finding.command); la nota se muestra aparte,
+    // para que un pegado en terminal nunca arrastre texto no ejecutable.
+    fixNote(f) {
+      if (!f || !f.command || !f.fix) return "";
+      return String(f.fix).split("\n").slice(1).join("\n").trim();
+    },
+    // ¿El paso de resolución contiene algún comando (directo o dentro de un paso)?
+    fixHasCmd(f) {
+      if (!f || !f.fix) return false;
+      if (f.command) return true;
+      try { return this.parseFixStepsRich(f.fix).some(function (s) { return !!s.cmd; }); }
+      catch (e) { return false; }
+    },
     parseFixStepsRich(fix) {
       var self = this;
       return this.parseFixSteps(fix).map(function(step) {
@@ -1577,6 +1632,7 @@ export default {
     letter-spacing: .4px;
     margin-bottom: 8px;
   }
+  .seclog-title-sessions { margin-top: 18px; }
   .seclog-empty { font-size: 12.5px; font-style: italic; color: var(--text-secondary); }
   .seclog-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
   .seclog-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -1868,6 +1924,11 @@ export default {
   /* ── Resolución inline: origen + avisos (host · azul #0EA5E9) ────────────── */
   .cmd-intro { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 10px; }
   .cmd-origin { color: #0EA5E9; font-weight: 600; margin-left: 4px; }
+  /* Nota explicativa que acompaña a un comando: nunca entra en el portapapeles. */
+  .cmd-note {
+    margin-top: 6px; font-size: 12px; line-height: 1.55; color: #4B5563;
+    white-space: pre-wrap;
+  }
   .cmd-warn {
     margin-top: 8px; font-size: 12px; line-height: 1.55; color: var(--text);
     background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 9px 11px;

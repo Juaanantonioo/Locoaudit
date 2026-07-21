@@ -134,7 +134,7 @@ function parseNmapXml(xml) {
 // ── Asignación de severidad ───────────────────────────────────────────────────
 
 /**
- * Enriquece un puerto parseado de nmap con severity y fix del PORT_CATALOG.
+ * Enriquece un puerto parseado de nmap con la severidad del PORT_CATALOG y el fix por puerto.
  * Si el puerto no está en el catálogo usa severity "low" y un fix genérico.
  *
  * @param {{ port: number, protocol: string, state: string, service: string, version: string }} parsed

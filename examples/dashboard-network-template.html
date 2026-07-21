@@ -219,18 +219,19 @@
                       Comando sugerido<span class="cmd-origin">{{ originLabel(f.source) }}</span>:
                     </p>
                     <div v-if="f.isCommand" class="command-box">
-                      <code class="command-text">{{ f.fix }}</code>
-                      <button @click.stop="copyCommand(f.fix)"
-                              :class="{ copied: copiedKey === f.fix }"
+                      <code class="command-text">{{ f.command || f.fix }}</code>
+                      <button @click.stop="copyCommand(f.command || f.fix)"
+                              :class="{ copied: copiedKey === (f.command || f.fix) }"
                               class="command-btn">
-                        {{ copiedKey === f.fix ? '✓ Copiado' : 'Copiar' }}
+                        {{ copiedKey === (f.command || f.fix) ? '✓ Copiado' : 'Copiar' }}
                       </button>
                     </div>
-                    <div v-if="f.isCommand" class="cmd-warn">
+                    <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
+                    <div v-if="fixHasCmd(f)" class="cmd-warn">
                       <strong>LoCoAudit no ejecuta este comando por ti.</strong>
                       Cópialo y ejecútalo en tu terminal después de revisarlo.
                     </div>
-                    <div v-if="f.isCommand && /(^|\s)sudo(\s|$)/.test(f.fix || '')" class="cmd-sudo">
+                    <div v-if="/(^|\s)sudo(\s|$)/.test(f.fix || '')" class="cmd-sudo">
                       🔒 Requiere privilegios de administrador: pedirá tu contraseña de usuario. Revísalo bien antes de ejecutarlo.
                     </div>
                   </div>
@@ -694,6 +695,20 @@ export default {
     },
 
     // Pasos enriquecidos: cada paso es { label, cmd } (comando copiable) o { text }.
+    // El fix puede traer el comando en la 1ª línea y una nota explicativa debajo.
+    // El botón copia SOLO el comando (finding.command); la nota se muestra aparte,
+    // para que un pegado en terminal nunca arrastre texto no ejecutable.
+    fixNote(f) {
+      if (!f || !f.command || !f.fix) return "";
+      return String(f.fix).split("\n").slice(1).join("\n").trim();
+    },
+    // ¿El paso de resolución contiene algún comando (directo o dentro de un paso)?
+    fixHasCmd(f) {
+      if (!f || !f.fix) return false;
+      if (f.command) return true;
+      try { return this.parseFixStepsRich(f.fix).some(function (s) { return !!s.cmd; }); }
+      catch (e) { return false; }
+    },
     parseFixStepsRich(fix) {
       var self = this;
       return this.parseFixSteps(fix).map(function(step) {
@@ -1563,6 +1578,11 @@ export default {
   /* ── Resolución inline: origen + avisos (network · cyan #06B6D4) ─────────── */
   .cmd-intro { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; margin-bottom: 10px; }
   .cmd-origin { color: #0891B2; font-weight: 600; margin-left: 4px; }
+  /* Nota explicativa que acompaña a un comando: nunca entra en el portapapeles. */
+  .cmd-note {
+    margin-top: 6px; font-size: 12px; line-height: 1.55; color: #4B5563;
+    white-space: pre-wrap;
+  }
   .cmd-warn {
     margin-top: 8px; font-size: 12px; line-height: 1.55; color: var(--text);
     background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 9px 11px;

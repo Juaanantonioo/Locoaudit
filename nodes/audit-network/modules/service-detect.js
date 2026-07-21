@@ -17,13 +17,14 @@
  *
  * Exporta:
  *   enrichPorts(openPorts) → Promise<Array<EnrichedPort>>
+ *   detectFirewall()       → Promise<{ name: string|null, active: boolean }>
  *
  * @typedef {{ port: number, protocol: string, state: string, service: string, severity: string, fix: string|null }} PortResult
- * @typedef {{ pid?: number, process?: string, extra?: string }} Enrichment
+ * @typedef {{ pid?: number, process?: string, extra?: string, bind?: string, localOnly?: boolean }} Enrichment
  * @typedef {PortResult & Enrichment} EnrichedPort
  */
 
-const { execCommand } = require("../../../lib/executor");
+const { execCommand, commandExists } = require("../../../lib/executor");
 
 const ENRICH_TIMEOUT_MS = 5000;
 
@@ -42,16 +43,38 @@ const ENRICH_TIMEOUT_MS = 5000;
 function parseLsof(stdout) {
   const lines = stdout.trim().split("\n").filter(Boolean);
   // lines[0] = cabecera, lines[1] = primer resultado
-  if (lines.length < 2) return { pid: null, process: null };
+  if (lines.length < 2) return { pid: null, process: null, binds: [] };
 
   const parts = lines[1].trim().split(/\s+/);
   const processName = parts[0] || null;
   const pid = parts[1] ? parseInt(parts[1], 10) : null;
 
+  // Direcciones de bind: la columna NAME de CADA línea LISTEN tiene la forma
+  // "dirección:puerto (LISTEN)". La dirección distingue un servicio solo-local
+  // ("localhost", "127.0.0.1", "[::1]") de uno expuesto a la red ("*", "0.0.0.0",
+  // IP de la interfaz). Un mismo servicio puede escuchar en varias (IPv4+IPv6).
+  const binds = [];
+  for (const line of lines.slice(1)) {
+    const m = line.match(/(\S+):(?:\d+|\w+)\s+\(LISTEN\)/);
+    if (m && !binds.includes(m[1])) binds.push(m[1]);
+  }
+
   return {
     pid:     isNaN(pid) ? null : pid,
     process: processName,
+    binds,
   };
+}
+
+/**
+ * ¿Es una dirección de bind exclusiva de loopback (solo accesible desde el
+ * propio equipo)? Acepta las formas que emiten lsof y netstat.
+ * @param {string} addr  "localhost" | "127.0.0.1" | "[::1]" | "*" | "0.0.0.0" | IP
+ * @returns {boolean}
+ */
+function isLoopbackBind(addr) {
+  const a = String(addr || "").replace(/^\[|\]$/g, "").toLowerCase();
+  return a === "localhost" || a === "::1" || /^127\./.test(a);
 }
 
 /**
@@ -74,6 +97,29 @@ function parseNetstatPid(stdout, port) {
     return isNaN(pid) ? null : pid;
   }
   return null;
+}
+
+/**
+ * Extrae las direcciones locales de bind de las líneas LISTENING de netstat.
+ * Formato de dirección local (parts[1]): "0.0.0.0:80" | "127.0.0.1:631" | "[::1]:631"
+ *
+ * @param {string} stdout
+ * @param {number} port
+ * @returns {string[]}  Direcciones sin el sufijo :puerto
+ */
+function parseNetstatBinds(stdout, port) {
+  const portStr = `:${port}`;
+  const binds = [];
+  for (const line of stdout.split("\n")) {
+    const upper = line.toUpperCase();
+    if (!upper.includes("LISTENING")) continue;
+    const parts = line.trim().split(/\s+/);
+    const local = parts[1] || "";
+    if (!local.endsWith(portStr)) continue;
+    const addr = local.slice(0, -portStr.length);
+    if (addr && !binds.includes(addr)) binds.push(addr);
+  }
+  return binds;
 }
 
 /**
@@ -105,11 +151,15 @@ async function enrichUnix(port) {
       `lsof -i TCP:${port} -n -P -sTCP:LISTEN`,
       ENRICH_TIMEOUT_MS
     );
-    const { pid, process: procName } = parseLsof(stdout);
+    const { pid, process: procName, binds } = parseLsof(stdout);
     if (!pid && !procName) return {};
     return {
-      pid:   pid    ?? undefined,
-      process: procName ?? undefined,
+      pid:       pid      ?? undefined,
+      process:   procName ?? undefined,
+      // localOnly solo se afirma si TODAS las direcciones de bind son loopback.
+      // Sin datos de bind se deja undefined: no sabemos, no afirmamos.
+      bind:      binds.length > 0 ? binds.join(", ") : undefined,
+      localOnly: binds.length > 0 ? binds.every(isLoopbackBind) : undefined,
     };
   } catch (_) {
     return {};
@@ -130,6 +180,8 @@ async function enrichWindows(port) {
     const pid = parseNetstatPid(netstatOut, port);
     if (!pid) return {};
 
+    const binds = parseNetstatBinds(netstatOut, port);
+
     const taskOut = await execCommand(
       `tasklist /FI "PID eq ${pid}" /FO CSV`,
       ENRICH_TIMEOUT_MS
@@ -138,11 +190,87 @@ async function enrichWindows(port) {
 
     return {
       pid,
-      process: procName ?? undefined,
+      process:   procName ?? undefined,
+      bind:      binds.length > 0 ? binds.join(", ") : undefined,
+      localOnly: binds.length > 0 ? binds.every(isLoopbackBind) : undefined,
     };
   } catch (_) {
     return {};
   }
+}
+
+// ── Detección del cortafuegos del sistema ─────────────────────────────────────
+
+/**
+ * Detecta qué cortafuegos hay en el sistema y si está ACTIVO, sin sudo.
+ * Nunca lanza: ante cualquier fallo devuelve { name: null, active: false }.
+ *
+ * Métodos por plataforma (todos sin privilegios):
+ *   linux  → ufw:       /etc/ufw/ufw.conf contiene "ENABLED=yes|no"
+ *            firewalld: firewall-cmd --state → "running"
+ *            nftables:  systemctl is-active nftables
+ *   darwin → socketfilterfw --getglobalstate → "enabled"
+ *   win32  → netsh advfirewall show currentprofile state → "ON"
+ *
+ * @param {string} [platform]  process.platform por defecto
+ * @returns {Promise<{ name: string|null, active: boolean }>}
+ */
+async function detectFirewall(platform) {
+  const plat = platform || process.platform;
+  const FW_TIMEOUT_MS = 4000;
+
+  try {
+    if (plat === "linux") {
+      if (await commandExists("ufw")) {
+        try {
+          const conf = await execCommand("grep -i '^ENABLED' /etc/ufw/ufw.conf", FW_TIMEOUT_MS);
+          return { name: "ufw", active: /yes/i.test(conf) };
+        } catch (_) {
+          return { name: "ufw", active: false };
+        }
+      }
+      if (await commandExists("firewall-cmd")) {
+        try {
+          const st = await execCommand("firewall-cmd --state", FW_TIMEOUT_MS);
+          return { name: "firewalld", active: /running/i.test(st) };
+        } catch (_) {
+          return { name: "firewalld", active: false };
+        }
+      }
+      if (await commandExists("nft")) {
+        try {
+          const st = await execCommand("systemctl is-active nftables", FW_TIMEOUT_MS);
+          return { name: "nftables", active: st.trim() === "active" };
+        } catch (_) {
+          return { name: "nftables", active: false };
+        }
+      }
+      return { name: null, active: false };
+    }
+
+    if (plat === "darwin") {
+      try {
+        const st = await execCommand(
+          "/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate",
+          FW_TIMEOUT_MS
+        );
+        return { name: "alf", active: /enabled/i.test(st) };
+      } catch (_) {
+        return { name: "alf", active: false };
+      }
+    }
+
+    if (plat === "win32") {
+      try {
+        const st = await execCommand("netsh advfirewall show currentprofile state", FW_TIMEOUT_MS);
+        return { name: "windows", active: /\bON\b/i.test(st) || /activad/i.test(st) };
+      } catch (_) {
+        return { name: "windows", active: false };
+      }
+    }
+  } catch (_) { /* nunca bloquear la auditoría por esto */ }
+
+  return { name: null, active: false };
 }
 
 // ── API pública ───────────────────────────────────────────────────────────────
@@ -170,4 +298,4 @@ async function enrichPorts(openPorts) {
   });
 }
 
-module.exports = { enrichPorts };
+module.exports = { enrichPorts, detectFirewall };

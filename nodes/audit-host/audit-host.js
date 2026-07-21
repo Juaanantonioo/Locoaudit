@@ -25,6 +25,7 @@ const { runLynis } = require("./modules/lynis");
 const { runTrivyFs } = require("./modules/trivy-fs");
 const { runSecurityEvents, buildEventList } = require("./modules/security-events");
 const { normalizeHost } = require("../../lib/normalizer");
+const { detectPackageManager } = require("../../lib/pkg-manager");
 const { summarize } = require("../../lib/severity-map");
 
 module.exports = function (RED) {
@@ -117,7 +118,15 @@ module.exports = function (RED) {
         // Nota: security-events skipped NO es error del nodo (a diferencia de
         // Lynis/Trivy): el normalizador lo convierte en un finding informativo.
         const raw = { cpuMemory, disk, swInventory, lynis, trivy, securityEvents };
-        const findings = normalizeHost(raw, { platform: process.platform });
+
+        // Gestor de paquetes REAL del equipo: sin esto los fixes asumían apt en
+        // Linux y brew en macOS, y en Arch (pacman) el comando era inejecutable.
+        let pkgManager = null;
+        try {
+          pkgManager = await detectPackageManager(process.platform);
+        } catch (_) { /* nunca bloquear la auditoría por la detección */ }
+
+        const findings = normalizeHost(raw, { platform: process.platform, pkgManager });
         const summary = summarize(findings);
         const durationMs = Date.now() - startTime;
 
