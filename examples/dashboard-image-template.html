@@ -365,12 +365,12 @@
 
                 <!-- ── Chat con IA ── -->
                 <div class="ia-chat-wrap" v-if="llmAvailable === true">
-                  <button class="ia-ask-btn" @click.stop="toggleChat(f.id || fi, f)">
-                    🤖 {{ chatOpen[f.id || fi] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
+                  <button class="ia-ask-btn" @click.stop="toggleChat(chatKey(f, grp.key, fi), f)">
+                    🤖 {{ chatOpen[chatKey(f, grp.key, fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
                   </button>
-                  <div class="ia-chat" v-if="chatOpen[f.id || fi]">
+                  <div class="ia-chat" v-if="chatOpen[chatKey(f, grp.key, fi)]">
                     <div class="ia-chat-msgs">
-                      <div v-for="(cm, ci) in (chatMessages[f.id || fi] || [])" :key="ci"
+                      <div v-for="(cm, ci) in (chatMessages[chatKey(f, grp.key, fi)] || [])" :key="ci"
                            class="ia-chat-msg" :class="cm.role === 'user' ? 'ia-chat-user' : 'ia-chat-ai'">
                         <div class="ia-chat-bubble" :class="{ 'ia-chat-error': cm.error }">
                           <template v-for="(seg, si) in parseChatContent(cm.content)" :key="si">
@@ -386,20 +386,20 @@
                           </template>
                         </div>
                       </div>
-                      <div v-if="chatLoading[f.id || fi]" class="ia-chat-msg ia-chat-ai">
+                      <div v-if="chatLoading[chatKey(f, grp.key, fi)]" class="ia-chat-msg ia-chat-ai">
                         <div class="ia-chat-bubble ia-chat-loading">
                           <span class="ia-chat-dot"></span><span class="ia-chat-dot"></span><span class="ia-chat-dot"></span>
                         </div>
                       </div>
                     </div>
                     <div class="ia-chat-input">
-                      <input type="text" v-model="chatInput[f.id || fi]"
+                      <input type="text" v-model="chatInput[chatKey(f, grp.key, fi)]"
                              placeholder="Escribe tu pregunta…"
-                             :disabled="chatLoading[f.id || fi]"
-                             @keydown.enter.prevent="sendChat(f.id || fi, f)">
+                             :disabled="chatLoading[chatKey(f, grp.key, fi)]"
+                             @keydown.enter.prevent="sendChat(chatKey(f, grp.key, fi), f)">
                       <button class="ia-chat-send-btn"
-                              :disabled="chatLoading[f.id || fi]"
-                              @click.stop="sendChat(f.id || fi, f)">Enviar</button>
+                              :disabled="chatLoading[chatKey(f, grp.key, fi)]"
+                              @click.stop="sendChat(chatKey(f, grp.key, fi), f)">Enviar</button>
                     </div>
                   </div>
                 </div>
@@ -436,6 +436,7 @@ export default {
       chatMessages: {},    // por findingKey: [{ role, content, error? }]
       chatInput: {},       // por findingKey: texto en curso
       chatLoading: {},     // por findingKey: esperando respuesta
+      chatEpoch: 0,        // se incrementa con cada escaneo: descarta respuestas en vuelo
       llmAvailable: null,  // null = sin comprobar; true/false tras comprobar
       openGroups: {}       // por grupo de imagen: desplegado (true) / colapsado (def. false)
     };
@@ -618,6 +619,7 @@ export default {
         this.openFindings = {};
         this.filterSev    = 'all';
         this.filterType   = 'all';
+        this.resetChats();
       }
     }
   },
@@ -960,6 +962,24 @@ export default {
     },
 
     // ── Chat con LLM ──────────────────────────────────────────
+
+    // Clave estable por hallazgo, con el grupo (imagen) como prefijo: el mismo
+    // CVE puede aparecer en dos imágenes y son conversaciones distintas.
+    chatKey(f, groupKey, fi) {
+      return (f && f.id) ? groupKey + '|id:' + f.id : groupKey + '|idx:' + fi;
+    },
+
+    // Escaneo nuevo = findings nuevos: se borran todas las conversaciones para
+    // no arrastrar contexto de hallazgos que ya no existen.
+    resetChats() {
+      this.chatEpoch++;
+      this.chatOpen     = {};
+      this.chatMessages = {};
+      this.chatInput    = {};
+      this.chatLoading  = {};
+    },
+
+    // Cerrar el asistente solo oculta el panel: el historial se conserva.
     toggleChat(findingKey, finding) {
       var willOpen = !this.chatOpen[findingKey];
       this.chatOpen = Object.assign({}, this.chatOpen, { [findingKey]: willOpen });
@@ -975,6 +995,7 @@ export default {
         : (this.chatInput[findingKey] || '').trim();
       if (!question || this.chatLoading[findingKey]) return;
 
+      var epoch = this.chatEpoch;
       var history = (this.chatMessages[findingKey] || []).slice().map(function(m) {
         return { role: m.role, content: m.content };
       });
@@ -1002,6 +1023,9 @@ export default {
       } catch (e) {
         reply = { role: 'assistant', content: 'No se pudo contactar con el asistente: ' + (e.message || e), error: true };
       }
+
+      // Llegó un escaneo nuevo mientras esperábamos: la respuesta ya no aplica.
+      if (epoch !== this.chatEpoch) return;
 
       var cur = (this.chatMessages[findingKey] || []).concat([reply]);
       this.chatMessages = Object.assign({}, this.chatMessages, { [findingKey]: cur });

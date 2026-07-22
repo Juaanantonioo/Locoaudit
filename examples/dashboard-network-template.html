@@ -242,12 +242,12 @@
 
                 <!-- ── Chat con IA ── -->
                 <div class="lca-chat-wrap" v-if="llmAvailable === true">
-                  <button class="ai-ask-btn" @click.stop="toggleChat('f-' + fi, f)">
-                    🤖 {{ chatOpen['f-' + fi] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
+                  <button class="ai-ask-btn" @click.stop="toggleChat(chatKey(f, fi), f)">
+                    🤖 {{ chatOpen[chatKey(f, fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
                   </button>
-                  <div class="lca-chat" v-if="chatOpen['f-' + fi]">
+                  <div class="lca-chat" v-if="chatOpen[chatKey(f, fi)]">
                     <div class="lca-chat-msgs">
-                      <div v-for="(cm, ci) in (chatMessages['f-' + fi] || [])" :key="ci"
+                      <div v-for="(cm, ci) in (chatMessages[chatKey(f, fi)] || [])" :key="ci"
                            class="chat-msg" :class="cm.role === 'user' ? 'chat-user' : 'chat-ai'">
                         <div class="chat-bubble" :class="{ 'chat-error': cm.error }">
                           <template v-for="(seg, si) in parseChatContent(cm.content)" :key="si">
@@ -263,20 +263,20 @@
                           </template>
                         </div>
                       </div>
-                      <div v-if="chatLoading['f-' + fi]" class="chat-msg chat-ai">
+                      <div v-if="chatLoading[chatKey(f, fi)]" class="chat-msg chat-ai">
                         <div class="chat-bubble chat-loading">
                           <span class="chat-dot"></span><span class="chat-dot"></span><span class="chat-dot"></span>
                         </div>
                       </div>
                     </div>
                     <div class="lca-chat-input">
-                      <input type="text" v-model="chatInput['f-' + fi]"
+                      <input type="text" v-model="chatInput[chatKey(f, fi)]"
                              placeholder="Escribe tu pregunta…"
-                             :disabled="chatLoading['f-' + fi]"
-                             @keydown.enter.prevent="sendChat('f-' + fi, f)">
+                             :disabled="chatLoading[chatKey(f, fi)]"
+                             @keydown.enter.prevent="sendChat(chatKey(f, fi), f)">
                       <button class="chat-send-btn"
-                              :disabled="chatLoading['f-' + fi]"
-                              @click.stop="sendChat('f-' + fi, f)">Enviar</button>
+                              :disabled="chatLoading[chatKey(f, fi)]"
+                              @click.stop="sendChat(chatKey(f, fi), f)">Enviar</button>
                     </div>
                   </div>
                 </div>
@@ -320,6 +320,7 @@ export default {
       chatMessages: {},    // por findingKey: [{ role, content, error? }]
       chatInput: {},       // por findingKey: texto en curso
       chatLoading: {},     // por findingKey: esperando respuesta
+      chatEpoch: 0,        // se incrementa con cada escaneo: descarta respuestas en vuelo
       llmAvailable: null   // null = sin comprobar; true/false tras comprobar
     };
   },
@@ -493,6 +494,7 @@ export default {
         this.auditData    = newMsg.payload;
         this.state        = 'done';
         this.openFindings = {};
+        this.resetChats();
       }
     }
   },
@@ -746,6 +748,23 @@ export default {
     },
 
     // ── Chat con LLM ──────────────────────────────────────────
+
+    // Clave estable por hallazgo: el historial vive en finding.id, no en la
+    // posición de la lista (que cambia al filtrar por severidad).
+    chatKey(f, fi) {
+      return (f && f.id) ? 'id:' + f.id : 'idx:' + fi;
+    },
+
+    // Escaneo nuevo = findings nuevos: se borran todas las conversaciones para
+    // no arrastrar contexto de hallazgos que ya no existen.
+    resetChats() {
+      this.chatEpoch++;
+      this.chatOpen     = {};
+      this.chatMessages = {};
+      this.chatInput    = {};
+      this.chatLoading  = {};
+    },
+
     toggleChat(findingKey, finding) {
       var willOpen = !this.chatOpen[findingKey];
       this.chatOpen = Object.assign({}, this.chatOpen, { [findingKey]: willOpen });
@@ -761,6 +780,7 @@ export default {
         : (this.chatInput[findingKey] || '').trim();
       if (!question || this.chatLoading[findingKey]) return;
 
+      var epoch = this.chatEpoch;
       var history = (this.chatMessages[findingKey] || []).slice().map(function(m) {
         return { role: m.role, content: m.content };
       });
@@ -788,6 +808,9 @@ export default {
       } catch (e) {
         reply = { role: 'assistant', content: 'No se pudo contactar con el asistente: ' + (e.message || e), error: true };
       }
+
+      // Llegó un escaneo nuevo mientras esperábamos: la respuesta ya no aplica.
+      if (epoch !== this.chatEpoch) return;
 
       var cur = (this.chatMessages[findingKey] || []).concat([reply]);
       this.chatMessages = Object.assign({}, this.chatMessages, { [findingKey]: cur });
