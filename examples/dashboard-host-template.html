@@ -368,12 +368,12 @@
 
                   <!-- ── Chat con IA ── -->
                   <div class="lca-chat-wrap" v-if="llmAvailable === true">
-                    <button class="ai-ask-btn" @click.stop="toggleChat(g.key + '-' + fi, f)">
-                      🤖 {{ chatOpen[g.key + '-' + fi] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
+                    <button class="ai-ask-btn" @click.stop="toggleChat(chatKey(f, g.key, fi), f)">
+                      🤖 {{ chatOpen[chatKey(f, g.key, fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
                     </button>
-                    <div class="lca-chat" v-if="chatOpen[g.key + '-' + fi]">
+                    <div class="lca-chat" v-if="chatOpen[chatKey(f, g.key, fi)]">
                       <div class="lca-chat-msgs">
-                        <div v-for="(cm, ci) in (chatMessages[g.key + '-' + fi] || [])" :key="ci"
+                        <div v-for="(cm, ci) in (chatMessages[chatKey(f, g.key, fi)] || [])" :key="ci"
                              class="chat-msg" :class="cm.role === 'user' ? 'chat-user' : 'chat-ai'">
                           <div class="chat-bubble" :class="{ 'chat-error': cm.error }">
                             <template v-for="(seg, si) in parseChatContent(cm.content)" :key="si">
@@ -389,20 +389,20 @@
                             </template>
                           </div>
                         </div>
-                        <div v-if="chatLoading[g.key + '-' + fi]" class="chat-msg chat-ai">
+                        <div v-if="chatLoading[chatKey(f, g.key, fi)]" class="chat-msg chat-ai">
                           <div class="chat-bubble chat-loading">
                             <span class="chat-dot"></span><span class="chat-dot"></span><span class="chat-dot"></span>
                           </div>
                         </div>
                       </div>
                       <div class="lca-chat-input">
-                        <input type="text" v-model="chatInput[g.key + '-' + fi]"
+                        <input type="text" v-model="chatInput[chatKey(f, g.key, fi)]"
                                placeholder="Escribe tu pregunta…"
-                               :disabled="chatLoading[g.key + '-' + fi]"
-                               @keydown.enter.prevent="sendChat(g.key + '-' + fi, f)">
+                               :disabled="chatLoading[chatKey(f, g.key, fi)]"
+                               @keydown.enter.prevent="sendChat(chatKey(f, g.key, fi), f)">
                         <button class="chat-send-btn"
-                                :disabled="chatLoading[g.key + '-' + fi]"
-                                @click.stop="sendChat(g.key + '-' + fi, f)">Enviar</button>
+                                :disabled="chatLoading[chatKey(f, g.key, fi)]"
+                                @click.stop="sendChat(chatKey(f, g.key, fi), f)">Enviar</button>
                       </div>
                     </div>
                   </div>
@@ -503,6 +503,7 @@ export default {
       chatMessages: {},    // por findingKey: [{ role, content, error? }]
       chatInput: {},       // por findingKey: texto en curso
       chatLoading: {},     // por findingKey: esperando respuesta
+      chatEpoch: 0,        // se incrementa con cada escaneo: descarta respuestas en vuelo
       llmAvailable: null   // null = sin comprobar; true/false tras comprobar
     };
   },
@@ -737,6 +738,7 @@ export default {
         this.state        = 'done';
         this.openGroups   = {};
         this.openFindings = {};
+        this.resetChats();
       }
     }
   },
@@ -1062,8 +1064,26 @@ export default {
     },
 
     // ── Chat con LLM ──────────────────────────────────────────
+
+    // Clave estable por hallazgo: el historial vive en finding.id, no en la
+    // posición dentro del grupo (que cambia al filtrar o reordenar).
+    chatKey(f, groupKey, fi) {
+      return (f && f.id) ? 'id:' + f.id : 'idx:' + groupKey + '-' + fi;
+    },
+
+    // Escaneo nuevo = findings nuevos: se borran todas las conversaciones para
+    // no arrastrar contexto de hallazgos que ya no existen.
+    resetChats() {
+      this.chatEpoch++;
+      this.chatOpen     = {};
+      this.chatMessages = {};
+      this.chatInput    = {};
+      this.chatLoading  = {};
+    },
+
     // Abre/cierra el panel de chat y, la primera vez, lanza una
     // pregunta automática para que la IA explique el hallazgo.
+    // Cerrar solo oculta el panel: el historial se conserva.
     toggleChat(findingKey, finding) {
       var willOpen = !this.chatOpen[findingKey];
       this.chatOpen = Object.assign({}, this.chatOpen, { [findingKey]: willOpen });
@@ -1078,6 +1098,8 @@ export default {
         ? presetQuestion
         : (this.chatInput[findingKey] || '').trim();
       if (!question || this.chatLoading[findingKey]) return;
+
+      var epoch = this.chatEpoch;
 
       // Historial previo (sin la pregunta actual; el backend la añade aparte)
       var history = (this.chatMessages[findingKey] || []).slice().map(function(m) {
@@ -1107,6 +1129,9 @@ export default {
       } catch (e) {
         reply = { role: 'assistant', content: 'No se pudo contactar con el asistente: ' + (e.message || e), error: true };
       }
+
+      // Llegó un escaneo nuevo mientras esperábamos: la respuesta ya no aplica.
+      if (epoch !== this.chatEpoch) return;
 
       var cur = (this.chatMessages[findingKey] || []).concat([reply]);
       this.chatMessages = Object.assign({}, this.chatMessages, { [findingKey]: cur });
