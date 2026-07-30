@@ -21,7 +21,7 @@ locoaudit/
 │   │   ├── audit-network.js
 │   │   ├── audit-network.html
 │   │   └── modules/
-│   │       ├── port-scanner.js
+│   │       ├── port-catalog.js
 │   │       ├── nmap-wrapper.js
 │   │       ├── service-detect.js
 │   │       └── vuln-check.js
@@ -104,8 +104,8 @@ Niveles de severidad válidos: `critical` · `high` · `medium` · `low` · `inf
 **Objetivo:** los tres nodos de auditoría encadenables en un flujo.
 
 **audit-network:**
-- [x] `port-scanner.js` — puertos abiertos con `net` nativo (sin dependencias)
-- [x] `nmap-wrapper.js` — integración opcional con Nmap si está instalado
+- [x] `nmap-wrapper.js` — escaneo de puertos con Nmap (REQUISITO del nodo)
+- [x] `port-catalog.js` — catálogo puerto → severidad para PC personal (datos puros)
 - [x] `service-detect.js` — identificación de servicio por número de puerto
 - [ ] `vuln-check.js` — detección de servicios en versiones conocidas como inseguras
 
@@ -121,9 +121,14 @@ Niveles de severidad válidos: `critical` · `high` · `medium` · `low` · `inf
 
 ### Decisiones tomadas en Fase 2
 
-- `port-scanner.js` usa escáner TCP nativo como fallback; `nmap-wrapper.js` hace escaneo
-  completo cuando nmap está disponible. `audit-network.js` elige automáticamente según
-  disponibilidad.
+- Nmap es REQUISITO de `audit-network`: es el único escáner. El antiguo escáner TCP
+  nativo (`port-scanner.js`) se eliminó, junto con sus opciones de UI (timeout por
+  puerto y workers paralelos). Su catálogo de severidades sobrevive en `port-catalog.js`.
+  Si Nmap falta, el nodo no revienta: emite `NET-DEP-NMAP` con el comando de instalación
+  de la plataforma (brew / apt / pacman / dnf / winget).
+- `service-detect.js` (proceso, PID y dirección de bind vía lsof/netstat) ya no es
+  opcional: se ejecuta siempre sobre localhost, porque las reglas de resolución dependen
+  de esos campos para distinguir loopback de expuesto y daemon del sistema de terceros.
 - La severidad de puertos sigue el mismo criterio que `LYNIS_PERSONAL_SEVERITY`: calibrada
   para PC personal, no para servidores.
 - `config-audit.js` inspecciona contenedores con `docker inspect` en paralelo (3 comandos

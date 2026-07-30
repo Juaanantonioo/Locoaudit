@@ -1,6 +1,5 @@
 "use strict";
 
-const { scanPorts }        = require("../../nodes/audit-network/modules/port-scanner");
 const { runNmap }          = require("../../nodes/audit-network/modules/nmap-wrapper");
 const { enrichPorts }      = require("../../nodes/audit-network/modules/service-detect");
 const { normalizeNetwork } = require("../../lib/normalizer");
@@ -81,61 +80,29 @@ async function runPass(label, openPorts, normSource) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  // ── Pasada 1: escáner nativo ────────────────────────────────────────────────
-  const nativePorts    = await scanPorts({ timeout: 500, concurrency: 20 });
-  const { openPorts: nativeOpen, findings: nativeFindings } =
-    await runPass("ESCÁNER NATIVO (port-scanner.js)", nativePorts, "native");
+  // Nmap es el único escáner del nodo: ya no hay comparativa contra el escáner
+  // nativo (port-scanner.js se eliminó al pasar Nmap a requisito).
+  const nmapResult = await runNmap({ target: "127.0.0.1", timeout: 240000 });
 
-  // ── Pasada 2: nmap ──────────────────────────────────────────────────────────
-  let nmapOpen     = null;
-  let nmapFindings = null;
-
-  const nmapResult = await runNmap({ target: "127.0.0.1", timeout: 30000 });
-
-  if (nmapResult.skipped) {
-    console.log(`${"═".repeat(72)}`);
-    console.log("  PASADA: NMAP");
-    console.log(`${"═".repeat(72)}`);
-    console.log(`nmap no disponible: ${nmapResult.reason}`);
-    console.log("Solo se dispone de la pasada nativa.\n");
-  } else {
-    const { openPorts: no, findings: nf } =
-      await runPass("NMAP (nmap-wrapper.js)", nmapResult.ports, "nmap");
-    nmapOpen     = no;
-    nmapFindings = nf;
+  if (nmapResult.skipped && !nmapResult.inconclusive) {
+    console.log("═".repeat(72));
+    console.log("  NMAP NO DISPONIBLE");
+    console.log("═".repeat(72));
+    console.log(`Motivo: ${nmapResult.reason}`);
+    console.log("Nmap es requisito de audit-network. Instálalo y repite la prueba:");
+    console.log("  macOS:   brew install nmap");
+    console.log("  Debian:  sudo apt install nmap");
+    console.log("  Arch:    sudo pacman -S nmap");
+    console.log("  Windows: winget install -e --id Insecure.Nmap\n");
+    return;
   }
 
-  // ── Comparativa ─────────────────────────────────────────────────────────────
-  if (nmapOpen !== null) {
-    console.log(`${"═".repeat(72)}`);
-    console.log("  COMPARATIVA");
-    console.log(`${"═".repeat(72)}`);
-
-    const nativeSet = new Set(nativeOpen.map((p) => p.port));
-    const nmapSet   = new Set(nmapOpen.map((p) => p.port));
-
-    const soloNmap   = nmapOpen.filter((p) => !nativeSet.has(p.port));
-    const soloNative = nativeOpen.filter((p) => !nmapSet.has(p.port));
-
-    if (soloNmap.length > 0) {
-      console.log(`\nPuertos encontrados por nmap pero NO por el escáner nativo (${soloNmap.length}):`);
-      for (const p of soloNmap) {
-        console.log(`  :${p.port}  ${p.service}  [${p.severity}]${p.version ? "  v" + p.version : ""}`);
-      }
-    } else {
-      console.log("\nNmap no encontró puertos adicionales respecto al escáner nativo.");
-    }
-
-    if (soloNative.length > 0) {
-      console.log(`\nPuertos encontrados por el escáner nativo pero NO por nmap (${soloNative.length}):`);
-      for (const p of soloNative) {
-        console.log(`  :${p.port}  ${p.service}  [${p.severity}]`);
-      }
-    } else {
-      console.log("El escáner nativo no encontró puertos adicionales respecto a nmap.");
-    }
-    console.log();
+  if (nmapResult.inconclusive) {
+    console.log(`\n⚠ Escaneo no concluyente: ${nmapResult.reason}\n`);
+    return;
   }
+
+  await runPass("NMAP (nmap-wrapper.js)", nmapResult.ports, "nmap");
 }
 
 main().catch((err) => {

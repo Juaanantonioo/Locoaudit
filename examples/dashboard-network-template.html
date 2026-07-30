@@ -390,8 +390,10 @@ export default {
     },
 
     srcLabel() {
+      // Nmap es el único escáner del nodo: portSource solo vale 'nmap' o 'none'
+      // (cuando Nmap no está instalado y no se ha escaneado nada).
       var src = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.portSource;
-      return src === 'nmap' ? 'Nmap' : 'Nativo';
+      return src === 'nmap' ? 'Nmap' : 'Nmap no disponible';
     },
 
     modeLabel() {

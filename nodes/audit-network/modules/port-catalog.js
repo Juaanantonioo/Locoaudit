@@ -1,11 +1,15 @@
 "use strict";
 
 /**
- * port-scanner.js — Escáner de puertos TCP del host local mediante net nativo.
+ * port-catalog.js — Catálogo de puertos conocidos con su severidad para un PC personal.
  *
- * No utiliza dependencias externas: todo el escaneo se realiza con el módulo
- * "net" de Node.js intentando establecer conexiones TCP y observando si se
- * aceptan (puerto abierto) o se rechazan/expiran (puerto cerrado/filtrado).
+ * Datos puros: no escanea nada. Lo consume nmap-wrapper.js para asignar severidad
+ * y fix a cada puerto que Nmap encuentra, y audit-network.js para describir el
+ * rango cubierto en scanMeta.
+ *
+ * Este catálogo vivía en port-scanner.js (el escáner nativo). Ese escáner se
+ * eliminó al pasar Nmap a ser requisito del nodo, pero el criterio de severidad
+ * es independiente del escáner que descubra el puerto, así que se conserva aquí.
  *
  * ── Criterio de severidad por puerto ─────────────────────────────────────────
  *
@@ -37,21 +41,9 @@
  *            servicio legítimo del sistema o una aplicación de usuario.
  *            Se muestra por trazabilidad sin alarmar innecesariamente.
  *
- * ── Nota de mantenimiento ─────────────────────────────────────────────────────
- *
- * PORT_CATALOG cubre los puertos más frecuentes en PCs personales.  Para
- * ampliar la cobertura a entornos servidor o añadir UDP, considerar integrar
- * nmap (audit-network ya tiene soporte opcional para él) y complementar este
- * escáner nativo con los resultados de nmap cuando esté disponible.
- *
  * Exporta:
- *   scanPorts(options?) → Promise<Array<PortResult>>
- *
- * @typedef {{ port: number, protocol: string, state: string, service: string, severity: string, fix: string|null }} PortResult
+ *   PORT_CATALOG — objeto port → { service, severity }
  */
-
-const net = require("net");
-const { getFixForPort } = require("./network-utils");
 
 // ── Catálogo de puertos ───────────────────────────────────────────────────────
 
@@ -128,154 +120,4 @@ const PORT_CATALOG = {
   9093:  { service: "Prometheus",  severity: "medium" },
 };
 
-const ALL_PORTS = Object.keys(PORT_CATALOG).map(Number);
-
-// ── Escáner ───────────────────────────────────────────────────────────────────
-
-/**
- * Parsea un string de puertos personalizado a un array de números válidos.
- *
- * Formatos aceptados (combinables con comas):
- *   "22,80,443"       → puertos individuales
- *   "1-500"           → rango inclusivo
- *   "22,80,1000-1100" → combinación
- *
- * Tokens inválidos se ignoran silenciosamente. Si el resultado está vacío
- * lanza un Error con instrucciones de uso.
- *
- * @param {string} input
- * @returns {number[]}  Array ordenado de puertos únicos en rango 1-65535
- * @throws {Error} si no se encuentra ningún puerto válido
- */
-function parsePortsInput(input) {
-  const tokens = String(input).split(",").map((s) => s.trim()).filter(Boolean);
-  const ports  = new Set();
-
-  for (const token of tokens) {
-    if (/^\d+$/.test(token)) {
-      const n = parseInt(token, 10);
-      if (n >= 1 && n <= 65535) ports.add(n);
-    } else if (/^\d+-\d+$/.test(token)) {
-      const [a, b] = token.split("-").map(Number);
-      if (a >= 1 && b <= 65535 && a <= b) {
-        for (let p = a; p <= b; p++) ports.add(p);
-      }
-    }
-    // token inválido → ignorar
-  }
-
-  if (ports.size === 0) {
-    throw new Error(
-      "No se encontraron puertos válidos en la lista personalizada. " +
-      "Usa formato: 22,80,443 o rangos como 1-1024."
-    );
-  }
-
-  return Array.from(ports).sort((a, b) => a - b);
-}
-
-/**
- * Intenta conectar a host:port con un timeout dado.
- * @param {number} port
- * @param {number} timeout  ms
- * @param {string} [host="127.0.0.1"]
- * @returns {Promise<boolean>}  true si el puerto está abierto
- */
-function probePort(port, timeout, host = "127.0.0.1") {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-
-    const cleanup = (open) => {
-      socket.destroy();
-      resolve(open);
-    };
-
-    socket.setTimeout(timeout);
-    socket.on("connect",  () => cleanup(true));
-    socket.on("timeout",  () => cleanup(false));
-    socket.on("error",    () => cleanup(false));  // ECONNREFUSED, EHOSTUNREACH, etc.
-
-    socket.connect(port, host);
-  });
-}
-
-/**
- * Ejecuta un array de funciones productoras de promesas respetando
- * un límite de concurrencia máxima.
- * @param {Array<() => Promise<any>>} tasks
- * @param {number} concurrency
- * @returns {Promise<any[]>}
- */
-async function runWithConcurrency(tasks, concurrency) {
-  const results = new Array(tasks.length);
-  let index = 0;
-
-  async function worker() {
-    while (index < tasks.length) {
-      const i = index++;
-      results[i] = await tasks[i]();
-    }
-  }
-
-  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, worker);
-  await Promise.all(workers);
-  return results;
-}
-
-// ── API pública ───────────────────────────────────────────────────────────────
-
-/**
- * Escanea puertos TCP en el host indicado y devuelve los abiertos.
- *
- * @param {object}  [options]
- * @param {number}  [options.timeout=500]        ms por intento TCP
- * @param {number}  [options.concurrency=20]     workers paralelos
- * @param {string}  [options.host="127.0.0.1"]   IP o hostname objetivo
- * @param {string}  [options.mode="standard"]    modo de escaneo:
- *   - "standard" — solo los puertos del PORT_CATALOG (~27 puertos conocidos)
- *   - "full"     — puertos 1-1024 con concurrencia controlada
- *   - "custom"   — puertos definidos en options.customPorts
- * @param {string}  [options.customPorts=""]     lista de puertos para mode "custom".
- *   Formatos: "22,80,443" · "1-500" · "22,80,1000-1100"
- *   Los tokens inválidos se ignoran; si no hay ninguno válido lanza Error.
- * @returns {Promise<PortResult[]>}
- */
-async function scanPorts(options = {}) {
-  const timeout     = options.timeout     ?? 500;
-  const concurrency = options.concurrency ?? 20;
-  const host        = options.host        || "127.0.0.1";
-  const mode        = options.mode        ?? "standard";
-
-  let portsToScan;
-  if (mode === "full") {
-    portsToScan = Array.from({ length: 1024 }, (_, i) => i + 1);
-  } else if (mode === "custom") {
-    portsToScan = parsePortsInput(options.customPorts || "");
-  } else {
-    portsToScan = ALL_PORTS;
-  }
-
-  const tasks = portsToScan.map((port) => async () => {
-    const open = await probePort(port, timeout, host);
-    if (!open) return null;
-
-    const meta = PORT_CATALOG[port] ?? {
-      service:  "unknown",
-      severity: "low",
-    };
-
-    return {
-      port,
-      protocol: "tcp",
-      state:    "open",
-      service:  meta.service,
-      severity: meta.severity,
-      fix:      getFixForPort(port, process.platform),
-    };
-  });
-
-  const raw = await runWithConcurrency(tasks, concurrency);
-  return raw.filter(Boolean);
-}
-
-module.exports = { scanPorts, parsePortsInput, PORT_CATALOG };
+module.exports = { PORT_CATALOG };

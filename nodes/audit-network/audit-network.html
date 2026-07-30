@@ -10,10 +10,6 @@
             customPorts:  { value: "" },
             scanTarget:   { value: "localhost" },
             customTarget: { value: "" },
-            enableNmap:   { value: true },
-            enableEnrich: { value: true },
-            scanTimeout:  { value: 500 },
-            concurrency:  { value: 20 },
             llmConfig:    { value: "", type: "llm-config", required: false }
         },
         inputs: 1,
@@ -144,66 +140,19 @@
 
     <hr style="margin: 12px 0;">
 
-    <!-- ── SECCIÓN 3: Opciones avanzadas (colapsable) ────────────────────── -->
-    <div class="form-row">
-        <label style="width: 100%; font-weight: 600; margin-bottom: 4px; cursor: pointer;"
-               onclick="$('#advanced-options-body').toggle(); $(this).find('.fa-chevron-right, .fa-chevron-down').toggleClass('fa-chevron-right fa-chevron-down');">
-            <i class="fa fa-chevron-right" style="margin-right: 4px; font-size: 0.85em;"></i>
-            <i class="fa fa-sliders"></i> Opciones avanzadas
-        </label>
-
-        <div id="advanced-options-body" style="display: none; padding-left: 8px;">
-            <div style="display: flex; flex-direction: column; gap: 10px; padding-top: 8px;">
-
-                <!-- Checkbox: Nmap -->
-                <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
-                    <input type="checkbox" id="node-input-enableNmap" style="width: auto; margin-top: 2px; flex-shrink: 0;">
-                    <div>
-                        <label for="node-input-enableNmap" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
-                            <i class="fa fa-search-plus"></i> Usar Nmap si está disponible
-                            <span style="color: #e67e22; font-size: 0.8em; font-weight: normal; margin-left: 4px;">◌ opcional</span>
-                        </label>
-                        <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
-                            Si Nmap está instalado, se usa en lugar del escáner nativo. Detecta servicios y versiones con más detalle.
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Checkbox: Enriquecimiento -->
-                <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
-                    <input type="checkbox" id="node-input-enableEnrich" style="width: auto; margin-top: 2px; flex-shrink: 0;">
-                    <div>
-                        <label for="node-input-enableEnrich" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
-                            <i class="fa fa-info-circle"></i> Identificar procesos por puerto
-                        </label>
-                        <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
-                            Usa <code>lsof</code> o <code>netstat</code> para identificar qué proceso tiene abierto cada puerto. Solo funciona en localhost.
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Timeout -->
-                <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
-                    <label for="node-input-scanTimeout" style="font-weight: 600; margin-bottom: 6px; display: block;">
-                        Timeout por puerto (ms)
-                    </label>
-                    <input type="number" id="node-input-scanTimeout" min="100" max="5000" step="100"
-                        style="width: 120px;">
-                    <span style="color: #555; font-size: 0.82em; margin-left: 8px;">recomendado: 500 ms</span>
-                </div>
-
-                <!-- Concurrencia -->
-                <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
-                    <label for="node-input-concurrency" style="font-weight: 600; margin-bottom: 6px; display: block;">
-                        Puertos simultáneos
-                    </label>
-                    <input type="number" id="node-input-concurrency" min="1" max="100" step="1"
-                        style="width: 120px;">
-                    <span style="color: #555; font-size: 0.82em; margin-left: 8px;">workers paralelos (recomendado: 20)</span>
-                </div>
-
-            </div>
-        </div>
+    <!-- ── Dependencia requerida ─────────────────────────────────────────── -->
+    <div class="form-row" style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px; color: #555; font-size: 0.85em; line-height: 1.5;">
+        <i class="fa fa-exclamation-triangle" style="color: #e67e22;"></i>
+        <strong>Nmap es necesario</strong> para este nodo: es el escáner que descubre
+        los puertos abiertos y sus versiones de servicio.
+        Instálalo con <code>brew install nmap</code> (macOS),
+        <code>sudo apt install nmap</code> / <code>sudo pacman -S nmap</code> (Linux)
+        o <code>winget install -e --id Insecure.Nmap</code> (Windows).
+        Si falta, la auditoría no revienta: devuelve un hallazgo con estas instrucciones.
+        <br><br>
+        La identificación de proceso, PID y dirección de escucha
+        (<code>lsof</code>/<code>netstat</code>) se ejecuta siempre en localhost:
+        de esos datos dependen las recomendaciones de resolución.
     </div>
 
     <hr style="margin: 12px 0;">
@@ -224,12 +173,6 @@
 
     <hr style="margin: 12px 0;">
 
-    <!-- Nota informativa -->
-    <div class="form-row" style="color: #666; font-size: 0.85em; line-height: 1.5;">
-        <i class="fa fa-info-circle"></i>
-        El escáner nativo funciona siempre sin instalación adicional.
-        <strong>Nmap</strong> es opcional: si está activado y no está instalado, el nodo usa el escáner nativo como fallback sin error.
-    </div>
 
 </script>
 
@@ -237,6 +180,23 @@
     <p>
         Auditoría de red del host. Escanea puertos TCP abiertos, detecta servicios expuestos
         e identifica los procesos que los usan.
+    </p>
+
+    <h3>Requisito: Nmap</h3>
+    <p>
+        <a href="https://nmap.org/">Nmap</a> es la única fuente de puertos del nodo
+        (el antiguo escáner nativo se eliminó). Si no está instalado, el nodo no falla:
+        emite el hallazgo <code>NET-DEP-NMAP</code> con el comando de instalación de tu
+        sistema — <code>brew install nmap</code>, <code>sudo apt install nmap</code>,
+        <code>sudo pacman -S nmap</code>, <code>sudo dnf install nmap</code> o
+        <code>winget install -e --id Insecure.Nmap</code>.
+    </p>
+    <p>
+        La identificación de proceso, PID y dirección de escucha vía
+        <code>lsof</code>/<code>netstat</code> se ejecuta <strong>siempre</strong> sobre
+        localhost: las recomendaciones distinguen un servicio en loopback de uno expuesto
+        y un daemon del sistema de una aplicación de terceros, y necesitan esos datos.
+        No se aplica a targets remotos, donde atribuiría el puerto a un proceso local ajeno.
     </p>
 
     <h3>Entrada</h3>
@@ -254,7 +214,7 @@
         <dd>Módulos ejecutados, fuente del escáner, puertos analizados, duración en ms, modo de escaneo y target si es remoto.</dd>
 
         <dt>payload.raw <span class="property-type">object</span></dt>
-        <dd>Lista de puertos abiertos con detalle de proceso si el enriquecimiento está activo.</dd>
+        <dd>Lista de puertos abiertos con detalle de proceso, PID y dirección de escucha (targets locales).</dd>
 
         <dt>payload.timestamp <span class="property-type">string</span></dt>
         <dd>Timestamp ISO 8601 del inicio de la auditoría.</dd>
@@ -277,6 +237,6 @@
 
     <h3>Más información</h3>
     <p>
-        <a href="https://nmap.org/">Nmap</a>
+        <a href="https://nmap.org/book/man.html">Manual de referencia de Nmap</a>
     </p>
 </script>
