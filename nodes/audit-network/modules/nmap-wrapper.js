@@ -1,27 +1,28 @@
 "use strict";
 
 /**
- * nmap-wrapper.js — Wrapper opcional para Nmap (escáner de red avanzado).
+ * nmap-wrapper.js — Wrapper para Nmap, ÚNICO escáner de puertos de audit-network.
  *
- * Este módulo es el complemento de port-scanner.js en la cadena de audit-network:
+ * Cadena del nodo:
  *
- *   port-scanner.js   — Escaneo nativo con "net" de Node.js. Cubre un catálogo
- *                       fijo de puertos conocidos sin ninguna dependencia externa.
- *                       Siempre disponible, siempre ejecutable.
+ *   nmap-wrapper.js   — Descubre los puertos abiertos con -sV (versiones de
+ *                       servicio). Es la única fuente de puertos: el antiguo
+ *                       escáner nativo (port-scanner.js) se eliminó al pasar
+ *                       Nmap a REQUISITO del nodo.
  *
- *   nmap-wrapper.js   — Cuando Nmap está instalado, realiza un escaneo completo
- *                       (-sV para detectar versiones de servicio) que puede
- *                       descubrir puertos no presentes en el catálogo y añadir
- *                       información de versión al finding. Más lento pero más
- *                       exhaustivo que el escáner nativo.
+ *   port-catalog.js   — Catálogo de puertos conocidos → severidad para PC
+ *                       personal. Datos puros, sin escaneo.
  *
- *   audit-network.js  — Decide cuál usar: intenta nmap primero y, si no está
- *                       instalado o falla, cae en port-scanner como fallback.
- *                       El usuario final ve siempre un resultado, independientemente
- *                       de si Nmap está instalado.
+ *   service-detect.js — Enriquece cada puerto con proceso, PID y dirección de
+ *                       bind vía lsof/netstat (solo para targets locales).
  *
- * Sigue el patrón obligatorio de CLAUDE.md para herramientas opcionales:
+ *   audit-network.js  — Orquesta, y si Nmap NO está instalado emite un finding
+ *                       con las instrucciones de instalación por plataforma en
+ *                       vez de reventar el nodo.
+ *
+ * Sigue usando commandExists() antes de ejecutar, según CLAUDE.md:
  *   si nmap no está instalado → { skipped: true, reason: "nmap not installed" }
+ *   El llamante decide qué hacer con ese caso (aquí: finding de dependencia).
  *
  * Comando: nmap -sV -T4 --open -oX - <target>
  *   -sV      detecta versiones de servicios (interroga el banner del proceso)
@@ -38,7 +39,7 @@
 
 const os                             = require("os");
 const { execCommand, commandExists } = require("../../../lib/executor");
-const { PORT_CATALOG }               = require("./port-scanner");
+const { PORT_CATALOG }               = require("./port-catalog");
 const { getFixForPort }              = require("./network-utils");
 
 /**

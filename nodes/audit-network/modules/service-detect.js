@@ -3,7 +3,7 @@
 /**
  * service-detect.js — Enriquecimiento de puertos abiertos con información de proceso.
  *
- * Este módulo es complementario a port-scanner.js: donde el escáner determina
+ * Este módulo es complementario a nmap-wrapper.js: donde el escáner determina
  * qué puertos TCP están abiertos, service-detect añade el contexto humano
  * necesario para que un usuario sin conocimientos técnicos pueda interpretar
  * cada hallazgo.  Saber que el puerto 3306 está abierto es una alerta; saber
@@ -280,7 +280,7 @@ async function detectFirewall(platform) {
  * Los puertos se procesan en paralelo con Promise.allSettled; si un puerto
  * falla, el resto continúa y ese puerto se devuelve sin enriquecer.
  *
- * @param {PortResult[]} openPorts  Array devuelto por scanPorts()
+ * @param {PortResult[]} openPorts  Array de puertos devuelto por runNmap()
  * @returns {Promise<EnrichedPort[]>}
  */
 async function enrichPorts(openPorts) {

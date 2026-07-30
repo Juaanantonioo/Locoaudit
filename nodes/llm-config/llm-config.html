@@ -6,11 +6,194 @@
         defaults: {
             name:      { value: "" },
             ollamaUrl: { value: "http://127.0.0.1:11434", required: true },
-            model:     { value: "qwen3:8b", required: true },
-            timeoutMs: { value: 120000, required: true, validate: RED.validators.number() }
+            // Precargado: funciona sin tocar el campo si el usuario ya hizo
+            // `ollama pull qwen3:8b`. El timeout ya no se configura aquí (interno).
+            model:     { value: "qwen3:8b", required: true }
         },
         label: function () {
             return this.name || this.model || "llm-config";
+        },
+        oneditprepare: function () {
+            var $url    = $("#node-config-input-ollamaUrl");
+            // Campo REAL que Node-RED guarda (defaults.model). Se mantiene
+            // siempre en el DOM: es la única fuente de verdad al guardar.
+            // Visible solo en modo respaldo; en modo normal manda el <select>.
+            var $model  = $("#node-config-input-model");
+            var $select = $("#node-config-select-model");
+            var $fbRow  = $("#node-config-model-fallback");
+            var $msg    = $("#node-config-llm-models");
+            var $reload = $("#node-config-llm-reload");
+            var $btn    = $("#node-config-llm-check");
+            var $out    = $("#node-config-llm-check-result");
+
+            // URL de la última consulta: evita repetir la petición en cada blur
+            // del campo si el usuario no ha cambiado el servidor.
+            var lastUrl = null;
+
+            /**
+             * Normaliza un nombre de modelo para comparar. Ollama registra
+             * `ollama pull qwen3` como "qwen3:latest", y el usuario suele
+             * escribirlo sin la etiqueta: ambos deben considerarse el mismo.
+             * Misma regla que checkModel() en lib/llm-client.js.
+             */
+            function normModel(m) {
+                return String(m || "").trim().toLowerCase().replace(/:latest$/, "");
+            }
+
+            /** URL utilizable: no vacía y con esquema http(s). */
+            function urlLooksValid(u) {
+                return /^https?:\/\/[^\s/]+/i.test(String(u || "").trim());
+            }
+
+            function setMsg(color, html) {
+                $msg.html('<span style="color:' + color + ';">' + html + "</span>");
+            }
+
+            /**
+             * Modo RESPALDO: sin lista utilizable, se muestra el campo de texto.
+             *
+             * Sin esto, configurar el nodo con Ollama apagado sería imposible:
+             * el desplegable estaría vacío y no habría forma de guardar un modelo.
+             */
+            function useFallback() {
+                $select.hide().prop("disabled", true);
+                $fbRow.show();
+            }
+
+            /** Modo NORMAL: manda el desplegable y el texto libre desaparece. */
+            function useSelect() {
+                $fbRow.hide();
+                $select.show().prop("disabled", false);
+            }
+
+            /**
+             * Puebla el desplegable y preselecciona el modelo ya configurado.
+             *
+             * Si el modelo guardado ya no está instalado se añade igualmente como
+             * opción marcada: cambiar en silencio la configuración del usuario al
+             * abrir el panel sería peor que mostrarla tal cual está.
+             */
+            function renderModels(models) {
+                var current = $model.val();
+                $select.empty();
+
+                models.forEach(function (m) {
+                    $select.append($("<option>").attr("value", m).text(m));
+                });
+
+                var match = models.filter(function (m) {
+                    return normModel(m) === normModel(current);
+                })[0];
+
+                if (match) {
+                    $select.val(match);
+                } else if (current) {
+                    $select.append(
+                        $("<option>").attr("value", current).text(current + " — no instalado")
+                    );
+                    $select.val(current);
+                }
+
+                // El <select> solo pilota: el valor guardado es el del input.
+                $model.val($select.val());
+                useSelect();
+
+                setMsg("#3a7d3a", "✓ " + models.length + " modelo(s) disponible(s) en Ollama.");
+            }
+
+            /**
+             * Consulta los modelos instalados en la URL que hay AHORA en el
+             * formulario. Cada estado de fallo cae en modo respaldo con su aviso,
+             * para que el panel nunca quede inservible.
+             */
+            function loadModels(force) {
+                var url = ($url.val() || "").trim();
+
+                if (!urlLooksValid(url)) {
+                    lastUrl = null;
+                    useFallback();
+                    setMsg("#a33", url
+                        ? "URL no válida. Debe empezar por http:// o https://. Escribe el modelo a mano mientras tanto."
+                        : "Escribe la URL de Ollama para ver los modelos instalados.");
+                    return;
+                }
+
+                // El blur del campo salta muchas veces: sin este guard se
+                // repetiría la consulta aunque el servidor sea el mismo.
+                if (!force && url === lastUrl) return;
+                lastUrl = url;
+
+                setMsg("#888", '<i class="fa fa-spinner fa-spin"></i> Consultando modelos en ' + $("<div>").text(url).html() + "…");
+
+                $.getJSON("locoaudit/llm/models", { url: url })
+                    .done(function (r) {
+                        if (!r || !r.ok) {
+                            // El backend ya diferencia servidor caído de otros
+                            // fallos (kind 'unreachable'): se muestra su mensaje.
+                            useFallback();
+                            setMsg("#a33", "✗ " + ((r && r.error) || "No se pudo obtener la lista de modelos.") +
+                                "<br>Puedes escribir el modelo a mano para guardar la configuración.");
+                            return;
+                        }
+                        if (!r.models || r.models.length === 0) {
+                            // Ollama responde pero está vacío: NO es un error de
+                            // conexión y la acción a tomar es otra.
+                            useFallback();
+                            setMsg("#b5651d",
+                                "Ollama responde, pero no hay ningún modelo instalado. " +
+                                "Instala uno desde la terminal, por ejemplo: <code>ollama pull qwen3:8b</code>, " +
+                                "y pulsa ↻. Mientras tanto puedes escribir el nombre a mano.");
+                            return;
+                        }
+                        renderModels(r.models);
+                    })
+                    .fail(function () {
+                        useFallback();
+                        setMsg("#a33", "✗ No se pudo consultar el listado desde el editor de Node-RED." +
+                            "<br>Puedes escribir el modelo a mano para guardar la configuración.");
+                    });
+            }
+
+            // Elegir en el desplegable escribe en el campo real que se guarda.
+            $select.on("change", function () {
+                $model.val($select.val());
+                $out.empty();
+            });
+
+            // Al abrir el editor ya se ve qué hay disponible.
+            loadModels(true);
+
+            // Recargar a mano siempre reconsulta, aunque la URL no haya cambiado:
+            // es el caso de acabar de hacer `ollama pull`.
+            $reload.on("click", function () { loadModels(true); });
+
+            // Cambiar de servidor debe listar los modelos de ESE servidor.
+            $url.on("change blur", function () { loadModels(false); });
+
+            // Comprueba contra /api/tags que el modelo elegido sigue instalado.
+            $btn.on("click", function () {
+                var url = $url.val();
+                var model = $model.val();
+                $out.css("color", "#888").html('<i class="fa fa-spinner fa-spin"></i> Comprobando…');
+
+                // "Probar conexión" también refresca la lista: un solo gesto
+                // deja el panel entero al día.
+                loadModels(true);
+
+                $.getJSON("locoaudit/llm/check", { url: url, model: model })
+                    .done(function (r) {
+                        if (r && r.ok) {
+                            $out.css("color", "#3a7d3a").html(
+                                "✓ Modelo <b>" + $("<div>").text(model).html() + "</b> disponible."
+                            );
+                        } else {
+                            $out.css("color", "#a33").text("✗ " + ((r && r.error) || "Error desconocido."));
+                        }
+                    })
+                    .fail(function () {
+                        $out.css("color", "#a33").text("✗ No se pudo consultar el estado desde el editor.");
+                    });
+            });
         }
     });
 </script>
@@ -33,18 +216,42 @@
         <input type="text" id="node-config-input-ollamaUrl" placeholder="http://127.0.0.1:11434">
     </div>
 
+    <!-- ── Modelo: desplegable con lo que hay instalado en Ollama ──────────
+         El <select> es solo el mando: el valor que Node-RED guarda vive en
+         #node-config-input-model (defaults.model), que permanece siempre en el
+         DOM y se muestra como campo de texto cuando no hay lista disponible. -->
     <div class="form-row">
-        <label for="node-config-input-model">
+        <label for="node-config-select-model">
             <i class="fa fa-cube"></i> Modelo
         </label>
-        <input type="text" id="node-config-input-model" placeholder="qwen3:8b">
+        <select id="node-config-select-model" style="width: 70%;"></select>
+        <button type="button" class="red-ui-button red-ui-button-small"
+                id="node-config-llm-reload" title="Volver a consultar los modelos instalados"
+                style="margin-left: 6px;">
+            <i class="fa fa-refresh"></i>
+        </button>
+    </div>
+
+    <!-- Respaldo: visible solo si no se pudo obtener la lista, para que se pueda
+         configurar el nodo aunque Ollama esté apagado. -->
+    <div class="form-row" id="node-config-model-fallback" style="display: none;">
+        <label for="node-config-input-model">
+            <i class="fa fa-pencil"></i> Modelo (a mano)
+        </label>
+        <input type="text" id="node-config-input-model" placeholder="qwen3:8b" autocomplete="off">
+    </div>
+
+    <div class="form-row" style="margin-top: -6px;">
+        <div id="node-config-llm-models"
+             style="font-size: 0.85em; line-height: 1.5;"></div>
     </div>
 
     <div class="form-row">
-        <label for="node-config-input-timeoutMs">
-            <i class="fa fa-clock-o"></i> Timeout (ms)
-        </label>
-        <input type="text" id="node-config-input-timeoutMs" placeholder="120000">
+        <button type="button" class="red-ui-button" id="node-config-llm-check">
+            <i class="fa fa-plug"></i> Probar conexión
+        </button>
+        <div id="node-config-llm-check-result"
+             style="margin-top: 8px; font-size: 0.85em; line-height: 1.4;"></div>
     </div>
 
     <hr style="margin: 12px 0;">
@@ -64,7 +271,7 @@
     <p>
         Nodo de configuración para el asistente de chat con un LLM local
         (vía <a href="https://ollama.com/">Ollama</a>). Almacena la URL del
-        servidor, el modelo a usar y el timeout de las consultas.
+        servidor y el modelo a usar.
     </p>
 
     <h3>Campos</h3>
@@ -73,11 +280,42 @@
         <dd>URL base del servidor Ollama. Por defecto <code>http://127.0.0.1:11434</code>.</dd>
 
         <dt>Modelo <span class="property-type">string</span></dt>
-        <dd>Nombre del modelo cargado en Ollama. Por defecto <code>qwen3:8b</code>.</dd>
-
-        <dt>Timeout (ms) <span class="property-type">number</span></dt>
-        <dd>Tiempo máximo de espera por respuesta. Por defecto <code>120000</code> (2 min).</dd>
+        <dd>
+            Desplegable con los modelos instalados en el Ollama de la URL configurada,
+            consultados vía <code>/api/tags</code>. Se preselecciona el que ya estuviera
+            guardado. Por defecto <code>qwen3:8b</code>.
+        </dd>
     </dl>
+
+    <h3>Lista de modelos</h3>
+    <p>
+        La lista se consulta al abrir el panel, al cambiar la URL, con el botón ↻
+        y al pulsar "Probar conexión". Usa ↻ después de un
+        <code>ollama pull &lt;modelo&gt;</code> para ver el modelo nuevo.
+    </p>
+    <p>
+        <b>Si no se puede obtener la lista</b> (Ollama apagado, URL errónea o sin
+        modelos instalados), el desplegable se sustituye por un campo de texto libre
+        y se muestra el aviso correspondiente. Así se puede configurar el nodo aunque
+        el servidor no esté disponible en ese momento. Al recuperarse la lista, vuelve
+        el desplegable.
+    </p>
+
+    <h3>Probar conexión</h3>
+    <p>
+        El botón consulta <code>GET /api/tags</code> de Ollama y distingue los dos
+        fallos posibles: <b>servidor inaccesible</b> (Ollama apagado o URL errónea)
+        y <b>modelo no instalado</b> (Ollama responde, pero ese modelo no está).
+    </p>
+    <p>
+        Elegir del desplegable no elimina la validación del runtime: el modelo se
+        vuelve a comprobar al desplegar y antes de cada consulta, porque puede
+        desinstalarse después de haber configurado el nodo.
+    </p>
+
+    <p>
+        El tiempo máximo de espera por respuesta es interno (120000 ms) y no se configura.
+    </p>
 
     <h3>Endpoint</h3>
     <p>

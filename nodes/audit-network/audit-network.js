@@ -3,7 +3,7 @@
 /**
  * audit-network.js — Nodo audit-network para Node-RED.
  *
- * Orquesta port-scanner.js, nmap-wrapper.js y service-detect.js y emite:
+ * Orquesta nmap-wrapper.js y service-detect.js y emite:
  *   msg.payload = {
  *     findings: Finding[],
  *     summary,
@@ -12,7 +12,7 @@
  *     host: { hostname, platform },
  *     scanMeta: {
  *       modulesRun: string[],
- *       portSource: "nmap" | "native",
+ *       portSource: "nmap" | "none",
  *       portsScanned: number,
  *       portsOpen: number,
  *       durationMs: number
@@ -22,33 +22,68 @@
  *   }
  *
  * Configuración (config):
- *   enablePortScan  boolean  (default true)        — activa port-scanner.js (fallback nativo)
- *   enableNmap      boolean  (default true)         — intenta nmap antes del fallback nativo
- *   enableEnrich    boolean  (default true)         — activa service-detect.js
- *   scanTimeout     number   (default 500)          — ms por intento TCP (port-scanner)
- *   concurrency     number   (default 20)           — workers paralelos (port-scanner)
  *   scanMode        string   (default "standard")   — "standard" | "full" | "custom"
  *   customPorts     string   (default "")           — lista de puertos para scanMode "custom"
  *   scanTarget      string   (default "localhost")  — "localhost" | "custom"
  *   customTarget    string   (default "127.0.0.1")  — IP para nmap cuando scanTarget es "custom"
  *
- * Lógica de selección de escáner:
- *   1. Si scanMode === "custom" y customPorts vacío → emite finding NET-CFG-ERR y termina.
- *   2. Si enableNmap → intentar runNmap({ target, timeout: 30000 })
- *      - Si nmap disponible y tiene éxito → portSource: "nmap"
- *      - Si nmap no disponible o falla    → fallback a port-scanner nativo
- *   3. Si enablePortScan (y no se usó nmap) → scanPorts({ mode: scanMode, customPorts })
- *   portSource: "native" si se usó el fallback.
+ * Nmap es REQUISITO del nodo: no hay escáner alternativo. El antiguo escáner
+ * nativo (port-scanner.js) se eliminó, y con él sus opciones de la UI (timeout
+ * por puerto y workers paralelos, que solo tenían sentido para él).
+ *
+ * La identificación de proceso/PID/bind (service-detect.js) NO es opcional:
+ * siempre se ejecuta para targets locales, porque de esos campos dependen las
+ * reglas de resolución (localhost vs expuesto, servicio del sistema vs terceros).
+ *
+ * Lógica de escaneo:
+ *   1. Si scanMode === "custom" y customPorts vacío → finding NET-CFG-ERR y termina.
+ *   2. commandExists("nmap") vía runNmap(): si no está instalado → finding
+ *      NET-DEP-NMAP con las instrucciones de instalación de la plataforma.
+ *      El nodo NO revienta: emite el payload con ese hallazgo.
+ *   3. Con nmap disponible → portSource: "nmap".
  */
 
 const os = require("os");
-const { scanPorts, PORT_CATALOG } = require("./modules/port-scanner");
+const { PORT_CATALOG }            = require("./modules/port-catalog");
 const { runNmap }                 = require("./modules/nmap-wrapper");
 const { enrichPorts, detectFirewall } = require("./modules/service-detect");
 const { isLocalTarget }           = require("./modules/network-utils");
 const { normalizeNetwork }        = require("../../lib/normalizer");
 const { summarize }               = require("../../lib/severity-map");
 const { createFinding }           = require("../../lib/finding-schema");
+
+/**
+ * Instrucciones de instalación de Nmap por plataforma.
+ *
+ * La gestión de dependencias del SO es un objetivo del proyecto: si falta la
+ * herramienta, el usuario recibe el comando exacto de SU sistema, no un
+ * "instala nmap" genérico. En Linux se dan las tres familias de gestor porque
+ * el nodo no puede saber la distribución sin sondearla.
+ *
+ * @param {string} platform  process.platform
+ * @returns {string} Texto del fix, en pasos numerados.
+ */
+function nmapInstallInstructions(platform) {
+  if (platform === "darwin") {
+    return "1. Instala Homebrew si no lo tienes: /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n" +
+           "2. Instala Nmap: brew install nmap\n" +
+           "3. Comprueba que responde: nmap --version\n" +
+           "4. Vuelve a lanzar la auditoría desde Node-RED.";
+  }
+  if (platform === "win32") {
+    return "1. Instala Nmap: winget install -e --id Insecure.Nmap\n" +
+           "2. Cierra y vuelve a abrir la terminal (y Node-RED) para que tome el PATH.\n" +
+           "3. Comprueba que responde: nmap --version\n" +
+           "4. Vuelve a lanzar la auditoría desde Node-RED.";
+  }
+  // Linux y otros Unix: el gestor depende de la distribución.
+  return "1. Instala Nmap con el gestor de tu distribución:\n" +
+         "   · Debian/Ubuntu: sudo apt install nmap\n" +
+         "   · Arch/Manjaro:  sudo pacman -S nmap\n" +
+         "   · Fedora/RHEL:   sudo dnf install nmap\n" +
+         "2. Comprueba que responde: nmap --version\n" +
+         "3. Vuelve a lanzar la auditoría desde Node-RED.";
+}
 
 module.exports = function (RED) {
   function AuditNetworkNode(config) {
@@ -63,11 +98,6 @@ module.exports = function (RED) {
     node.on("input", async function (msg, send, done) {
       node.status({ fill: "blue", shape: "dot", text: "Escaneando..." });
 
-      const enablePortScan = config.enablePortScan !== false;
-      const enableNmap     = config.enableNmap     !== false;
-      const enableEnrich   = config.enableEnrich   !== false;
-      const scanTimeout    = Number(config.scanTimeout) || 500;
-      const concurrency    = Number(config.concurrency) || 20;
       const scanMode       = config.scanMode    || "standard";
       const customPorts    = config.customPorts || "";
       const target         = config.scanTarget === "custom" && config.customTarget
@@ -104,59 +134,59 @@ module.exports = function (RED) {
           return;
         }
 
-        // 2. Selección de escáner: nmap primero, port-scanner como fallback
+        // 2. Escaneo con nmap (único escáner: es requisito del nodo)
         let openPorts  = [];
-        let portSource = "native";
+        let portSource = "none";
         const modulesRun = [];
         // Estado del escaneo nmap: distingue "host up + 0 puertos" (verde legítimo)
         // de "escaneo no concluyente / host no respondió" (advertencia, no verde).
         let nmapScan = null;
         let scanInconclusive = false;
+        // Nmap ausente: no es un error del nodo, es una dependencia del SO que
+        // falta. Se reporta como finding accionable, no como excepción.
+        let nmapMissing = false;
+        let nmapError   = null;
 
-        if (enableNmap) {
-          try {
-            // Timeout del executor por modo, alineado con el tiempo real medido
-            // sobre un host filtrado (cada puerto filtrado añade espera). NO se usa
-            // --host-timeout de nmap (cortaría antes de sondear puertos altos y
-            // daría falso 0): si el escaneo excede este timeout, el executor lo mata
-            // y el resultado se marca "no concluyente" (banner de aviso).
-            const NMAP_TIMEOUT_BY_MODE = { rapido: 90000, standard: 240000, full: 620000, custom: 90000 };
-            const nmapTimeout = NMAP_TIMEOUT_BY_MODE[scanMode] || 240000;
-            const nmapResult = await runNmap({ target, scanMode, customPorts, timeout: nmapTimeout });
-            if (!nmapResult.skipped) {
-              openPorts  = nmapResult.ports;
-              portSource = "nmap";
-              nmapScan   = nmapResult.scan || null;
-              modulesRun.push("nmap");
-              node.log("[audit-network] escáner: nmap");
-            } else {
-              if (nmapResult.inconclusive) {
-                scanInconclusive = true;
-                nmapScan = nmapResult.scan || null;
-              }
-              node.log(`[audit-network] nmap omitido (${nmapResult.reason}), usando fallback nativo`);
-            }
-          } catch (err) {
-            node.warn(`[audit-network] nmap-wrapper falló: ${err.message}`);
+        try {
+          // Timeout del executor por modo, alineado con el tiempo real medido
+          // sobre un host filtrado (cada puerto filtrado añade espera). NO se usa
+          // --host-timeout de nmap (cortaría antes de sondear puertos altos y
+          // daría falso 0): si el escaneo excede este timeout, el executor lo mata
+          // y el resultado se marca "no concluyente" (banner de aviso).
+          const NMAP_TIMEOUT_BY_MODE = { rapido: 90000, standard: 240000, full: 620000, custom: 90000 };
+          const nmapTimeout = NMAP_TIMEOUT_BY_MODE[scanMode] || 240000;
+          const nmapResult = await runNmap({ target, scanMode, customPorts, timeout: nmapTimeout });
+          if (!nmapResult.skipped) {
+            openPorts  = nmapResult.ports;
+            portSource = "nmap";
+            nmapScan   = nmapResult.scan || null;
+            modulesRun.push("nmap");
+            node.log("[audit-network] escáner: nmap");
+          } else if (nmapResult.inconclusive) {
+            // nmap existe pero el escaneo no terminó: lo trata el bloque 4b.
+            scanInconclusive = true;
+            nmapScan = nmapResult.scan || null;
+            portSource = "nmap";
+            modulesRun.push("nmap");
+          } else {
+            nmapMissing = true;
+            node.warn(`[audit-network] nmap no disponible (${nmapResult.reason})`);
           }
+        } catch (err) {
+          nmapError = err.message;
+          node.warn(`[audit-network] nmap-wrapper falló: ${err.message}`);
         }
 
-        if (portSource === "native" && enablePortScan) {
-          try {
-            openPorts = await scanPorts({ timeout: scanTimeout, concurrency, host: target, mode: scanMode, customPorts });
-            modulesRun.push("port-scanner");
-            node.log("[audit-network] escáner: native-fallback");
-          } catch (err) {
-            node.warn(`[audit-network] port-scanner falló: ${err.message}`);
-          }
-        }
-
-        // 3. Enriquecimiento con información de proceso — SOLO para localhost:
-        // lsof/netstat inspeccionan ESTE equipo; en un target remoto atribuirían
-        // el puerto a un proceso local que no tiene nada que ver.
+        // 3. Identificación de proceso, PID y dirección de bind — SIEMPRE activa
+        // para targets locales (ya no es opcional): las reglas de resolución
+        // dependen de estos campos para distinguir un servicio en loopback de uno
+        // expuesto, y un daemon del sistema de una aplicación de terceros.
+        //
+        // Solo para localhost: lsof/netstat inspeccionan ESTE equipo; en un target
+        // remoto atribuirían el puerto a un proceso local que no tiene nada que ver.
         const targetIsLocal = isLocalTarget(target);
         let ports = openPorts;
-        if (enableEnrich && openPorts.length > 0 && targetIsLocal) {
+        if (openPorts.length > 0 && targetIsLocal) {
           try {
             ports = await enrichPorts(openPorts);
             modulesRun.push("service-detect");
@@ -175,8 +205,30 @@ module.exports = function (RED) {
         }
 
         // 4. Normalizar a findings[]
-        const nmapSource = portSource === "nmap" ? "nmap" : "native";
-        const findings   = normalizeNetwork(ports, nmapSource, { firewall, targetIsLocal });
+        const findings = normalizeNetwork(ports, "nmap", { firewall, targetIsLocal });
+
+        // 4a. Nmap ausente o roto: es la única forma de escanear, así que un
+        // resultado vacío NO significa "sin puertos abiertos". Se antepone un
+        // finding con las instrucciones de instalación de ESTA plataforma para
+        // que el dashboard no pinte verde y el usuario sepa qué hacer.
+        if (nmapMissing || nmapError) {
+          findings.unshift(createFinding({
+            id:       "NET-DEP-NMAP",
+            title:    nmapMissing
+              ? "Nmap no está instalado: no se ha podido escanear ningún puerto"
+              : "Nmap falló: no se ha podido completar el escaneo",
+            severity: "high",
+            evidence: nmapMissing
+              ? "audit-network requiere Nmap para descubrir puertos abiertos y no se ha encontrado " +
+                "el comando `nmap` en el PATH del sistema. El resultado vacío NO significa que no " +
+                "haya puertos abiertos: significa que no se ha escaneado nada."
+              : `Nmap está instalado pero la ejecución falló: ${nmapError}. ` +
+                "El resultado vacío NO significa que no haya puertos abiertos.",
+            fix:      nmapInstallInstructions(process.platform),
+            category: "network",
+            source:   "native",
+          }));
+        }
 
         // 4b. Falso "sin riesgo": distinguir escaneo concluyente de host que no
         // respondió. Un resultado de 0 puertos SOLO es tranquilizador si el
@@ -230,7 +282,9 @@ module.exports = function (RED) {
           scanMeta: {
             modulesRun,
             portSource,
-            portsScanned: portSource === "nmap" ? null : Object.keys(PORT_CATALOG).length,
+            // nmap decide el conjunto real de puertos según el modo: el número
+            // exacto lo refleja portRange, no un contador del catálogo.
+            portsScanned: null,
             portsOpen:    openPorts.length,
             durationMs,
             scanMode,
@@ -246,11 +300,9 @@ module.exports = function (RED) {
             portRange:
               nmapScan && nmapScan.portSpec
                 ? nmapScan.portSpec
-                : portSource === "nmap"
-                ? `1-1024 + catálogo (${Object.keys(PORT_CATALOG).length} puertos conocidos)`
                 : scanMode === "custom"
                 ? customPorts.trim()
-                : `catálogo (${Object.keys(PORT_CATALOG).length} puertos conocidos)`,
+                : `1-1024 + catálogo (${Object.keys(PORT_CATALOG).length} puertos conocidos)`,
             customTarget: target !== "127.0.0.1" ? target : null,
           },
           raw: { ports },
@@ -265,9 +317,11 @@ module.exports = function (RED) {
           :                                            "green";
 
         node.status({
-          fill:  statusColor,
-          shape: "dot",
-          text:  scanStatus !== "ok"
+          fill:  nmapMissing ? "red" : statusColor,
+          shape: nmapMissing ? "ring" : "dot",
+          text:  nmapMissing
+            ? "Nmap no instalado (requisito)"
+            : scanStatus !== "ok"
             ? `escaneo no concluyente (${scanStatus})`
             : `${openPorts.length} puertos abiertos · riesgo: ${maxSev}`,
         });

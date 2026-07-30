@@ -315,10 +315,50 @@
                   <span class="finding-expand-icon">{{ openFindings[g.key + '-' + fi] ? '▲' : '▼' }}</span>
                 </div>
                 <div class="finding-detail" :class="{open: openFindings[g.key + '-' + fi]}">
-                  <div class="detail-grid" v-if="f.fix">
+                  <div class="detail-stack" v-if="f.fix">
                     <div class="detail-col">
                       <div class="detail-col-title">Impacto (Evidencia)</div>
                       <pre class="detail-evidence">{{ fmtEvidence(f.evidence) }}</pre>
+
+                      <!-- Tira de metadatos: datos estructurados de Trivy (findings CVE) -->
+                      <div v-if="hasMeta(f)" class="meta-strip">
+                        <div v-if="f.pkg" class="meta-cell">
+                          <span class="meta-label">📦 Paquete</span>
+                          <span class="meta-value">{{ f.pkg }}</span>
+                        </div>
+                        <div v-if="f.installedVersion" class="meta-cell">
+                          <span class="meta-label">🔖 Instalada</span>
+                          <span class="meta-value meta-mono">{{ f.installedVersion }}</span>
+                        </div>
+                        <div v-if="f.fixedVersion" class="meta-cell">
+                          <span class="meta-label">✅ Corregida</span>
+                          <span class="meta-value meta-mono meta-fixed">{{ f.fixedVersion }}</span>
+                        </div>
+                        <div v-else-if="f.pkg" class="meta-cell">
+                          <span class="meta-label">✅ Corregida</span>
+                          <span class="meta-value meta-nofix">sin parche</span>
+                        </div>
+                        <div v-if="f.cvss != null" class="meta-cell">
+                          <span class="meta-label">📊 CVSS</span>
+                          <span class="meta-value">
+                            {{ f.cvss }}
+                            <span class="cvss-chip" :class="sevClass(f.severity)">{{ sevLabel(f.severity) }}</span>
+                          </span>
+                        </div>
+                        <div v-if="f.cveCount > 1" class="meta-cell">
+                          <span class="meta-label">🧩 CVEs</span>
+                          <span class="meta-value">{{ f.cveCount }}</span>
+                        </div>
+                        <div class="meta-cell">
+                          <span class="meta-label">🔎 Fuente</span>
+                          <span class="meta-value">{{ originLabel(f.source) }}</span>
+                        </div>
+                        <div class="meta-cell">
+                          <span class="meta-label">🔗 Advisory</span>
+                          <a v-if="f.primaryUrl" class="meta-value meta-link" :href="f.primaryUrl" target="_blank" rel="noopener">{{ f.advisoryLabel || 'Ver' }} ↗</a>
+                          <span v-else class="meta-value meta-muted" title="Trivy no aporta una URL pública fiable para este hallazgo">no disponible</span>
+                        </div>
+                      </div>
                     </div>
                     <div class="detail-col">
                       <div class="detail-col-title">Pasos de Resolución</div>
@@ -971,6 +1011,12 @@ export default {
 
     sevClass(sev) {
       return (sev || 'info').toLowerCase();
+    },
+
+    // ¿El finding trae metadatos estructurados de Trivy para la tira de detalles?
+    hasMeta(f) {
+      return !!(f.pkg || f.installedVersion || f.fixedVersion ||
+                (f.cvss != null) || f.cveCount || f.primaryUrl);
     },
 
     sevLabel(sev) {
@@ -1720,6 +1766,43 @@ export default {
     grid-template-columns: 1fr 1fr;
     gap: 12px;
   }
+  /* Layout apilado: Impacto+metadatos arriba, Pasos de Resolución debajo */
+  .detail-stack { display: flex; flex-direction: column; gap: 12px; }
+
+  /* ── Tira de metadatos del hallazgo (findings CVE de Trivy) ── */
+  .meta-strip {
+    display: flex; flex-wrap: wrap; gap: 10px 22px;
+    margin-top: 14px; padding-top: 14px;
+    border-top: 1px dashed var(--border);
+  }
+  .meta-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .meta-label {
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+    color: var(--text-secondary);
+  }
+  .meta-value {
+    font-size: 12.5px; font-weight: 600; color: var(--text);
+    display: inline-flex; align-items: center; gap: 6px;
+    word-break: break-word;
+  }
+  .meta-value.meta-mono { font-family: "SF Mono", "Fira Code", monospace; font-weight: 500; font-size: 11.5px; }
+  .meta-fixed { color: #047857; }
+  .meta-nofix { color: #B45309; font-style: italic; font-weight: 500; }
+  .meta-muted { color: #9CA3AF; font-style: italic; font-weight: 500; }
+  .cvss-chip {
+    font-size: 9.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .03em;
+    padding: 1px 6px; border-radius: 999px;
+  }
+  .cvss-chip.critical { background: var(--critical-bg); color: var(--critical); }
+  .cvss-chip.high     { background: var(--high-bg);     color: var(--high); }
+  .cvss-chip.medium   { background: var(--medium-bg);   color: var(--medium); }
+  .cvss-chip.low      { background: var(--low-bg);      color: var(--low); }
+  .cvss-chip.info     { background: var(--info-bg);     color: var(--info); }
+  .meta-link { color: var(--accent, #7C3AED); text-decoration: none; font-weight: 600; }
+  .meta-link:hover { text-decoration: underline; }
+
   .detail-col {
     background: #F8FAFC;
     border-radius: var(--radius-sm);
