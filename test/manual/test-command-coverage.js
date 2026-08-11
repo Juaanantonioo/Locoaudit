@@ -98,23 +98,63 @@ function assertConsistent(label, f) {
 }
 
 // ── Constructores sintéticos ─────────────────────────────────────────────────
-function hostFindingForType(type) {
+/**
+ * Finding de host para un Type de Trivy.
+ *
+ * `installed` decide si el fixture lleva PkgPath, y ESE es el punto:
+ *   - PkgPath presente  → Trivy vio un paquete REAL en disco (origin
+ *     'installed'). Es el único caso en el que un comando de gestor tiene
+ *     sentido, y por tanto el que ejercita la tabla TRIVY_LANG_CMD / los
+ *     gestores de SO. La ruta se elige FUERA de SYSTEM_PREFIXES a propósito:
+ *     el desvío al gestor del sistema por ruta se prueba en test-trivy-coverage.js.
+ *   - PkgPath ausente   → Trivy leyó una ANOTACIÓN en un fichero de bloqueo
+ *     (origin 'declared'): no hay software instalado que actualizar, así que
+ *     NUNCA debe salir un comando, sea cual sea el Type.
+ *
+ * Se conservan las dos variantes con expectativas distintas: son dos contratos
+ * distintos, no dos formas del mismo caso.
+ */
+function hostFindingForType(type, installed = true) {
+  const vuln = {
+    VulnerabilityID: "CVE-2024-9999",
+    PkgName: "demo-pkg",
+    InstalledVersion: "1.0.0",
+    FixedVersion: "1.0.1",
+    Severity: "HIGH",
+    Description: "synthetic vuln for coverage test",
+  };
+  if (installed) vuln.PkgPath = "/home/demo/proyecto/demo-pkg/init.js";
+
   const raw = {
     Results: [{
-      Target: "synthetic-target",
+      Target: installed ? "synthetic-target" : "synthetic-target/poetry.lock",
       Type: type,
-      Vulnerabilities: [{
-        VulnerabilityID: "CVE-2024-9999",
-        PkgName: "demo-pkg",
-        InstalledVersion: "1.0.0",
-        FixedVersion: "1.0.1",
-        Severity: "HIGH",
-        Description: "synthetic vuln for coverage test",
-      }],
+      Vulnerabilities: [vuln],
     }],
   };
   const out = fromTrivyJson(raw, "HOST-CVE", "vulnerability", "trivy", { platform: process.platform });
   return out[0];
+}
+
+/**
+ * Contra-prueba de la variante DECLARADA: ningún Type puede producir comando
+ * cuando el paquete solo está anotado en un lockfile.
+ */
+function testDeclaredNeverCommand() {
+  log("\n── Procedencia 'declared' (sin PkgPath) → nunca hay comando ──────────");
+  const types = [...Object.keys(TRIVY_LANG_CMD), ...TRIVY_OS_TYPES].slice(0, 12);
+  for (const type of types) {
+    const f = hostFindingForType(type, false);
+    if (f.origin !== "declared") {
+      fail(`Type "${type}" declarado: origin esperado 'declared', obtenido '${f.origin}'`);
+      continue;
+    }
+    if (f.isCommand !== false || f.command !== null) {
+      fail(`Type "${type}" declarado: NO debería haber comando (isCommand=${f.isCommand}, command=${f.command})`);
+      continue;
+    }
+    ok(`Type "${type}" declarado: sin comando (origin=declared)`);
+  }
 }
 
 // ── Bloque 1: gestores de lenguaje con comando fiable (TRIVY_LANG_CMD) ────────
@@ -213,6 +253,7 @@ function main() {
   testLangCmd();
   testOsTypes();
   testLangManual();
+  testDeclaredNeverCommand();
   testLynisPkgs();
 
   const argv = process.argv.slice(2);

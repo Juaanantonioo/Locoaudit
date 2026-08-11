@@ -11,6 +11,8 @@
             enableSw:     { value: true },
             enableLynis:  { value: true },
             enableTrivy:  { value: true },
+            trivyTarget:  { value: "" },
+            trivySystemPkgs: { value: false },
             securityEvents:       { value: false },
             securityEventsWindow: { value: 24, validate: function (v) {
                 const n = parseInt(v, 10);
@@ -121,7 +123,33 @@
                         <span style="color: #e67e22; font-size: 0.8em; font-weight: normal; margin-left: 4px;">◌ opcional · puede tardar</span>
                     </label>
                     <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
-                        Compara los paquetes instalados en el sistema contra bases de datos de vulnerabilidades conocidas (CVE). Detecta paquetes con fallos de seguridad sin parchear. Requiere tener <strong>Trivy</strong> instalado; si lo activas y no está disponible, el nodo fallará con un error.
+                        Compara los paquetes de tus proyectos contra bases de datos de vulnerabilidades conocidas (CVE). Detecta dependencias con fallos de seguridad sin parchear. Requiere tener <strong>Trivy</strong> instalado; si lo activas y no está disponible, el nodo fallará con un error.
+                    </div>
+
+                    <div style="margin-top: 8px;">
+                        <label for="node-input-trivyTarget" style="width: auto; font-weight: 600; margin: 0; font-size: 0.85em;">
+                            Carpeta a auditar
+                        </label>
+                        <input type="text" id="node-input-trivyTarget" placeholder="Vacío = carpeta personal del usuario (home)" style="width: 100%; margin-top: 3px;">
+                        <div style="color: #555; font-size: 0.8em; margin-top: 3px; line-height: 1.4;">
+                            Por defecto se audita tu carpeta personal. Puedes apuntar a una carpeta concreta de proyectos (admite <code>~/ruta</code>).
+                            Se excluyen cachés (<code>.cache</code>, <code>.npm</code>, <code>.cargo/registry</code>, <code>go/pkg/mod</code>) y la papelera; <code>node_modules</code> SÍ se analiza.
+                        </div>
+                    </div>
+
+                    <div style="display: flex; align-items: flex-start; gap: 8px; margin-top: 8px;">
+                        <input type="checkbox" id="node-input-trivySystemPkgs" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                        <div>
+                            <label for="node-input-trivySystemPkgs" style="width: auto; font-weight: 600; margin: 0; cursor: pointer; font-size: 0.85em;">
+                                Auditar también los paquetes del sistema
+                                <span style="color: #e67e22; font-size: 0.9em; font-weight: normal; margin-left: 4px;">◌ requiere privilegios · lento</span>
+                            </label>
+                            <div style="color: #555; font-size: 0.8em; margin-top: 3px; line-height: 1.4;">
+                                Escanea el sistema de ficheros completo (<code>trivy rootfs /</code>) en lugar de tu carpeta personal.
+                                Necesita permisos de administrador y puede tardar varios minutos.
+                                En Arch y derivadas (CachyOS, Manjaro, EndeavourOS) se omite: Trivy no soporta pacman y no produciría ningún hallazgo.
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
