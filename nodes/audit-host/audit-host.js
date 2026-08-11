@@ -61,7 +61,14 @@ module.exports = function (RED) {
             enableDisk ? getDiskInfo() : Promise.resolve(null),
             enableSw ? getSwInventory() : Promise.resolve(null),
             enableLynis ? runLynis() : Promise.resolve({ skipped: true, reason: "disabled" }),
-            enableTrivy ? runTrivyFs() : Promise.resolve({ skipped: true, reason: "disabled" }),
+            enableTrivy
+              ? runTrivyFs({
+                  // Vacío ⇒ el módulo resuelve el HOME del usuario que audita.
+                  target: config.trivyTarget,
+                  // Paquetes del sistema (trivy rootfs): opt-in, requiere privilegios.
+                  systemPackages: config.trivySystemPkgs === true,
+                })
+              : Promise.resolve({ skipped: true, reason: "disabled" }),
             enableSecEvents ? runSecurityEvents(secWindow) : Promise.resolve(null),
           ]);
 
@@ -83,11 +90,19 @@ module.exports = function (RED) {
           return;
         }
         if (enableTrivy && trivy && trivy.skipped) {
-          node.status({ fill: "red", shape: "ring", text: "Trivy no instalado" });
-          done(new Error(
-            "Trivy está activado en la configuración del nodo pero no se encontró instalado en el sistema. " +
-            "Instala Trivy (https://trivy.dev/) o desactiva el módulo en las opciones del nodo."
-          ));
+          // "No instalado" y "no se pudo escanear" tienen soluciones distintas:
+          // confundirlos mandaba al usuario a reinstalar una herramienta que ya
+          // tiene. El motivo real viene en trivy.reason.
+          if (trivy.reason === "trivy not installed") {
+            node.status({ fill: "red", shape: "ring", text: "Trivy no instalado" });
+            done(new Error(
+              "Trivy está activado en la configuración del nodo pero no se encontró instalado en el sistema. " +
+              "Instala Trivy (https://trivy.dev/) o desactiva el módulo en las opciones del nodo."
+            ));
+            return;
+          }
+          node.status({ fill: "red", shape: "ring", text: trivy.walkError ? "Carpeta inaccesible" : "Trivy falló" });
+          done(new Error(`Trivy no pudo completar el escaneo. ${trivy.reason}`));
           return;
         }
 
