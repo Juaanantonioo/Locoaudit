@@ -205,7 +205,7 @@ module.exports = function (RED) {
         }
 
         // 4. Normalizar a findings[]
-        const findings = normalizeNetwork(ports, "nmap", { firewall, targetIsLocal });
+        const findings = normalizeNetwork(ports, "nmap", { firewall, targetIsLocal, target });
 
         // 4a. Nmap ausente o roto: es la única forma de escanear, así que un
         // resultado vacío NO significa "sin puertos abiertos". Se antepone un
