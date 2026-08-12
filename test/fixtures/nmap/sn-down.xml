@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///opt/homebrew/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.99 scan initiated Wed Aug 12 17:01:32 2026 as: nmap -sn -n -PE -PS22,80,443,8080 -&#45;max-retries 1 -&#45;host-timeout 8s -oX test/fixtures/nmap/sn-down.xml 10.0.0.5 -->
+<nmaprun scanner="nmap" args="nmap -sn -n -PE -PS22,80,443,8080 -&#45;max-retries 1 -&#45;host-timeout 8s -oX test/fixtures/nmap/sn-down.xml 10.0.0.5" start="1786546892" startstr="Wed Aug 12 17:01:32 2026" version="7.99" xmloutputversion="1.05">
+<verbose level="0"/>
+<debugging level="0"/>
+<runstats><finished time="1786546895" timestr="Wed Aug 12 17:01:35 2026" summary="Nmap done at Wed Aug 12 17:01:35 2026; 1 IP address (0 hosts up) scanned in 3.02 seconds" elapsed="3.02" exit="success"/><hosts up="0" down="1" total="1"/>
+</runstats>
+</nmaprun>

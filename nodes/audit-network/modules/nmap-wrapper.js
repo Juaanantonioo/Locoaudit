@@ -24,11 +24,16 @@
  *   si nmap no está instalado → { skipped: true, reason: "nmap not installed" }
  *   El llamante decide qué hacer con ese caso (aquí: finding de dependencia).
  *
- * Comando: nmap -sV -T4 --open -oX - <target>
+ * Comando: nmap -sV -T4 -Pn --max-retries 2 [-e iface] -p <spec> -oX - <target>
  *   -sV      detecta versiones de servicios (interroga el banner del proceso)
  *   -T4      timing agresivo — adecuado para localhost, no recomendado en red WAN
- *   --open   filtra solo puertos abiertos en la salida
+ *   -Pn      omite el descubrimiento: NO usar su "host up" para nada, siempre
+ *            dice que sí (ver host-discovery.js, que es quien lo decide)
  *   -oX -    salida XML por stdout (sin fichero temporal)
+ *
+ * NO lleva --open: coste medido 0 s y a cambio conserva <extraports>/<extrareasons>
+ * (puertos filtrados y su motivo). El filtrado a puertos abiertos lo hace
+ * parseNmapXml(), que descarta todo state != "open".
  *
  * Exporta:
  *   runNmap(options?) → Promise<NmapResult>
@@ -114,7 +119,8 @@ function parseNmapXml(xml) {
     const protocol = attrValue(portTag, "protocol") || "tcp";
     if (isNaN(port)) continue;
 
-    // <state state="open" .../> — --open ya filtra en nmap, pero verificamos
+    // <state state="open" .../> — al no usar --open, ESTE es el único filtro:
+    // descarta closed/filtered, que ahora sí llegan en el XML.
     const stateMatch = block.match(/<state\s([^/]*)\/?>/);
     const state      = stateMatch ? attrValue(stateMatch[1], "state") : "open";
     if (state !== "open") continue;
@@ -205,7 +211,15 @@ async function runNmap(options = {}) {
   const ifaceFlag = iface ? `-e ${iface}` : "";
   // --max-retries 2: acota los reintentos por puerto filtrado (por defecto son
   // más), reduciendo el tiempo sin perder detección de puertos abiertos.
-  const cmd = `nmap -sV -T4 --open -Pn --max-retries 2 ${ifaceFlag} -p ${portSpec} -oX - ${target}`.trim();
+  //
+  // SIN --open (medido): --open es un filtro de SALIDA, no cambia el sondeo —
+  // -p 1-200 contra un host muerto tarda 45,92 s con él y 45,95 s sin él, y el
+  // XML solo crece ~300 bytes porque nmap colapsa los puertos no abiertos en un
+  // único <extraports count="N"><extrareasons reason="…">. A cambio recupera dos
+  // señales que --open borraba: el recuento real de puertos filtrados (evidencia
+  // de cortafuegos) y el motivo por puerto (host-unreach vs no-response). Con
+  // --open, un host sin ningún puerto abierto no emitía NI el bloque <host>.
+  const cmd = `nmap -sV -T4 -Pn --max-retries 2 ${ifaceFlag} -p ${portSpec} -oX - ${target}`.trim();
 
   let stdout;
   let inconclusive = false;
@@ -223,17 +237,24 @@ async function runNmap(options = {}) {
         skipped: true,
         inconclusive: true,
         reason: `escaneo no concluyente: ${(err.stderr || err.message || "timeout o proceso interrumpido").trim()}`,
-        scan: { target, portSpec, scanMode, hostUp: null, completed: false },
+        scan: { target, portSpec, scanMode, completed: false, filteredCount: 0, filteredReason: null },
       };
     }
   }
 
-  // Estado del escaneo: ¿respondió el host al descubrimiento?
-  const hostsMatch = stdout.match(/<hosts\s+up="(\d+)"\s+down="(\d+)"/);
-  const hostUp = hostsMatch ? parseInt(hostsMatch[1], 10) > 0 : null;
+  // NO se deriva aquí ningún "hostUp": con -Pn nmap devuelve SIEMPRE
+  // <hosts up="1" down="0"> y <status state="up" reason="user-set">, o sea que
+  // no ha comprobado nada. Quien decide si el objetivo existe es
+  // host-discovery.js (nmap -sn), única fuente de verdad de ese dato.
   const completed = stdout.includes("<runstats") || stdout.includes("/finished");
+  // Recuento de puertos filtrados: real desde que se quitó --open (antes este
+  // bloque nunca aparecía en la salida y filteredCount valía siempre 0).
   const filteredMatch = stdout.match(/<extraports\s+state="filtered"\s+count="(\d+)"/);
   const filteredCount = filteredMatch ? parseInt(filteredMatch[1], 10) : 0;
+  // Motivo dominante de los puertos no abiertos (no-response, host-unreach,
+  // net-unreach, conn-refused…). Solo afina el mensaje: no decide nada.
+  const reasonMatch = stdout.match(/<extrareasons\s+reason="([^"]*)"/);
+  const filteredReason = reasonMatch ? reasonMatch[1] : null;
 
   const parsed = parseNmapXml(stdout);
   const ports  = parsed.map(applyMeta);
@@ -242,8 +263,12 @@ async function runNmap(options = {}) {
     skipped: false,
     ports,
     inconclusive,
-    scan: { target, portSpec, scanMode, hostUp, completed, filteredCount },
+    scan: { target, portSpec, scanMode, completed, filteredCount, filteredReason },
   };
 }
 
-module.exports = { runNmap };
+// findInterfaceForTarget se exporta para que host-discovery.js use EXACTAMENTE
+// la misma interfaz en el descubrimiento que la que usará el escaneo: si -sn
+// saliera por otra interfaz, podría decir "no alcanzable" sobre una ruta que el
+// escaneo sí tiene (o al revés).
+module.exports = { runNmap, parseNmapXml, findInterfaceForTarget };

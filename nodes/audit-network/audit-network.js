@@ -15,7 +15,10 @@
  *       portSource: "nmap" | "none",
  *       portsScanned: number,
  *       portsOpen: number,
- *       durationMs: number
+ *       durationMs: number,
+ *       targetState: "reachable" | "unreachable" | "unknown",  // host-discovery.js
+ *       discovery: { method, reason, durationMs, cmd, detail }, // host-discovery.js
+ *       scanStatus: "ok" | "inconclusive" | "not-run"           // nmap-wrapper.js
  *     },
  *     raw: { ports },
  *     timestamp: string (ISO 8601)
@@ -26,6 +29,8 @@
  *   customPorts     string   (default "")           — lista de puertos para scanMode "custom"
  *   scanTarget      string   (default "localhost")  — "localhost" | "custom"
  *   customTarget    string   (default "127.0.0.1")  — IP para nmap cuando scanTarget es "custom"
+ *   forceScan       boolean  (default false)        — escanear aunque el descubrimiento
+ *                                                     diga que el equipo no responde
  *
  * Nmap es REQUISITO del nodo: no hay escáner alternativo. El antiguo escáner
  * nativo (port-scanner.js) se eliminó, y con él sus opciones de la UI (timeout
@@ -36,6 +41,11 @@
  * reglas de resolución (localhost vs expuesto, servicio del sistema vs terceros).
  *
  * Lógica de escaneo:
+ *   0. Si el objetivo es remoto, descubrimiento previo con host-discovery.js
+ *      (nmap -sn, ~3 s). Si el equipo NO responde no se escanea: se emite
+ *      NET-HOST-UNREACHABLE y targetState "unreachable". Evita el falso verde
+ *      ("Sin puertos expuestos · SIN RIESGO" sobre una IP que no existe) y evita
+ *      esperar 212 s a un escaneo que no puede encontrar nada.
  *   1. Si scanMode === "custom" y customPorts vacío → finding NET-CFG-ERR y termina.
  *   2. commandExists("nmap") vía runNmap(): si no está instalado → finding
  *      NET-DEP-NMAP con las instrucciones de instalación de la plataforma.
@@ -46,6 +56,7 @@
 const os = require("os");
 const { PORT_CATALOG }            = require("./modules/port-catalog");
 const { runNmap }                 = require("./modules/nmap-wrapper");
+const { checkHostReachable, deriveTargetState } = require("./modules/host-discovery");
 const { enrichPorts, detectFirewall } = require("./modules/service-detect");
 const { isLocalTarget }           = require("./modules/network-utils");
 const { normalizeNetwork }        = require("../../lib/normalizer");
@@ -103,6 +114,9 @@ module.exports = function (RED) {
       const target         = config.scanTarget === "custom" && config.customTarget
         ? config.customTarget
         : "127.0.0.1";
+      // Escanea aunque el descubrimiento diga que el host no responde. Para el
+      // caso legítimo: equipo encendido que filtra ICMP y las sondas TCP del -sn.
+      const forceScan      = config.forceScan === true || config.forceScan === "true";
 
       const startTime = Date.now();
 
@@ -138,8 +152,9 @@ module.exports = function (RED) {
         let openPorts  = [];
         let portSource = "none";
         const modulesRun = [];
-        // Estado del escaneo nmap: distingue "host up + 0 puertos" (verde legítimo)
-        // de "escaneo no concluyente / host no respondió" (advertencia, no verde).
+        // Estado del escaneo nmap: distingue "escaneo completo" de "escaneo no
+        // concluyente" (timeout / proceso cortado). Ya NO decide si el host
+        // existe: de eso se encarga el descubrimiento previo.
         let nmapScan = null;
         let scanInconclusive = false;
         // Nmap ausente: no es un error del nodo, es una dependencia del SO que
@@ -147,34 +162,67 @@ module.exports = function (RED) {
         let nmapMissing = false;
         let nmapError   = null;
 
-        try {
-          // Timeout del executor por modo, alineado con el tiempo real medido
-          // sobre un host filtrado (cada puerto filtrado añade espera). NO se usa
-          // --host-timeout de nmap (cortaría antes de sondear puertos altos y
-          // daría falso 0): si el escaneo excede este timeout, el executor lo mata
-          // y el resultado se marca "no concluyente" (banner de aviso).
-          const NMAP_TIMEOUT_BY_MODE = { rapido: 90000, standard: 240000, full: 620000, custom: 90000 };
-          const nmapTimeout = NMAP_TIMEOUT_BY_MODE[scanMode] || 240000;
-          const nmapResult = await runNmap({ target, scanMode, customPorts, timeout: nmapTimeout });
-          if (!nmapResult.skipped) {
-            openPorts  = nmapResult.ports;
-            portSource = "nmap";
-            nmapScan   = nmapResult.scan || null;
-            modulesRun.push("nmap");
-            node.log("[audit-network] escáner: nmap");
-          } else if (nmapResult.inconclusive) {
-            // nmap existe pero el escaneo no terminó: lo trata el bloque 4b.
-            scanInconclusive = true;
-            nmapScan = nmapResult.scan || null;
-            portSource = "nmap";
-            modulesRun.push("nmap");
-          } else {
-            nmapMissing = true;
-            node.warn(`[audit-network] nmap no disponible (${nmapResult.reason})`);
+        // 2a. Descubrimiento previo — ÚNICA fuente de verdad sobre si el objetivo
+        // existe. El escaneo usa -Pn y por tanto no puede responder a esa pregunta:
+        // devuelve siempre "host up (user-set)". Sin esta comprobación, una IP
+        // inexistente producía 0 puertos abiertos y el dashboard lo pintaba de
+        // verde ("SIN RIESGO"), comunicando seguridad donde solo hay ausencia
+        // de host. Además evita esperar: 3 s de -sn frente a los 212 s que tarda
+        // el escaneo de 1024 puertos contra una IP muerta.
+        //
+        // Para localhost no se ejecuta: este equipo siempre se alcanza a sí mismo.
+        const targetIsLocal = isLocalTarget(target);
+        node.status({ fill: "blue", shape: "dot", text: targetIsLocal ? "Escaneando..." : "Comprobando el equipo..." });
+        const discovery = await checkHostReachable({ target, isLocal: targetIsLocal });
+        if (discovery.method === "nmap-sn") {
+          modulesRun.push("host-discovery");
+          node.log(`[audit-network] descubrimiento: ${discovery.detail}`);
+        }
+
+        // targetState: 'reachable' | 'unreachable' | 'unknown'.
+        // Deriva SOLO del descubrimiento. 'unknown' = no se pudo determinar →
+        // se escanea igual y se avisa (un falso "no alcanzable" que cancela la
+        // auditoría es peor que un escaneo de más).
+        const targetState = deriveTargetState(discovery);
+
+        // Host no alcanzable y sin forzar → NO se escanea. No hay nada que
+        // auditar: cero hallazgos aquí significa "no analizado", no "limpio".
+        const skipScan = targetState === "unreachable" && !forceScan;
+
+        if (skipScan) {
+          node.log(`[audit-network] ${target} no alcanzable: se omite el escaneo de puertos`);
+          portSource = "none";
+        } else {
+          try {
+            node.status({ fill: "blue", shape: "dot", text: "Escaneando..." });
+            // Timeout del executor por modo, alineado con el tiempo real medido
+            // sobre un host filtrado (cada puerto filtrado añade espera). NO se usa
+            // --host-timeout de nmap (cortaría antes de sondear puertos altos y
+            // daría falso 0): si el escaneo excede este timeout, el executor lo mata
+            // y el resultado se marca "no concluyente" (banner de aviso).
+            const NMAP_TIMEOUT_BY_MODE = { rapido: 90000, standard: 240000, full: 620000, custom: 90000 };
+            const nmapTimeout = NMAP_TIMEOUT_BY_MODE[scanMode] || 240000;
+            const nmapResult = await runNmap({ target, scanMode, customPorts, timeout: nmapTimeout });
+            if (!nmapResult.skipped) {
+              openPorts  = nmapResult.ports;
+              portSource = "nmap";
+              nmapScan   = nmapResult.scan || null;
+              modulesRun.push("nmap");
+              node.log("[audit-network] escáner: nmap");
+            } else if (nmapResult.inconclusive) {
+              // nmap existe pero el escaneo no terminó: lo trata el bloque 4b.
+              scanInconclusive = true;
+              nmapScan = nmapResult.scan || null;
+              portSource = "nmap";
+              modulesRun.push("nmap");
+            } else {
+              nmapMissing = true;
+              node.warn(`[audit-network] nmap no disponible (${nmapResult.reason})`);
+            }
+          } catch (err) {
+            nmapError = err.message;
+            node.warn(`[audit-network] nmap-wrapper falló: ${err.message}`);
           }
-        } catch (err) {
-          nmapError = err.message;
-          node.warn(`[audit-network] nmap-wrapper falló: ${err.message}`);
         }
 
         // 3. Identificación de proceso, PID y dirección de bind — SIEMPRE activa
@@ -184,7 +232,7 @@ module.exports = function (RED) {
         //
         // Solo para localhost: lsof/netstat inspeccionan ESTE equipo; en un target
         // remoto atribuirían el puerto a un proceso local que no tiene nada que ver.
-        const targetIsLocal = isLocalTarget(target);
+        // (targetIsLocal se calcula arriba, antes del descubrimiento.)
         let ports = openPorts;
         if (openPorts.length > 0 && targetIsLocal) {
           try {
@@ -230,16 +278,44 @@ module.exports = function (RED) {
           }));
         }
 
-        // 4b. Falso "sin riesgo": distinguir escaneo concluyente de host que no
-        // respondió. Un resultado de 0 puertos SOLO es tranquilizador si el
-        // escaneo terminó y el host estaba activo. Casos de advertencia:
-        //   - nmap no concluyó (timeout / proceso interrumpido)
-        //   - nmap terminó pero el host no respondió al descubrimiento (down)
-        // En ambos, se antepone un finding "medium" para que el dashboard NO
-        // pinte verde "SIN RIESGO".
-        let scanStatus = "ok";
-        const isRemote = !targetIsLocal;
-        if (scanInconclusive) {
+        // 4b. Falso "sin riesgo": un resultado de 0 puertos SOLO es tranquilizador
+        // si el objetivo existe Y el escaneo terminó. Son dos preguntas distintas
+        // y cada una tiene su campo y su fuente:
+        //   targetState (host-discovery)  → ¿existe el objetivo?
+        //   scanStatus  (nmap-wrapper)    → ¿terminó el escaneo?
+        // 'not-run' = no se escaneó porque el host no estaba accesible.
+        let scanStatus = skipScan ? "not-run" : "ok";
+
+        if (targetState === "unreachable") {
+          // NO es un riesgo: es ausencia de auditoría. Por eso severity 'info' —
+          // 'medium' pintaría "Riesgo Moderado", tan falso como el verde. El
+          // estado neutro del dashboard lo decide targetState, no la severidad.
+          findings.unshift(createFinding({
+            id:       "NET-HOST-UNREACHABLE",
+            title:    `No se ha podido contactar con ${target}: la auditoría no se ha realizado`,
+            severity: "info",
+            evidence: `${discovery.detail} ` +
+                      (skipScan
+                        ? "No se ha escaneado ningún puerto: la ausencia de hallazgos NO significa " +
+                          "que el equipo esté seguro, significa que no se ha podido analizar."
+                        : "Se ha escaneado de todas formas porque está activada la opción " +
+                          "\"Escanear aunque el equipo no responda\", pero el resultado puede " +
+                          "estar incompleto."),
+            fix:      "1. Comprueba que el equipo está encendido y conectado a la red.\n" +
+                      `2. Verifica que la dirección IP es correcta: ${target}\n` +
+                      "3. Si usas VPN, confirma que el túnel está activo y enruta esa subred.\n" +
+                      `4. Prueba a contactarlo desde una terminal: ping ${target}\n` +
+                      (skipScan
+                        ? "5. Si sabes que está encendido y solo filtra el descubrimiento, activa " +
+                          "\"Escanear aunque el equipo no responda\" en el nodo audit-network."
+                        : "5. Si el equipo está encendido, revisa su cortafuegos: está filtrando " +
+                          "tanto el descubrimiento como el escaneo."),
+            category: "network",
+            source:   "nmap",
+            target,
+            isLocalTarget: targetIsLocal,
+          }));
+        } else if (scanInconclusive) {
           scanStatus = "inconclusive";
           findings.unshift(createFinding({
             id:       "NET-SCAN-WARN",
@@ -252,15 +328,18 @@ module.exports = function (RED) {
             category: "network",
             source:   "nmap",
           }));
-        } else if (portSource === "nmap" && nmapScan && nmapScan.hostUp === false && isRemote) {
-          scanStatus = "host-down";
+        } else if (targetState === "unknown" && !targetIsLocal && !nmapMissing) {
+          // No se pudo determinar si el objetivo existe (nmap ausente, timeout del
+          // descubrimiento, XML ilegible). Se ha escaneado igual — mejor escanear
+          // de más que cancelar por una duda — pero el resultado no puede pintarse
+          // de verde sin avisar.
           findings.unshift(createFinding({
             id:       "NET-SCAN-WARN",
-            title:    "El host no respondió al descubrimiento (puede estar protegido por firewall)",
+            title:    "No se ha podido comprobar si el equipo está accesible",
             severity: "medium",
-            evidence: `${target} no respondió. No se detectaron puertos, pero el resultado no es concluyente.`,
-            fix:      "Si sabes que el host está encendido, está filtrando el descubrimiento. " +
-                      "El nodo ya usa -Pn; prueba el modo Completo para un rango de puertos mayor.",
+            evidence: `${discovery.detail} El escaneo se ha realizado de todas formas, ` +
+                      "pero si el equipo no existe el resultado de 0 puertos no significa nada.",
+            fix:      `Comprueba manualmente que el equipo responde: ping ${target}`,
             category: "network",
             source:   "nmap",
           }));
@@ -288,11 +367,27 @@ module.exports = function (RED) {
             portsOpen:    openPorts.length,
             durationMs,
             scanMode,
-            // Estado del escaneo: 'ok' | 'inconclusive' | 'host-down'.
-            // El dashboard usa esto para NO pintar verde cuando no es concluyente.
+            // ── QUÉ ES EL OBJETIVO — fuente única: host-discovery.js (nmap -sn).
+            // 'reachable' | 'unreachable' | 'unknown'. El dashboard decide con
+            // ESTE campo si puede pintar verde: 0 puertos solo tranquiliza si el
+            // equipo existe. NO se deriva del escaneo, que usa -Pn y siempre
+            // responde "host up".
+            targetState,
+            discovery: {
+              method:     discovery.method,
+              reason:     discovery.reason,
+              durationMs: discovery.durationMs,
+              cmd:        discovery.cmd,
+              detail:     discovery.detail,
+            },
+            forceScan,
+            // ── QUÉ HIZO EL ESCANEO — fuente única: nmap-wrapper.js.
+            // 'ok' | 'inconclusive' | 'not-run' ('not-run' = host no accesible).
             scanStatus,
-            hostUp: nmapScan ? nmapScan.hostUp : null,
-            filteredPorts: nmapScan ? nmapScan.filteredCount : null,
+            // Real desde que se quitó --open (antes siempre 0: el bloque
+            // <extraports> no llegaba a emitirse).
+            filteredPorts:  nmapScan ? nmapScan.filteredCount  : null,
+            filteredReason: nmapScan ? nmapScan.filteredReason : null,
             // Transparencia del escaneo: target y rango exactos para que el
             // resultado sea reproducible (un `nmap localhost` manual escanea
             // otro conjunto de puertos — top-1000 de nmap — y puede diferir).
@@ -316,13 +411,22 @@ module.exports = function (RED) {
           : maxSev === "medium"                      ? "yellow"
           :                                            "green";
 
+        // El estado del nodo no puede decir "0 puertos · riesgo: info" cuando no
+        // se ha auditado nada: sería el mismo falso verde del dashboard.
         node.status({
-          fill:  nmapMissing ? "red" : statusColor,
-          shape: nmapMissing ? "ring" : "dot",
+          fill:  nmapMissing ? "red"
+               : targetState === "unreachable" ? "grey"
+               : targetState === "unknown"     ? "yellow"
+               : statusColor,
+          shape: nmapMissing || targetState !== "reachable" ? "ring" : "dot",
           text:  nmapMissing
             ? "Nmap no instalado (requisito)"
-            : scanStatus !== "ok"
-            ? `escaneo no concluyente (${scanStatus})`
+            : targetState === "unreachable"
+            ? `${target} no accesible — sin auditar`
+            : scanStatus === "inconclusive"
+            ? "escaneo no concluyente"
+            : targetState === "unknown"
+            ? `${openPorts.length} puertos · accesibilidad sin confirmar`
             : `${openPorts.length} puertos abiertos · riesgo: ${maxSev}`,
         });
 

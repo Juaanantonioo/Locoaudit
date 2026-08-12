@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///opt/homebrew/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.99 scan initiated Wed Aug 12 17:02:06 2026 as: nmap -sV -T4 -Pn -&#45;max-retries 2 -p 9,13,37,79 -oX scan-no-ports.xml 127.0.0.1 -->
+<nmaprun scanner="nmap" args="nmap -sV -T4 -Pn -&#45;max-retries 2 -p 9,13,37,79 -oX scan-no-ports.xml 127.0.0.1" start="1786546926" startstr="Wed Aug 12 17:02:06 2026" version="7.99" xmloutputversion="1.05">
+<scaninfo type="connect" protocol="tcp" numservices="4" services="9,13,37,79"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<host starttime="1786546926" endtime="1786546926"><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="127.0.0.1" addrtype="ipv4"/>
+<hostnames>
+<hostname name="localhost" type="PTR"/>
+</hostnames>
+<ports><port protocol="tcp" portid="9"><state state="closed" reason="conn-refused" reason_ttl="0"/><service name="discard" method="table" conf="3"/></port>
+<port protocol="tcp" portid="13"><state state="closed" reason="conn-refused" reason_ttl="0"/><service name="daytime" method="table" conf="3"/></port>
+<port protocol="tcp" portid="37"><state state="closed" reason="conn-refused" reason_ttl="0"/><service name="time" method="table" conf="3"/></port>
+<port protocol="tcp" portid="79"><state state="closed" reason="conn-refused" reason_ttl="0"/><service name="finger" method="table" conf="3"/></port>
+</ports>
+<times srtt="89" rttvar="2111" to="100000"/>
+</host>
+<runstats><finished time="1786546926" timestr="Wed Aug 12 17:02:06 2026" summary="Nmap done at Wed Aug 12 17:02:06 2026; 1 IP address (1 host up) scanned in 0.13 seconds" elapsed="0.13" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>

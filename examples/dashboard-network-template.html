@@ -49,8 +49,10 @@
               <span>{{ riskLabel }}</span>
             </div>
             <div class="port-count-block">
-              <div class="port-count-num" :class="{ 'all-info': allInfo }">{{ donutTotal }}</div>
-              <div class="port-count-label">puertos abiertos</div>
+              <!-- Si el objetivo no responde no hay dato que enseñar: un 0 grande
+                   se lee como "todo correcto" y eso es justo lo que NO ocurrió. -->
+              <div class="port-count-num" :class="{ 'all-info': allInfo && !notAudited, 'no-data': notAudited }">{{ portCountLabel }}</div>
+              <div class="port-count-label">{{ notAudited ? 'sin datos' : 'puertos abiertos' }}</div>
             </div>
           </div>
         </div>
@@ -70,12 +72,12 @@
         </div>
       </header>
 
-      <!-- ══ AVISO: escaneo no concluyente ══ -->
-      <div v-if="scanWarn" class="scan-warn">
-        <span class="scan-warn-ico">⚠️</span>
+      <!-- ══ AVISO: escaneo no concluyente / objetivo inalcanzable ══ -->
+      <div v-if="scanWarn" class="scan-warn" :class="{ 'scan-warn--neutral': scanWarn.neutral }">
+        <span class="scan-warn-ico">{{ scanWarn.neutral ? '📡' : '⚠️' }}</span>
         <div>
           <div class="scan-warn-title">{{ scanWarn.title }}</div>
-          <div class="scan-warn-desc">{{ scanWarn.desc }}</div>
+          <div class="scan-warn-desc" style="white-space:pre-line">{{ scanWarn.desc }}</div>
         </div>
       </div>
 
@@ -85,6 +87,9 @@
         <!-- 1 · MAPA DE PUERTOS -->
         <section>
           <div class="section-title">Mapa de puertos</div>
+          <!-- 0 puertos NO significa lo mismo en los dos casos:
+               objetivo alcanzable sin puertos = resultado bueno (verde);
+               objetivo que no responde        = no hubo auditoría (neutro). -->
           <div class="port-grid" v-if="sortedPorts.length > 0">
             <div v-for="(p, i) in visiblePorts" :key="'pg-'+i"
                  class="port-card" :class="'sev-' + (p.severity || 'info').toLowerCase()">
@@ -107,6 +112,14 @@
                   <code>{{ p.protocol }}</code>
                 </div>
               </div>
+            </div>
+          </div>
+          <div class="empty-state" v-else-if="notAudited">
+            <div class="check">📡</div>
+            <div class="empty-title empty-title--neutral">Auditoría no realizada</div>
+            <div class="empty-sub">
+              No se ha podido contactar con <strong>{{ targetLabel || 'el objetivo' }}</strong>, así que no se ha escaneado ningún puerto.<br>
+              Esto <strong>no</strong> quiere decir que el equipo esté seguro: quiere decir que no se ha podido comprobar.
             </div>
           </div>
           <div class="empty-state" v-else>
@@ -285,8 +298,8 @@
           </div>
         </section>
 
-        <!-- Sin hallazgos -->
-        <div v-if="sortedPorts.length === 0 && sortedFindings.length === 0"
+        <!-- Sin hallazgos (nunca si no se ha auditado: eso no es un "todo bien") -->
+        <div v-if="sortedPorts.length === 0 && sortedFindings.length === 0 && !notAudited"
              class="lca-state-center" style="padding:40px 0">
           <div class="lca-state-ico">✅</div>
           <h3 class="lca-state-title">¡Sin hallazgos!</h3>
@@ -346,11 +359,26 @@ export default {
       return c.critical === 0 && c.high === 0 && c.medium === 0 && c.low === 0;
     },
 
+    // ── Estado del objetivo ──────────────────────────────────────────────────
+    // Lo decide host-discovery.js (nmap -sn), NUNCA la severidad ni el número
+    // de puertos: 0 puertos en un equipo que no responde no es "sin riesgo",
+    // es "no se ha auditado". Payloads viejos no traen el campo → 'reachable'.
+    targetState() {
+      var meta = this.auditData && this.auditData.scanMeta;
+      return (meta && meta.targetState) || 'reachable';
+    },
+
+    // Único interruptor del modo neutro en toda la vista.
+    notAudited() {
+      return this.targetState === 'unreachable';
+    },
+
     riskClass() {
-      return this.maxSev;
+      return this.notAudited ? 'not-audited' : this.maxSev;
     },
 
     riskLabel() {
+      if (this.notAudited) return 'No auditado';
       var MAP = {
         critical: 'Riesgo Crítico', high: 'Riesgo Alto',
         medium: 'Riesgo Moderado', low: 'Riesgo Bajo', info: 'Sin Riesgo'
@@ -358,9 +386,34 @@ export default {
       return MAP[this.maxSev] || this.maxSev;
     },
 
+    portCountLabel() {
+      return this.notAudited ? '—' : this.donutTotal;
+    },
+
     scanWarn() {
       var meta = this.auditData && this.auditData.scanMeta;
       var st = meta && meta.scanStatus;
+
+      // 1. El objetivo no responde: no hay auditoría que interpretar.
+      if (this.notAudited) {
+        var disc = (meta && meta.discovery) || {};
+        var host = this.targetLabel || 'el objetivo';
+        // El motivo solo afina el texto; la decisión ya está tomada arriba.
+        var causa = (disc.reason === 'host-unreach' || disc.reason === 'net-unreach')
+          ? 'Este equipo no sabe por dónde llegar hasta ' + host + ': no es que no conteste, es que no hay ruta de red hasta él.'
+          : host + ' no ha respondido a la comprobación previa.';
+        return {
+          neutral: true,
+          title: 'No se ha podido auditar ' + host,
+          desc: causa + '\n' +
+                'Causas posibles: el equipo está apagado, la dirección IP no es la correcta, ' +
+                'no hay ruta de red hasta él (otra subred) o hay una VPN levantada que cambia el camino.\n' +
+                'Comprueba primero que responde: ping ' + host + '\n' +
+                'No se ha escaneado ningún puerto: la ausencia de hallazgos NO significa que el equipo esté protegido.' +
+                (meta && meta.forceScan ? ' (Se ha escaneado de todas formas por tener activada la opción "Escanear aunque el equipo no responda".)' : '')
+        };
+      }
+
       if (!st || st === 'ok') return null;
       if (st === 'inconclusive') {
         return {
@@ -647,6 +700,15 @@ export default {
       var titleMap = { image: 'Imagen', host: 'Host', network: 'Red' };
       var auditTitle = titleMap[a.auditType] || 'Auditoría';
 
+      // Misma regla que el dashboard: si el objetivo no respondió, el informe
+      // no puede leerse como "sin hallazgos = seguro".
+      var notAudited = meta.targetState === 'unreachable';
+      var notice = notAudited
+        ? '<div class="notice"><b>Auditoría no realizada.</b> No se pudo contactar con ' +
+          esc(meta.target || meta.customTarget || 'el objetivo') +
+          ', por lo que no se escaneó ningún puerto. La ausencia de hallazgos NO indica que el equipo esté protegido.</div>'
+        : '';
+
       return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">' +
         '<title>LoCoAudit — ' + esc(auditTitle) + ' — ' + esc(host.hostname || '') + '</title>' +
         '<style>' +
@@ -660,9 +722,12 @@ export default {
         '.sev{color:#fff;border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700}' +
         'code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f6f4fc;padding:1px 4px;border-radius:4px}' +
         'footer{margin-top:24px;color:#999;font-size:11px}@media print{body{margin:0}}' +
+        '.notice{border:1px solid #cbd5e1;border-left:4px solid #64748b;background:#f8fafc;' +
+        'color:#334155;padding:10px 12px;border-radius:6px;margin:0 0 16px;font-size:13px}' +
         '</style></head><body>' +
         '<h1>LoCoAudit · Auditoría de ' + esc(auditTitle) + '</h1>' +
         '<p class="sub">' + esc(host.hostname || '') + ' · ' + esc(host.platform || '') + '</p>' +
+        notice +
         '<div class="meta">Fecha: <b>' + esc(this.scanTime || new Date().toLocaleString()) + '</b> · ' +
         'Duración: <b>' + esc(dur) + '</b> · Hallazgos: <b>' + findings.length + '</b></div>' +
         '<div class="chips">' + sumChips + '</div>' +
@@ -968,6 +1033,8 @@ export default {
     line-height: 1;
   }
   .port-count-num.all-info { color: #4ADE80; }
+  /* Objetivo no auditado: gris apagado, nunca el verde de "todo correcto". */
+  .port-count-num.no-data { color: #64748B; }
   .port-count-label {
     font-size: 11px;
     color: #64748B;
@@ -1018,6 +1085,13 @@ export default {
     color: #67E8F9;
   }
   .risk-badge.info .dot { background: var(--accent); }
+  /* "No auditado": ausencia de datos, no ausencia de riesgo. Gris neutro. */
+  .risk-badge.not-audited {
+    background: rgba(100,116,139,.14);
+    border-color: rgba(100,116,139,.45);
+    color: #94A3B8;
+  }
+  .risk-badge.not-audited .dot { background: #64748B; }
 
   .header-row2 {
     display: flex;
@@ -1048,6 +1122,13 @@ export default {
   .scan-warn-ico { font-size: 18px; line-height: 1.2; }
   .scan-warn-title { font-weight: 700; font-size: 13.5px; color: #F59E0B; }
   .scan-warn-desc { font-size: 12px; color: #CBD5E1; margin-top: 2px; }
+  /* Mismo banner, tono informativo: no es una alerta de riesgo, es un aviso
+     de que la auditoría no llegó a hacerse. */
+  .scan-warn--neutral {
+    background: rgba(100,116,139,.12);
+    border-color: rgba(148,163,184,.45);
+  }
+  .scan-warn--neutral .scan-warn-title { color: #CBD5E1; }
   .dl-group { margin-left: auto; display: flex; gap: 6px; }
   .dl-btn {
     display: inline-flex; align-items: center;
@@ -1174,6 +1255,8 @@ export default {
   }
   .empty-state .check { font-size: 48px; }
   .empty-title { font-size: 18px; font-weight: 600; color: #059669; }
+  /* El verde de arriba comunica "correcto"; cuando no hubo auditoría, gris. */
+  .empty-title--neutral { color: var(--text-muted); }
   .empty-sub { font-size: 14px; color: var(--text-muted); text-align: center; }
 
   /* ── TWO-COLUMN ROW ──────────────────────────────────────────── */
