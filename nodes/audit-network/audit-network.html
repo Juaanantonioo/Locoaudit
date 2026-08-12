@@ -10,6 +10,7 @@
             customPorts:  { value: "" },
             scanTarget:   { value: "localhost" },
             customTarget: { value: "" },
+            forceScan:    { value: false },
             llmConfig:    { value: "", type: "llm-config", required: false }
         },
         inputs: 1,
@@ -132,6 +133,23 @@
                 <div style="color: #555; font-size: 0.82em; margin-top: 6px; line-height: 1.5;">
                     Introduce la IP del equipo que quieres auditar.<br>
                     Solo audita equipos de tu propiedad.
+                </div>
+
+                <!-- Escanear aunque no responda al descubrimiento -->
+                <div style="margin-top: 10px; border-top: 1px solid #e0e0e0; padding-top: 10px;">
+                    <label for="node-input-forceScan" style="font-weight: 600; display: flex; align-items: center; gap: 6px; margin: 0;">
+                        <input type="checkbox" id="node-input-forceScan" style="width: auto; margin: 0;">
+                        Escanear aunque el equipo no responda
+                    </label>
+                    <div style="color: #555; font-size: 0.82em; margin-top: 6px; line-height: 1.5;">
+                        Antes de escanear, el nodo comprueba en unos segundos si el equipo
+                        está accesible. Si no responde, no escanea: te lo dice en vez de
+                        devolver &laquo;0 puertos abiertos&raquo;, que parecería que está seguro
+                        cuando en realidad no se ha podido analizar.<br>
+                        Actívala solo si <strong>sabes que el equipo está encendido</strong> y
+                        su cortafuegos ignora esa comprobación. El escaneo puede tardar
+                        varios minutos y aun así no encontrar nada.
+                    </div>
                 </div>
             </div>
 

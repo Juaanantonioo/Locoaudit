@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///opt/homebrew/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.99 scan initiated Wed Aug 12 17:01:47 2026 as: nmap -sV -T4 -Pn -&#45;max-retries 2 -p 22,80,443,5000 -oX scan-ports-open.xml 127.0.0.1 -->
+<nmaprun scanner="nmap" args="nmap -sV -T4 -Pn -&#45;max-retries 2 -p 22,80,443,5000 -oX scan-ports-open.xml 127.0.0.1" start="1786546907" startstr="Wed Aug 12 17:01:47 2026" version="7.99" xmloutputversion="1.05">
+<scaninfo type="connect" protocol="tcp" numservices="4" services="22,80,443,5000"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<host starttime="1786546907" endtime="1786546926"><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="127.0.0.1" addrtype="ipv4"/>
+<hostnames>
+<hostname name="localhost" type="PTR"/>
+</hostnames>
+<ports><port protocol="tcp" portid="22"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="ssh" product="OpenSSH" version="10.2" extrainfo="protocol 2.0" method="probed" conf="10"><cpe>cpe:/a:openbsd:openssh:10.2</cpe></service></port>
+<port protocol="tcp" portid="80"><state state="closed" reason="conn-refused" reason_ttl="0"/><service name="http" method="table" conf="3"/></port>
+<port protocol="tcp" portid="443"><state state="closed" reason="conn-refused" reason_ttl="0"/><service name="https" method="table" conf="3"/></port>
+<port protocol="tcp" portid="5000"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="rtsp" servicefp="SF-Port5000-TCP:V=7.99%I=7%D=8/12%Time=6A7C8AE1%P=arm-apple-darwin25.3.0%r(GetRequest,8D,&quot;HTTP/1\.1\x20403\x20Forbidden\r\nContent-Length:\x200\r\nServer:\x20AirTunes/950\.7\.1\r\nX-Apple-ProcessingTime:\x203\r\nX-Apple-RequestReceivedTimestamp:\x206080623\r\n\r\n&quot;)%r(RTSPRequest,8D,&quot;RTSP/1\.0\x20403\x20Forbidden\r\nContent-Length:\x200\r\nServer:\x20AirTunes/950\.7\.1\r\nX-Apple-ProcessingTime:\x200\r\nX-Apple-RequestReceivedTimestamp:\x206080653\r\n\r\n&quot;)%r(HTTPOptions,8D,&quot;HTTP/1\.1\x20403\x20Forbidden\r\nContent-Length:\x200\r\nServer:\x20AirTunes/950\.7\.1\r\nX-Apple-ProcessingTime:\x200\r\nX-Apple-RequestReceivedTimestamp:\x206085656\r\n\r\n&quot;)%r(FourOhFourRequest,8D,&quot;HTTP/1\.1\x20403\x20Forbidden\r\nContent-Length:\x200\r\nServer:\x20AirTunes/950\.7\.1\r\nX-Apple-ProcessingTime:\x200\r\nX-Apple-RequestReceivedTimestamp:\x206085664\r\n\r\n&quot;)%r(SIPOptions,9F,&quot;RTSP/1\.0\x20403\x20Forbidden\r\nContent-Length:\x200\r\nServer:\x20AirTunes/950\.7\.1\r\nCSeq:\x2042\x20OPTIONS\r\nX-Apple-ProcessingTime:\x200\r\nX-Apple-RequestReceivedTimestamp:\x206085667\r\n\r\n&quot;);" method="probed" conf="10"/></port>
+</ports>
+<times srtt="167" rttvar="2127" to="100000"/>
+</host>
+<runstats><finished time="1786546926" timestr="Wed Aug 12 17:02:06 2026" summary="Nmap done at Wed Aug 12 17:02:06 2026; 1 IP address (1 host up) scanned in 18.72 seconds" elapsed="18.72" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>
