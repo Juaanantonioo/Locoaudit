@@ -643,7 +643,12 @@ export default {
         if (b) { b.classList.remove('open'); b.setAttribute('data-lca-open', '0'); }
       });
       // 4. CSS extra del export + toggle/copiar (vanilla) + documento autocontenido.
-      var extra = '.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn{display:none!important}'
+      // El detalle del alcance (subcarpetas analizadas / excluidas / sin
+      // analizar) va plegado en el dashboard con v-show, así que en el clon
+      // llega con display:none. En un informe descargado no hay nada que
+      // desplegar: se fuerza visible y se retira su botón.
+      var extra = '.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn,.scope-toggle{display:none!important}'
+        + '.scope-detail{display:block!important}'
         + '[data-lca-acc]{cursor:pointer}.command-btn,.ia-copy-btn{cursor:pointer}'
         + '@media print{[class*="finding-detail"],[class*="finding-body"],[class*="group-body"],[class*="group-findings"]{display:block!important;max-height:none!important;opacity:1!important;overflow:visible!important}}';
       var toggleJs = "(function(){document.addEventListener('click',function(e){var cb=e.target.closest('.command-btn,.ia-copy-btn');if(cb){var box=cb.parentElement,c=box&&box.querySelector('code');var t=c?c.textContent:'';try{navigator.clipboard.writeText(t);}catch(_){}var o=cb.textContent;cb.textContent='\\u2713 Copiado';setTimeout(function(){cb.textContent=o;},1500);return;}var h=e.target.closest('[data-lca-acc]');if(!h)return;var b=h.nextElementSibling;if(!b)return;var willOpen=b.getAttribute('data-lca-open')==='0';b.style.display=willOpen?'':'none';b.classList.toggle('open',willOpen);b.setAttribute('data-lca-open',willOpen?'1':'0');var cv=h.querySelector('[class*=chevron]');if(cv)cv.classList.toggle('open',willOpen);});})();";

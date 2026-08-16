@@ -22,10 +22,10 @@ const { getDiskInfo } = require("./modules/disk-storage");
 const { getSwInventory } = require("./modules/sw-inventory");
 const { getOsInfo } = require("./modules/os-info");
 const { runLynis } = require("./modules/lynis");
-const { runTrivyFs } = require("./modules/trivy-fs");
+const { runTrivyFs, systemPackagesSupport } = require("./modules/trivy-fs");
 const { runSecurityEvents, buildEventList } = require("./modules/security-events");
 const { normalizeHost } = require("../../lib/normalizer");
-const { detectPackageManager } = require("../../lib/pkg-manager");
+const { detectPackageManager, managerLabel } = require("../../lib/pkg-manager");
 const { summarize } = require("../../lib/severity-map");
 
 module.exports = function (RED) {
@@ -50,10 +50,24 @@ module.exports = function (RED) {
       // Eventos de seguridad: desactivado por defecto (opt-in)
       const enableSecEvents = config.securityEvents === true;
       const secWindow = Math.min(168, Math.max(1, parseInt(config.securityEventsWindow, 10) || 24));
+      const enableSysPkgs = config.trivySystemPkgs === true;
 
       const startTime = Date.now();
 
       try {
+        // Gestor de paquetes REAL del equipo: sin esto los fixes asumían apt en
+        // Linux y brew en macOS, y en Arch (pacman) el comando era inejecutable.
+        //
+        // Se detecta lo PRIMERO y siempre, aunque el interruptor de paquetes del
+        // sistema esté desactivado: es barato (un commandExists por candidato, no
+        // ejecuta rootfs), lo necesita el bloque de alcance del dashboard para
+        // decir si los paquetes del sistema se pueden analizar en este equipo, y
+        // se lo pasamos a runTrivyFs para que no repita la detección.
+        let pkgManager = null;
+        try {
+          pkgManager = await detectPackageManager(process.platform);
+        } catch (_) { /* nunca bloquear la auditoría por la detección */ }
+
         // Lanzar todos los módulos habilitados en paralelo
         const [cpuResult, diskResult, swResult, lynisResult, trivyResult, secResult] =
           await Promise.allSettled([
@@ -64,9 +78,13 @@ module.exports = function (RED) {
             enableTrivy
               ? runTrivyFs({
                   // Vacío ⇒ el módulo resuelve el HOME del usuario que audita.
+                  // Se respeta TAMBIÉN con systemPackages activo: antes el
+                  // interruptor hacía return antes de leer este campo.
                   target: config.trivyTarget,
-                  // Paquetes del sistema (trivy rootfs): opt-in, requiere privilegios.
-                  systemPackages: config.trivySystemPkgs === true,
+                  // Paquetes del sistema (trivy rootfs): opt-in, requiere
+                  // privilegios. Se SUMA al escaneo de la carpeta, no lo sustituye.
+                  systemPackages: enableSysPkgs,
+                  pkgManager,
                 })
               : Promise.resolve({ skipped: true, reason: "disabled" }),
             enableSecEvents ? runSecurityEvents(secWindow) : Promise.resolve(null),
@@ -90,10 +108,18 @@ module.exports = function (RED) {
           return;
         }
         if (enableTrivy && trivy && trivy.skipped) {
+          // Se discrimina por la NATURALEZA del resultado (trivy.kind), no por el
+          // texto de trivy.reason: ese texto cambia con la plataforma ("rootfs
+          // solo aplica en Linux" en macOS, "Trivy no soporta pacman" en Arch) y
+          // los dos son el mismo caso. Comparar strings hacía que un límite
+          // conocido de la herramienta abortara la auditoría entera: el `return`
+          // se ejecutaba antes del send(msg) y el dashboard no recibía payload,
+          // así que se quedaba enseñando los datos de la ejecución anterior.
+          //
           // "No instalado" y "no se pudo escanear" tienen soluciones distintas:
           // confundirlos mandaba al usuario a reinstalar una herramienta que ya
           // tiene. El motivo real viene en trivy.reason.
-          if (trivy.reason === "trivy not installed") {
+          if (trivy.kind === "not-installed") {
             node.status({ fill: "red", shape: "ring", text: "Trivy no instalado" });
             done(new Error(
               "Trivy está activado en la configuración del nodo pero no se encontró instalado en el sistema. " +
@@ -101,9 +127,16 @@ module.exports = function (RED) {
             ));
             return;
           }
-          node.status({ fill: "red", shape: "ring", text: trivy.walkError ? "Carpeta inaccesible" : "Trivy falló" });
-          done(new Error(`Trivy no pudo completar el escaneo. ${trivy.reason}`));
-          return;
+          if (trivy.kind === "error") {
+            node.status({ fill: "red", shape: "ring", text: trivy.walkError ? "Carpeta inaccesible" : "Trivy falló" });
+            done(new Error(`Trivy no pudo completar el escaneo. ${trivy.reason}`));
+            return;
+          }
+          // kind 'unsupported': esta plataforma o este gestor de paquetes no se
+          // pueden analizar. No es un fallo — es un límite que el usuario tiene
+          // derecho a ver. La auditoría CONTINÚA con el resto de módulos y el
+          // límite viaja en scanMeta.systemPackages hasta el bloque de alcance.
+          node.warn(`[audit-host] trivy-fs omitido: ${trivy.reason}`);
         }
 
         // os-info siempre se recoge (no tiene dependencias externas)
@@ -134,13 +167,6 @@ module.exports = function (RED) {
         // Lynis/Trivy): el normalizador lo convierte en un finding informativo.
         const raw = { cpuMemory, disk, swInventory, lynis, trivy, securityEvents };
 
-        // Gestor de paquetes REAL del equipo: sin esto los fixes asumían apt en
-        // Linux y brew en macOS, y en Arch (pacman) el comando era inejecutable.
-        let pkgManager = null;
-        try {
-          pkgManager = await detectPackageManager(process.platform);
-        } catch (_) { /* nunca bloquear la auditoría por la detección */ }
-
         const findings = normalizeHost(raw, { platform: process.platform, pkgManager });
         const summary = summarize(findings);
         const durationMs = Date.now() - startTime;
@@ -170,6 +196,32 @@ module.exports = function (RED) {
               enableSecEvents && !securityEvents?.skipped && "security-events",
             ].filter(Boolean),
             durationMs,
+            // Alcance del análisis de paquetes del SISTEMA. Se emite SIEMPRE,
+            // también cuando el interruptor está desactivado: que no se hayan
+            // analizado no es lo mismo que estar limpios, y el usuario no puede
+            // deducirlo de una lista de hallazgos vacía. El dashboard convierte
+            // este estado en la frase que corresponda a su gestor.
+            systemPackages: (() => {
+              // El veredicto sale del sub-bloque scan.system, no del resultado
+              // entero: desde que los dos escaneos se suman, que falle el del
+              // sistema ya no marca todo como skipped — el del home sigue ahí.
+              const systemScan = (trivy && trivy.scan && trivy.scan.system) || null;
+              return {
+                status: systemPackagesSupport(process.platform, pkgManager, {
+                  enabled: enableTrivy && enableSysPkgs,
+                  systemScan,
+                }),
+                // Lo PIDIÓ el usuario. Distingue "no se analizó porque nadie lo
+                // pidió" de "lo pediste y no se pudo": el dashboard lo dice.
+                requested: enableTrivy && enableSysPkgs,
+                manager: pkgManager,
+                managerLabel: pkgManager ? managerLabel(pkgManager) : null,
+                reason: (systemScan && systemScan.reason) ||
+                        (trivy && trivy.skipped ? trivy.reason : null),
+                durationMs: (systemScan && systemScan.durationMs) || null,
+                results: (systemScan && systemScan.results) || 0,
+              };
+            })(),
           },
           raw: { ...raw, osInfo },
           timestamp: new Date().toISOString(),
@@ -181,7 +233,6 @@ module.exports = function (RED) {
           msg.payload.securityEvents = buildEventList(securityEvents);
         }
 
-        const count = findings.length;
         const maxSev = summary.maxSeverity || "info";
         const statusColor =
           maxSev === "critical" || maxSev === "high"
@@ -190,10 +241,17 @@ module.exports = function (RED) {
             ? "yellow"
             : "green";
 
+        // El estado del nodo cuenta lo MISMO que la cabecera del dashboard: los
+        // accionables. Un "96 hallazgos · riesgo: critical" junto a un dashboard
+        // que dice "nada que arreglar" es la contradicción que se está corrigiendo.
+        const act = summary.actionable.total;
+        const inf = summary.informative.total;
         node.status({
           fill: statusColor,
           shape: "dot",
-          text: `${count} hallazgos · riesgo: ${maxSev}`,
+          text: act > 0
+            ? `${act} a revisar · riesgo: ${maxSev}${inf ? ` · ${inf} info` : ""}`
+            : `Nada que arreglar · ${inf} informativos`,
         });
 
         send(msg);

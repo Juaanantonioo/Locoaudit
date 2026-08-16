@@ -89,7 +89,133 @@
         </div>
       </div>
 
+      <!-- ══ NADA QUE ARREGLAR ══ -->
+      <!-- Cuando TODOS los hallazgos son informativos, "Todo en orden" a secas
+           se lee como "la herramienta no ha hecho nada". Hay que decir qué son
+           esos hallazgos y remitir al alcance: "nada que arreglar" solo es
+           honesto si va acompañado de "esto es lo que se ha mirado". -->
+      <div class="nothing-card" v-if="nothingToFix">
+        <div class="nothing-title">✓ No hay nada que tengas que arreglar en tu equipo</div>
+        <div class="nothing-body">
+          Los <strong>{{ totalFindings }} hallazgos</strong> de abajo son vulnerabilidades
+          <strong>declaradas</strong>: versiones anotadas en ficheros de dependencias
+          (<code>yarn.lock</code>, <code>bun.lock</code>, <code>pom.xml</code>…) de programas de
+          terceros que tienes instalados. Describen lo que dicen esos ficheros, no software que se
+          esté ejecutando en tu equipo — no hay ningún paquete que puedas actualizar tú.
+        </div>
+        <div class="nothing-body">
+          Se listan para que sepas qué hay en tu equipo, no como tareas pendientes.
+          <strong>Revisa el alcance del análisis</strong> aquí debajo: hay partes que no se han comprobado.
+        </div>
+      </div>
+
+      <!-- ══ ALCANCE DEL ESCANEO ══ -->
+      <!-- Qué se ha mirado, antes de qué se ha encontrado. Sin esto el usuario ve
+           "37 hallazgos" y concluye que su equipo está cubierto: es ausencia de
+           datos presentada como resultado, el mismo patrón que el tick verde
+           sobre un host que no responde. -->
+      <div class="scope-card" v-if="trivyScan || sysPkgNotice">
+        <div class="scope-header">
+          <span class="scope-ico">🔎</span>
+          <span class="scope-title">Alcance del análisis</span>
+          <button class="scope-toggle" v-if="trivyScan" @click="scopeOpen = !scopeOpen">
+            {{ scopeOpen ? 'Ocultar detalle' : 'Ver detalle' }}
+          </button>
+        </div>
+
+        <div class="pills-row scope-pills" v-if="trivyScan">
+          <span class="pill">
+            <span class="pill-label">Carpeta</span> <code>{{ trivyScan.target }}</code>
+          </span>
+          <span class="pill" v-if="scannedChildren.length">
+            <span class="pill-label">Subcarpetas analizadas</span> {{ scannedChildren.length }}
+          </span>
+          <span class="pill" v-if="skippedByChoice.length">
+            <span class="pill-label">Excluidas</span> {{ skippedByChoice.length }}
+          </span>
+          <span class="pill pill-warn" v-if="skippedByError.length">
+            <span class="pill-label">Sin analizar</span> {{ skippedByError.length }}
+          </span>
+          <span class="pill" v-if="trivyScan.durationMs">
+            <!-- "Duración carpeta" y no "Duración" a secas: desde que el escaneo
+                 de paquetes del sistema se suma, hay dos y tardan cosas distintas. -->
+            <span class="pill-label">{{ sysScan ? 'Duración carpeta' : 'Duración' }}</span> {{ fmtDuration(trivyScan.durationMs) }}
+          </span>
+          <span class="pill" v-if="sysScan" :class="sysScan.status === 'scanned' ? '' : 'pill-warn'">
+            <span class="pill-label">Paquetes del sistema</span>
+            {{ sysScan.status === 'scanned' ? 'analizados' : 'no analizados' }}
+          </span>
+          <span class="pill" v-if="sysScan && sysScan.durationMs">
+            <span class="pill-label">Duración sistema</span> {{ fmtDuration(sysScan.durationMs) }}
+          </span>
+          <span class="pill" v-if="trivyScan.trivyVersion">
+            <span class="pill-label">Trivy</span> {{ trivyScan.trivyVersion }}
+          </span>
+        </div>
+
+        <!-- Un trozo del home que no se pudo leer es un AGUJERO en el informe,
+             no un detalle. Mismo razonamiento que el objetivo inalcanzable del
+             dashboard de red: no encontrar nada ≠ que no haya nada. -->
+        <div class="scope-notice warn" v-if="skippedByError.length">
+          <span class="scope-notice-ico">⚠️</span>
+          <div>
+            <div class="scope-notice-title">Una parte de tu carpeta personal no se ha podido analizar</div>
+            <div class="scope-notice-body">
+              Que no aparezca ningún hallazgo de
+              <strong>{{ skippedByError.map(function(s){ return s.name; }).join(', ') }}</strong>
+              no quiere decir que esté limpia: quiere decir que no se ha podido comprobar.
+            </div>
+          </div>
+        </div>
+
+        <!-- Paquetes del sistema: el hecho que faltaba por completo. -->
+        <div class="scope-notice" :class="sysPkgNotice.tone" v-if="sysPkgNotice">
+          <span class="scope-notice-ico">{{ sysPkgNotice.ico }}</span>
+          <div>
+            <div class="scope-notice-title">{{ sysPkgNotice.title }}</div>
+            <div class="scope-notice-lead" v-if="sysPkgNotice.lead">{{ sysPkgNotice.lead }}</div>
+            <div class="scope-notice-body">{{ sysPkgNotice.body }}</div>
+            <div class="scope-notice-warn" v-if="sysPkgNotice.warning">{{ sysPkgNotice.warning }}</div>
+            <div class="scope-notice-hint" v-if="sysPkgNotice.hint">{{ sysPkgNotice.hint }}</div>
+          </div>
+        </div>
+
+        <!-- Detalle: las dos naturalezas de "omitida" separadas a propósito.
+             Una es una decisión; la otra es un hueco en el informe. -->
+        <div class="scope-detail" v-show="scopeOpen && trivyScan">
+          <div class="scope-detail-block" v-if="skippedByChoice.length">
+            <div class="scope-detail-title">Excluidas a propósito ({{ skippedByChoice.length }})</div>
+            <div class="scope-detail-item" v-for="(s, i) in skippedByChoice" :key="'c-' + i">
+              <code>{{ s.name }}</code> — {{ s.reason }}
+            </div>
+            <div class="scope-detail-note">
+              Solo contienen ficheros temporales o descargados. No hay nada que actualizar en ellas.
+            </div>
+          </div>
+          <div class="scope-detail-block" v-if="skippedByError.length">
+            <div class="scope-detail-title warn">No se han podido analizar ({{ skippedByError.length }})</div>
+            <div class="scope-detail-item" v-for="(s, i) in skippedByError" :key="'e-' + i">
+              <code>{{ s.name }}</code> — {{ shortReason(s.reason) }}
+              <span v-if="s.durationMs"> (tras {{ fmtDuration(s.durationMs) }})</span>
+            </div>
+            <div class="scope-detail-note warn">
+              Su contenido NO está incluido en este informe.
+            </div>
+          </div>
+          <div class="scope-detail-block" v-if="scannedChildren.length">
+            <div class="scope-detail-title">Analizadas ({{ scannedChildren.length }})</div>
+            <div class="scope-detail-item scope-detail-flow">
+              <code v-for="(s, i) in scannedChildren" :key="'s-' + i">{{ s.name }}</code>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- ══ SEVERITY COUNTERS ══ -->
+      <!-- Cuentan ACCIONABLES (summary.actionable.counts), no el total: si
+           siguieran contando todo, la cabecera diría "Nada que arreglar" con un
+           9 en CRÍTICO justo debajo. Los informativos tienen su propia tarjeta,
+           neutra, para que no desaparezcan del recuento. -->
       <div class="counters-row">
         <div class="counter-card critical" :class="{ 'counter-active': filterSev === 'critical' }"
              @click="toggleSevFilter('critical')" title="Filtrar por severidad Crítico">
@@ -101,7 +227,7 @@
               <line x1="12" y1="17" x2="12.01" y2="17"></line>
             </svg>
           </div>
-          <div class="counter-num" :style="counts.critical === 0 ? {color:'#CBD5E1'} : {}">{{ counts.critical }}</div>
+          <div class="counter-num" :style="act.counts.critical === 0 ? {color:'#CBD5E1'} : {}">{{ act.counts.critical || 0 }}</div>
           <div class="counter-sub">Acción inmediata</div>
         </div>
         <div class="counter-card high" :class="{ 'counter-active': filterSev === 'high' }"
@@ -114,7 +240,7 @@
               <line x1="12" y1="16" x2="12.01" y2="16"></line>
             </svg>
           </div>
-          <div class="counter-num" :style="counts.high === 0 ? {color:'#CBD5E1'} : {}">{{ counts.high }}</div>
+          <div class="counter-num" :style="act.counts.high === 0 ? {color:'#CBD5E1'} : {}">{{ act.counts.high || 0 }}</div>
           <div class="counter-sub">Resolver esta semana</div>
         </div>
         <div class="counter-card medium" :class="{ 'counter-active': filterSev === 'medium' }"
@@ -127,7 +253,7 @@
               <line x1="12" y1="16" x2="12.01" y2="16"></line>
             </svg>
           </div>
-          <div class="counter-num" :style="counts.medium === 0 ? {color:'#CBD5E1'} : {}">{{ counts.medium }}</div>
+          <div class="counter-num" :style="act.counts.medium === 0 ? {color:'#CBD5E1'} : {}">{{ act.counts.medium || 0 }}</div>
           <div class="counter-sub">Cuando puedas</div>
         </div>
         <div class="counter-card low" :class="{ 'counter-active': filterSev === 'low' }"
@@ -139,8 +265,21 @@
               <line x1="8" y1="12" x2="16" y2="12"></line>
             </svg>
           </div>
-          <div class="counter-num" :style="counts.low === 0 ? {color:'#CBD5E1'} : {}">{{ counts.low }}</div>
+          <div class="counter-num" :style="act.counts.low === 0 ? {color:'#CBD5E1'} : {}">{{ act.counts.low || 0 }}</div>
           <div class="counter-sub">Opcional</div>
+        </div>
+        <div class="counter-card informative" v-if="inf.total > 0"
+             title="Hallazgos que no requieren ninguna acción por tu parte">
+          <div class="counter-top">
+            <span class="counter-severity">Informativos</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2.5">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="16" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+          </div>
+          <div class="counter-num">{{ inf.total }}</div>
+          <div class="counter-sub">Solo para tu información</div>
         </div>
       </div>
 
@@ -160,8 +299,11 @@
                       :stroke="seg.color" stroke-width="18"
                       :stroke-dasharray="seg.dasharray"
                       :stroke-dashoffset="seg.dashoffset"></circle>
-              <text x="70" y="65" text-anchor="middle" class="donut-total">{{ totalFindings }}</text>
-              <text x="70" y="79" text-anchor="middle" class="donut-sub">hallazgos</text>
+              <!-- El anillo sigue mostrando la mezcla de severidades de TODOS los
+                   hallazgos; el número del centro cuenta solo los accionables.
+                   Un "96" grande describía trabajo pendiente que no existe. -->
+              <text x="70" y="65" text-anchor="middle" class="donut-total">{{ act.total }}</text>
+              <text x="70" y="79" text-anchor="middle" class="donut-sub">de {{ totalFindings }} · a revisar</text>
             </svg>
             <div class="donut-legend">
               <div class="legend-item" v-for="seg in donutSegments" :key="'leg-'+seg.key">
@@ -289,8 +431,15 @@
       <div class="findings-section">
         <div class="section-header">
           <span class="section-title">Hallazgos de Seguridad</span>
-          <span class="pill" style="background:#F1F5F9">
-            {{ totalFindings }} hallazgos · {{ groups.filter(function(g){ return g.items.length > 0; }).length }} categorías activas
+          <!-- "96 hallazgos" mezclaba lo accionable con lo informativo y hacía
+               que un lockfile de un plugin que el usuario no usa se leyera como
+               trabajo pendiente. Las cifras vienen de summary.actionable /
+               summary.informative: el backend es el único que decide qué cuenta. -->
+          <span class="section-pills">
+            <span class="pill pill-action" v-if="act.total > 0">{{ act.total }} requieren tu atención</span>
+            <span class="pill pill-calm" v-else>Nada que arreglar</span>
+            <span class="pill" v-if="inf.total > 0">{{ inf.total }} informativos</span>
+            <span class="pill" style="background:#F1F5F9">{{ activeGroups }} categorías</span>
           </span>
         </div>
 
@@ -309,9 +458,22 @@
             <div class="group-findings" v-show="openGroups[g.key]">
               <div v-for="(f, fi) in g.items" :key="g.key + '-' + fi">
                 <div class="finding-row" @click="toggleFinding(g.key + '-' + fi)">
-                  <span class="sev-badge" :class="sevClass(f.severity)">{{ sevLabel(f.severity) }}</span>
+                  <!-- 'declared': el CVSS describe la vulnerabilidad si la
+                       ejecutaras, no el estado de este equipo. Pintarlo ALTO en
+                       la fila lo hacía indistinguible de un hallazgo real. El
+                       número sigue disponible, dentro del desplegable, junto a
+                       los datos que lo justifican. -->
+                  <span v-if="isDeclared(f)" class="origin-badge declared"
+                        title="Versión anotada en un fichero de dependencias. No hay software instalado con esa versión en tu equipo.">Declarado</span>
+                  <template v-else>
+                    <span class="sev-badge" :class="sevClass(f.severity)">{{ sevLabel(f.severity) }}</span>
+                    <span v-if="f.origin === 'installed'" class="origin-badge installed"
+                          :class="sevClass(f.severity)"
+                          title="Paquete instalado en disco: la actualización sí te corresponde a ti.">Instalado</span>
+                  </template>
                   <span class="cat-badge">{{ catLabel(f.category) }}</span>
                   <span class="finding-title">{{ f.title }}</span>
+                  <span v-if="isDeclared(f)" class="finding-note">anotado en un lockfile · nada que actualizar</span>
                   <span class="finding-expand-icon">{{ openFindings[g.key + '-' + fi] ? '▲' : '▼' }}</span>
                 </div>
                 <div class="finding-detail" :class="{open: openFindings[g.key + '-' + fi]}">
@@ -538,6 +700,9 @@ export default {
       openGroups: {},
       openFindings: {},
       copiedKey: null,
+      // Detalle del alcance (subcarpetas analizadas / excluidas / fallidas):
+      // cerrado por defecto, el aviso importante ya se ve sin desplegar nada.
+      scopeOpen: false,
       // ── Chat con LLM (asistente IA) ──
       chatOpen: {},        // por findingKey: panel abierto/cerrado
       chatMessages: {},    // por findingKey: [{ role, content, error? }]
@@ -567,6 +732,164 @@ export default {
     totalFindings() {
       var c = this.counts;
       return c.critical + c.high + c.medium + c.low + c.info;
+    },
+
+    // ── Recuento segmentado ───────────────────────────────────────────────────
+    // Lo calcula el backend (summarize() en lib/severity-map.js) porque el
+    // predicado que decide qué es accionable es EL MISMO que decide el riesgo
+    // global: replicarlo aquí crearía dos definiciones que acaban divergiendo.
+    // Payloads anteriores a la segmentación no traen los campos → todo cuenta
+    // como accionable, que es el comportamiento de siempre.
+    act() {
+      var s = this.auditData && this.auditData.summary;
+      if (s && s.actionable) return s.actionable;
+      return { counts: this.counts, total: this.totalFindings, maxSeverity: this.maxSev.toLowerCase() };
+    },
+
+    inf() {
+      var s = this.auditData && this.auditData.summary;
+      if (s && s.informative) return s.informative;
+      return { counts: { info: 0, low: 0, medium: 0, high: 0, critical: 0 }, total: 0 };
+    },
+
+    activeGroups() {
+      return this.groups.filter(function(g) { return g.items.length > 0; }).length;
+    },
+
+    // Todos los hallazgos son informativos: no hay NADA que el usuario pueda
+    // arreglar. Requiere explicación explícita, o "Todo en orden" se lee como
+    // "la herramienta no ha hecho nada".
+    nothingToFix() {
+      return this.totalFindings > 0 && this.act.total === 0;
+    },
+
+    // ── Alcance del escaneo ───────────────────────────────────────────────────
+    // parsed.scan de trivy-fs.js, tal cual: target, skipDirs, durationMs,
+    // resolvedFrom, trivyVersion y children.{scanned,skipped}.
+    trivyScan() {
+      var raw = this.auditData && this.auditData.raw;
+      var t = raw && raw.trivy;
+      return (t && !t.skipped && t.scan) || null;
+    },
+
+    // Hijos del home excluidos A PROPÓSITO (caché, papelera, exclusiones).
+    // Es una decisión, no un agujero: se muestra en tono neutro.
+    skippedByChoice() {
+      var ch = this.trivyScan && this.trivyScan.children;
+      return ((ch && ch.skipped) || []).filter(function(s) { return s.kind !== 'error'; });
+    },
+
+    // Hijos que NO se pudieron analizar (unidad de red que no responde,
+    // permisos). Esto SÍ es un agujero en el informe y el usuario tiene que
+    // verlo: que no salga nada de esa carpeta no quiere decir que esté limpia.
+    skippedByError() {
+      var ch = this.trivyScan && this.trivyScan.children;
+      return ((ch && ch.skipped) || []).filter(function(s) { return s.kind === 'error'; });
+    },
+
+    scannedChildren() {
+      var ch = this.trivyScan && this.trivyScan.children;
+      return (ch && ch.scanned) || [];
+    },
+
+    sysPkgs() {
+      var m = this.auditData && this.auditData.scanMeta;
+      return (m && m.systemPackages) || null;
+    },
+
+    // Sub-bloque del escaneo de paquetes del sistema, presente solo si se pidió.
+    // Su ausencia significa "nadie lo pidió", así que no hay nada que contar.
+    sysScan() {
+      return (this.trivyScan && this.trivyScan.system) || null;
+    },
+
+    // Texto por ESTADO y por gestor, no un caso especial más un genérico: cada
+    // situación tiene una salida distinta para el usuario. El estado lo produce
+    // systemPackagesSupport() en nodes/audit-host/modules/trivy-fs.js.
+    sysPkgNotice() {
+      var sp = this.sysPkgs;
+      if (!sp) return null;
+      var mgr = sp.managerLabel || sp.manager || 'tu gestor de paquetes';
+      var plat = (this.auditData && this.auditData.host && this.auditData.host.platform) || '';
+
+      if (sp.status === 'unsupported-manager') {
+        return {
+          tone: 'warn', ico: '⚠️',
+          title: 'Los paquetes del sistema no se han analizado',
+          // `requested` distingue "no se analizó porque nadie lo pidió" de
+          // "lo pediste y no se pudo". Antes el segundo caso abortaba el nodo
+          // entero; ahora la auditoría continúa y hay que decirlo.
+          lead: sp.requested ? 'Lo has activado en la configuración del nodo, pero no ha podido hacerse.' : null,
+          body: 'Tu distribución usa ' + mgr + ', y Trivy no sabe leer su base de datos de paquetes. ' +
+                'Tu carpeta personal sí se ha analizado y los hallazgos de abajo la cubren, pero todo el ' +
+                'software instalado por el sistema ha quedado fuera.',
+          warning: 'Esto no quiere decir que esos paquetes estén libres de vulnerabilidades: quiere decir que no se han podido comprobar.',
+          hint: sp.manager === 'pacman' ? 'Mantenlos al día por tu cuenta con: sudo pacman -Syu' : null
+        };
+      }
+      if (sp.status === 'supported-not-run') {
+        return {
+          tone: 'info', ico: 'ℹ️',
+          title: 'Solo se ha analizado tu carpeta personal',
+          lead: null,
+          body: 'Tu sistema usa ' + mgr + ', que Trivy sí sabe analizar, pero la opción está desactivada en el nodo. ' +
+                'El software instalado por el sistema no está incluido en este informe.',
+          warning: 'No se ha comprobado: no es lo mismo que estar limpio.',
+          hint: 'Para incluirlo, marca «Analizar paquetes del sistema» en la configuración del nodo audit-host. ' +
+                'Tarda varios minutos y requiere permisos de administrador.'
+        };
+      }
+      if (sp.status === 'scanned') {
+        // Los dos escaneos se SUMAN, así que aquí sí se puede decir "y". Antes
+        // el interruptor sustituía el escaneo de la carpeta y este texto era
+        // literalmente falso: prometía cobertura de las dos cosas habiendo
+        // analizado solo una.
+        var carpeta = (this.trivyScan && this.trivyScan.target) || 'tu carpeta personal';
+        var nSub = this.scannedChildren.length;
+        return {
+          tone: 'ok', ico: '✓',
+          title: 'Se ha analizado tu carpeta personal y los paquetes del sistema',
+          lead: null,
+          body: 'Gestor: ' + mgr + '. El informe cubre ' + carpeta +
+                (nSub ? ' (' + nSub + ' subcarpetas)' : '') +
+                ' y el software instalado por el sistema operativo. ' +
+                'Es la cobertura más completa que LoCoAudit puede ofrecer en este equipo.',
+          warning: null, hint: null
+        };
+      }
+      if (sp.status === 'failed') {
+        return {
+          tone: 'warn', ico: '⚠️',
+          title: 'El análisis de los paquetes del sistema falló',
+          lead: null,
+          body: 'Se intentó, pero no llegó a terminar: ' + (sp.reason || 'motivo no disponible') + '.',
+          // Que falle una parte ya no tira la otra: decirlo evita que el usuario
+          // dé por perdida la auditoría entera.
+          warning: 'Tu carpeta personal sí se ha analizado, y los hallazgos de abajo la cubren. Lo que falta es el software instalado por el sistema.',
+          hint: null
+        };
+      }
+      // not-applicable: dos plataformas, dos motivos distintos y dos salidas
+      // distintas para el usuario. No se pueden fusionar en una frase.
+      if (plat === 'darwin') {
+        return {
+          tone: 'info', ico: 'ℹ️',
+          title: 'En macOS no se analizan los paquetes del sistema',
+          lead: null,
+          body: 'macOS no tiene un gestor de paquetes de sistema que Trivy pueda leer. Homebrew instala software tuyo, ' +
+                'no del sistema operativo. Se ha analizado tu carpeta personal.',
+          warning: null,
+          hint: 'Las actualizaciones de seguridad de macOS las gestiona Apple: revísalas en Ajustes del Sistema → General → Actualización de software.'
+        };
+      }
+      return {
+        tone: 'info', ico: 'ℹ️',
+        title: 'En Windows no se analizan los paquetes del sistema',
+        lead: null,
+        body: 'Trivy no analiza el software instalado de Windows. Se ha analizado tu carpeta personal de usuario.',
+        warning: null,
+        hint: 'Mantén el sistema al día con Windows Update y revisa tus programas con: winget upgrade --all'
+      };
     },
 
     riskLabel() {
@@ -875,7 +1198,12 @@ export default {
         if (b) { b.classList.remove('open'); b.setAttribute('data-lca-open', '0'); }
       });
       // 4. CSS extra del export + toggle/copiar (vanilla) + documento autocontenido.
-      var extra = '.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn{display:none!important}'
+      // El detalle del alcance (subcarpetas analizadas / excluidas / sin
+      // analizar) va plegado en el dashboard con v-show, así que en el clon
+      // llega con display:none. En un informe descargado no hay nada que
+      // desplegar: se fuerza visible y se retira su botón.
+      var extra = '.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn,.scope-toggle{display:none!important}'
+        + '.scope-detail{display:block!important}'
         + '[data-lca-acc]{cursor:pointer}.command-btn,.ia-copy-btn{cursor:pointer}'
         + '@media print{[class*="finding-detail"],[class*="finding-body"],[class*="group-body"],[class*="group-findings"]{display:block!important;max-height:none!important;opacity:1!important;overflow:visible!important}}';
       var toggleJs = "(function(){document.addEventListener('click',function(e){var cb=e.target.closest('.command-btn,.ia-copy-btn');if(cb){var box=cb.parentElement,c=box&&box.querySelector('code');var t=c?c.textContent:'';try{navigator.clipboard.writeText(t);}catch(_){}var o=cb.textContent;cb.textContent='\\u2713 Copiado';setTimeout(function(){cb.textContent=o;},1500);return;}var h=e.target.closest('[data-lca-acc]');if(!h)return;var b=h.nextElementSibling;if(!b)return;var willOpen=b.getAttribute('data-lca-open')==='0';b.style.display=willOpen?'':'none';b.classList.toggle('open',willOpen);b.setAttribute('data-lca-open',willOpen?'1':'0');var cv=h.querySelector('[class*=chevron]');if(cv)cv.classList.toggle('open',willOpen);});})();";
@@ -1011,6 +1339,39 @@ export default {
 
     sevClass(sev) {
       return (sev || 'info').toLowerCase();
+    },
+
+    // ¿Es una versión solo ANOTADA en un fichero de dependencias?
+    //
+    // Único punto del template que replica una condición del backend
+    // (isActionable() en lib/severity-map.js). Se replica porque un ui_template
+    // de Dashboard 2.0 no puede importar módulos; por eso las CIFRAS vienen
+    // precalculadas del payload y aquí solo queda esta comparación de una línea.
+    // El '!== image' (y no '=== host') mantiene el comportamiento de siempre en
+    // payloads anteriores al campo scope.
+    isDeclared(f) {
+      return f && f.origin === 'declared' && f.scope !== 'image';
+    },
+
+    // El `reason` de un hijo que falló arrastra la traza FATAL entera de Trivy
+    // (varias líneas con la ruta repetida). Ilegible en una fila: se corta por
+    // "Detalle:", que es donde el módulo separa la explicación del volcado.
+    shortReason(r) {
+      if (!r) return 'motivo no disponible';
+      var t = String(r).split('Detalle:')[0].trim();
+      // Corta en el primer punto: la primera frase dice qué pasó, el resto son
+      // instrucciones que ya están en el aviso de arriba.
+      var p = t.indexOf('. ');
+      if (p > 40) t = t.slice(0, p + 1);
+      return t.length > 200 ? t.slice(0, 197) + '…' : t;
+    },
+
+    // Ruta legible: el home del usuario se abrevia a "~" para que la carpeta
+    // relevante quepa en la fila.
+    shortPath(p) {
+      var t = this.trivyScan && this.trivyScan.target;
+      if (!p) return '—';
+      return (t && p.indexOf(t) === 0) ? '~' + p.slice(t.length) : p;
     },
 
     // ¿El finding trae metadatos estructurados de Trivy para la tira de detalles?
@@ -1380,7 +1741,8 @@ export default {
   /* ── SEVERITY COUNTERS ── */
   .counters-row {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* auto-fit: 4 tarjetas de severidad, o 5 cuando hay informativos. */
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 14px;
     margin-bottom: 20px;
   }
@@ -1692,6 +2054,137 @@ export default {
     border: 1px solid var(--border);
     flex-shrink: 0;
   }
+
+  /* ── Procedencia del paquete (origin) ── */
+  .origin-badge {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    flex-shrink: 0;
+  }
+  /* Neutro A PROPÓSITO: no comunica nivel de riesgo porque, para este equipo,
+     no lo hay. Ocupa el sitio del sev-badge en la fila. */
+  .origin-badge.declared {
+    background: #F1F5F9;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  /* 'installed' sí acompaña a la severidad: hereda su color componiendo con
+     .sev-badge.<sev>, que ya define fondo, texto y borde. */
+  .origin-badge.installed { border: 1px dashed currentColor; background: transparent; }
+  .origin-badge.installed.critical { color: var(--critical); }
+  .origin-badge.installed.high     { color: var(--high); }
+  .origin-badge.installed.medium   { color: var(--medium); }
+  .origin-badge.installed.low      { color: var(--low); }
+  .origin-badge.installed.info     { color: var(--info); }
+
+  .finding-note {
+    font-size: 11px;
+    font-style: italic;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  @media (max-width: 760px) { .finding-note { display: none; } }
+
+  /* ── Contador de informativos: neutro, no es un nivel de riesgo ── */
+  .counter-card.informative { cursor: default; }
+  .counter-card.informative .counter-num { color: var(--text-secondary); }
+
+  /* ── Cabecera: recuento segmentado ── */
+  /* El section-header reparte con space-between; sin agrupar, las pills se
+     desperdigaban a lo ancho de la fila. */
+  .section-pills { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .pill-action { background: var(--high-bg); color: var(--high); border-color: var(--high-border); font-weight: 600; }
+  .pill-calm   { background: var(--low-bg);  color: var(--low);  border-color: var(--low-border);  font-weight: 600; }
+
+  /* ── "Nada que arreglar" ── */
+  .nothing-card {
+    background: var(--low-bg);
+    border: 1px solid var(--low-border);
+    border-left: 4px solid var(--low);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 20px;
+  }
+  .nothing-title { font-size: 15px; font-weight: 700; color: #3F6212; margin-bottom: 8px; }
+  .nothing-body  { font-size: 12.5px; color: var(--text); line-height: 1.6; margin-top: 6px; }
+  .nothing-body code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; background: rgba(255,255,255,.7);
+    padding: 1px 5px; border-radius: 4px;
+  }
+
+  /* ── Alcance del análisis ── */
+  .scope-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px 20px;
+    margin-bottom: 20px;
+  }
+  .scope-header { display: flex; align-items: center; gap: 8px; }
+  .scope-ico    { font-size: 15px; }
+  .scope-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-secondary); flex: 1;
+  }
+  .scope-toggle {
+    background: none; border: 1px solid var(--border); border-radius: 20px;
+    padding: 3px 11px; font-size: 11.5px; color: var(--text-secondary);
+    cursor: pointer; transition: background .15s;
+  }
+  .scope-toggle:hover { background: #F8FAFC; }
+  .scope-pills { margin-top: 10px; }
+  .scope-pills code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; color: var(--text);
+  }
+  .pill-warn { background: var(--medium-bg); color: var(--medium); border-color: var(--medium-border); }
+
+  .scope-notice {
+    display: flex; align-items: flex-start; gap: 10px;
+    margin-top: 12px; padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--info-border);
+    border-left-width: 4px;
+    background: var(--info-bg);
+  }
+  .scope-notice.warn { background: var(--medium-bg); border-color: var(--medium-border); }
+  .scope-notice.ok   { background: var(--low-bg);    border-color: var(--low-border); }
+  .scope-notice-ico  { font-size: 16px; line-height: 1.3; flex-shrink: 0; }
+  .scope-notice-title { font-size: 13px; font-weight: 700; color: var(--text); }
+  /* "Lo has activado, pero no ha podido hacerse": lo primero que necesita leer
+     quien marcó la casilla y no ve resultados. */
+  .scope-notice-lead  { font-size: 12.5px; font-weight: 700; color: var(--text); margin-top: 3px; }
+  .scope-notice-body  { font-size: 12.5px; color: var(--text); line-height: 1.55; margin-top: 3px; }
+  /* La frase que impide leer "no se ha comprobado" como "está limpio". */
+  .scope-notice-warn  { font-size: 12.5px; font-weight: 600; color: var(--text); margin-top: 6px; }
+  .scope-notice-hint  {
+    font-size: 12px; color: var(--text-secondary); margin-top: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .scope-detail { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 12px; }
+  .scope-detail-block + .scope-detail-block { margin-top: 12px; }
+  .scope-detail-title {
+    font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .4px; color: var(--text-secondary); margin-bottom: 5px;
+  }
+  .scope-detail-title.warn { color: var(--medium); }
+  .scope-detail-item { font-size: 12px; color: var(--text); line-height: 1.6; }
+  .scope-detail-item code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; background: #F1F5F9; padding: 1px 5px;
+    border-radius: 4px; margin-right: 4px;
+  }
+  .scope-detail-flow { display: flex; flex-wrap: wrap; gap: 4px; }
+  .scope-detail-note { font-size: 11.5px; color: var(--text-secondary); margin-top: 4px; font-style: italic; }
+  .scope-detail-note.warn { color: var(--medium); font-style: normal; font-weight: 600; }
 
   /* ── Logs del sistema: tabla de eventos ── */
   .seclog { padding: 12px 16px 16px; border-top: 1px dashed var(--border); }

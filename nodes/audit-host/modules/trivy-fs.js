@@ -24,12 +24,26 @@
  * Exporta:
  *   runTrivyFs({ target, skipDirs, systemPackages }) → Promise<{
  *     skipped?: boolean,
+ *     kind?: 'not-installed'|'unsupported'|'error',
  *     reason?: string,
  *     Results: Array<{ Target, Class, Type, Vulnerabilities: Array }>,
  *     scan: { mode, target, skipDirs, durationMs, resolvedFrom, trivyVersion }
  *   }>
- *   resolveUserHome()  → { home, resolvedFrom }
- *   DEFAULT_SKIP_DIRS  → string[]
+ *   resolveUserHome()          → { home, resolvedFrom }
+ *   systemPackagesSupport(...)  → estado del análisis de paquetes del sistema
+ *   DEFAULT_SKIP_DIRS          → string[]
+ *
+ * ── Sobre `kind` ────────────────────────────────────────────────────────────
+ * Un `skipped` no siempre es un fallo. Quien llama tiene que distinguir tres
+ * naturalezas distintas, y hacerlo por el TEXTO de `reason` no vale: ese texto
+ * cambia según la plataforma ("rootfs solo aplica en Linux" en macOS, "Trivy no
+ * soporta pacman" en Arch) y ambos casos son lo mismo.
+ *
+ *   'not-installed' → falta la herramienta. El usuario puede arreglarlo.
+ *   'unsupported'   → esta combinación de plataforma/gestor no se puede
+ *                     analizar. NO es un error: la auditoría debe continuar y
+ *                     el límite se comunica en el bloque de alcance.
+ *   'error'         → el escaneo se intentó y se rompió. Sí es un error.
  */
 
 const os = require("os");
@@ -76,6 +90,44 @@ const WALK_ERROR_RE = /walk dir error|fdopendir|operation timed out|permission d
 
 /** Prefijos de home por plataforma, para el fallback de homeForUser(). */
 const HOME_BASE = { darwin: "/Users", linux: "/home" };
+
+/**
+ * Gestores de paquetes de sistema cuya base de datos Trivy sabe leer.
+ *
+ * Fuera quedan pacman (Arch y derivadas) y emerge (Gentoo): Trivy no tiene
+ * analizador para ellos. Se gestiona por GESTOR y no por nombre de distribución
+ * por el mismo motivo que el gate de runTrivyRootfs(): una lista de nombres de
+ * distro envejece y sería una segunda fuente de verdad sobre el mismo hecho.
+ */
+const TRIVY_OS_MANAGERS = ["apt", "dnf", "yum", "zypper", "apk"];
+
+/**
+ * ¿Se han analizado —o se podrían analizar— los paquetes del sistema?
+ *
+ * Función PURA: recibe plataforma y gestor por parámetro en vez de leer
+ * process.platform, para que los tests cubran las tres plataformas desde una
+ * sola máquina. Devuelve un HECHO, no prosa: el texto para el usuario lo pone
+ * el dashboard, que es quien sabe a quién se lo está contando.
+ *
+ * @param {string} platform            'linux'|'darwin'|'win32'
+ * @param {string|null} pkgManager     salida de detectPackageManager()
+ * @param {{enabled?: boolean, systemScan?: Object}} [opts]
+ *        enabled    → el interruptor "Analizar paquetes del sistema" del nodo
+ *        systemScan → sub-bloque parsed.scan.system que dejó mergeScans().
+ *                     Se mira ESE y no el resultado entero: desde que los dos
+ *                     escaneos se suman, que falle el del sistema ya no marca
+ *                     como `skipped` el resultado global — el del home sigue ahí.
+ * @returns {'scanned'|'supported-not-run'|'unsupported-manager'|'not-applicable'|'failed'}
+ */
+function systemPackagesSupport(platform, pkgManager, opts = {}) {
+  // rootfs recorre un árbol de paquetes de SO. macOS (Homebrew instala software
+  // del usuario, no del sistema) y Windows no tienen uno que Trivy entienda.
+  if (platform !== "linux") return "not-applicable";
+  if (!TRIVY_OS_MANAGERS.includes(pkgManager)) return "unsupported-manager";
+  if (!opts.enabled) return "supported-not-run";
+  if (!opts.systemScan || opts.systemScan.status !== "scanned") return "failed";
+  return "scanned";
+}
 
 /**
  * Home de un usuario concreto del sistema, consultando la base de datos real
@@ -186,6 +238,7 @@ async function runTrivyCommand(cmd, timeoutMs) {
         const m = stderr.match(/(\/[^\s:]+)/);
         return {
           skipped: true,
+          kind: "error",
           walkError: true,
           path: m ? m[1] : null,
           reason:
@@ -195,14 +248,14 @@ async function runTrivyCommand(cmd, timeoutMs) {
             `"Carpeta a auditar" del nodo, o desmonta esa unidad. Detalle: ${stderr}`,
         };
       }
-      return { skipped: true, reason: `trivy failed: ${stderr}` };
+      return { skipped: true, kind: "error", reason: `trivy failed: ${stderr}` };
     }
   }
 
   try {
     return JSON.parse(stdout);
   } catch (_) {
-    return { skipped: true, reason: "trivy output is not valid JSON" };
+    return { skipped: true, kind: "error", reason: "trivy output is not valid JSON" };
   }
 }
 
@@ -214,9 +267,9 @@ async function runTrivyCommand(cmd, timeoutMs) {
  *
  * @returns {Promise<Object>}
  */
-async function runTrivyRootfs() {
+async function runTrivyRootfs(pkgManager) {
   if (process.platform !== "linux") {
-    return { skipped: true, reason: "rootfs solo aplica en Linux" };
+    return { skipped: true, kind: "unsupported", reason: "rootfs solo aplica en Linux" };
   }
 
   // Gate por GESTOR, no por nombre de distribución: el hecho real es que Trivy
@@ -224,9 +277,11 @@ async function runTrivyRootfs() {
   // sus derivadas (CachyOS, Manjaro, EndeavourOS, Garuda, Artix…) presentes y
   // futuras; una lista de nombres de distro envejece y sería una segunda fuente
   // de verdad sobre el mismo hecho.
-  const mgr = await detectPackageManager();
+  // El nodo ya detectó el gestor para el bloque de alcance: se acepta por
+  // parámetro para no repetir la ronda de commandExists.
+  const mgr = pkgManager || (await detectPackageManager());
   if (mgr === "pacman") {
-    return { skipped: true, reason: "Trivy no soporta pacman" };
+    return { skipped: true, kind: "unsupported", reason: "Trivy no soporta pacman" };
   }
 
   const started = Date.now();
@@ -248,31 +303,95 @@ async function runTrivyRootfs() {
 }
 
 /**
- * Ejecuta Trivy sobre el home del usuario (o el objetivo configurado).
- * Si Trivy no está instalado devuelve { skipped: true }.
+ * Fusiona el escaneo del home con el de los paquetes del sistema.
  *
- * @param {{ target?: string, skipDirs?: string[], systemPackages?: boolean }} [opts]
+ * Concatenar `Results` es TODO lo que hace falta: los dos lados producen
+ * elementos con la misma forma ({ Target, Class, Type, Packages,
+ * Vulnerabilities }) y nada de la ruta de host lee el envoltorio
+ * (ArtifactName/ArtifactType/SchemaVersion solo los consume audit-image).
+ *
+ * @param {Object} home    resultado de scanSingle/scanHomeByChildren
+ * @param {Object} system  resultado de runTrivyRootfs
+ * @returns {Object}
+ */
+function mergeScans(home, system) {
+  // El home ya falló: la auditoría va a abortar igualmente (kind 'error' o
+  // 'not-installed') y el resultado del sistema no cambia esa decisión.
+  if (home.skipped) return home;
+
+  if (system.skipped) {
+    // El punto importante: los Results del home quedan INTACTOS y del sistema
+    // solo se anota el motivo. Un límite conocido de la herramienta no puede
+    // tirar el trabajo que sí se hizo — mismo principio que el gate del nodo.
+    home.scan.system = {
+      attempted: true,
+      status: system.kind === "unsupported" ? "unsupported" : "error",
+      reason: system.reason || null,
+      mode: "rootfs",
+      target: "/",
+      durationMs: null,
+      results: 0,
+    };
+    return home;
+  }
+
+  const results = system.Results || [];
+  home.Results.push(...results);
+  home.scan.system = {
+    attempted: true,
+    status: "scanned",
+    reason: null,
+    mode: "rootfs",
+    target: "/",
+    durationMs: (system.scan && system.scan.durationMs) || null,
+    results: results.length,
+  };
+  return home;
+}
+
+/**
+ * Ejecuta Trivy sobre el home del usuario (o el objetivo configurado) y, si se
+ * pide, TAMBIÉN sobre los paquetes del sistema.
+ *
+ * Los dos escaneos se SUMAN. Antes `systemPackages` hacía `return` antes de
+ * resolver el objetivo, así que sustituía el escaneo del home en vez de
+ * añadirse: un usuario de Debian que marcaba la casilla dejaba de auditar su
+ * carpeta personal, y de paso el campo "Carpeta a auditar" del nodo quedaba
+ * anulado en silencio. La casilla dice "analizar TAMBIÉN", y hacía lo contrario.
+ *
+ * Orden deliberado: el home PRIMERO. El rootfs puede consumir sus diez minutos
+ * de timeout, y cuando eso ocurra el resultado del home ya está en la mano.
+ * Secuencial y no en paralelo, además, para no poner dos procesos de Trivy a
+ * competir por la misma base de datos de vulnerabilidades.
+ *
+ * @param {{ target?: string, skipDirs?: string[], systemPackages?: boolean,
+ *           pkgManager?: string }} [opts]
  * @returns {Promise<Object>}
  */
 async function runTrivyFs(opts = {}) {
   const available = await commandExists("trivy");
   if (!available) {
-    return { skipped: true, reason: "trivy not installed" };
+    return { skipped: true, kind: "not-installed", reason: "trivy not installed" };
   }
-
-  if (opts.systemPackages) return runTrivyRootfs();
 
   const { target, resolvedFrom } = resolveScanTarget(opts.target);
   const skipDirs = Array.isArray(opts.skipDirs) && opts.skipDirs.length
     ? opts.skipDirs
     : DEFAULT_SKIP_DIRS;
 
-  // Carpeta elegida a mano por el usuario: una sola pasada. Ha acotado el ámbito
-  // él, no hay que protegerlo de sus propias unidades de red.
-  if (resolvedFrom === "config") {
-    return scanSingle(target, skipDirs, resolvedFrom);
-  }
-  return scanHomeByChildren(target, skipDirs, resolvedFrom);
+  // 1. El HOME, siempre. Carpeta elegida a mano por el usuario: una sola pasada.
+  //    Ha acotado el ámbito él, no hay que protegerlo de sus propias unidades
+  //    de red.
+  const home = resolvedFrom === "config"
+    ? await scanSingle(target, skipDirs, resolvedFrom)
+    : await scanHomeByChildren(target, skipDirs, resolvedFrom);
+
+  // 2. Los paquetes del sistema, solo a petición. El gate por plataforma y por
+  //    gestor vive dentro de runTrivyRootfs.
+  if (!opts.systemPackages) return home;
+
+  const system = await runTrivyRootfs(opts.pkgManager);
+  return mergeScans(home, system);
 }
 
 /** Una sola invocación de Trivy sobre `target`. */
@@ -336,7 +455,7 @@ async function scanHomeByChildren(home, skipDirs, resolvedFrom) {
   try {
     entries = fs.readdirSync(home, { withFileTypes: true });
   } catch (err) {
-    return { skipped: true, reason: `no se pudo leer el home ${home}: ${err.message}` };
+    return { skipped: true, kind: "error", reason: `no se pudo leer el home ${home}: ${err.message}` };
   }
 
   const merged = { SchemaVersion: 2, ArtifactName: home, ArtifactType: "filesystem", Results: [] };
@@ -389,4 +508,12 @@ async function scanHomeByChildren(home, skipDirs, resolvedFrom) {
   return merged;
 }
 
-module.exports = { runTrivyFs, resolveUserHome, resolveScanTarget, DEFAULT_SKIP_DIRS };
+module.exports = {
+  runTrivyFs,
+  mergeScans,
+  resolveUserHome,
+  resolveScanTarget,
+  systemPackagesSupport,
+  DEFAULT_SKIP_DIRS,
+  TRIVY_OS_MANAGERS,
+};
