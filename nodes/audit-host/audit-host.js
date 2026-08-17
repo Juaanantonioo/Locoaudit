@@ -99,13 +99,52 @@ module.exports = function (RED) {
         const securityEvents = secResult.status === "fulfilled" ? secResult.value : null;
 
         // Si el usuario activó Lynis o Trivy y la herramienta no está instalada → error explícito
-        if (enableLynis && lynis && lynis.skipped) {
-          node.status({ fill: "red", shape: "ring", text: "Lynis no instalado" });
-          done(new Error(
-            "Lynis está activado en la configuración del nodo pero no se encontró instalado en el sistema. " +
-            "Instala Lynis (https://cisofy.com/lynis/) o desactiva el módulo en las opciones del nodo."
-          ));
-          return;
+        //
+        // Un módulo que LANZA se trata igual que uno que devuelve un skipped de
+        // naturaleza 'error': antes no era así y la lógica quedaba invertida —un
+        // throw dejaba lynis a null y la auditoría continuaba, mientras que un
+        // skipped limpio la abortaba. Un fallo es un fallo, llegue como llegue.
+        const lynisResolved = lynis || (
+          lynisResult.status === "rejected" && enableLynis
+            ? { skipped: true, kind: "error", reason: String(lynisResult.reason) }
+            : null
+        );
+
+        if (enableLynis && lynisResolved && lynisResolved.skipped) {
+          // Se discrimina por la NATURALEZA del resultado (lynis.kind), NUNCA por
+          // el texto de lynis.reason: ese texto interpola mensajes del sistema
+          // operativo y cambia entre plataformas, que es exactamente lo que hacía
+          // fallar la comparación de strings en el gate de Trivy. Y "no
+          // instalado", "no aplica aquí", "tardó demasiado" y "se rompió" tienen
+          // cuatro soluciones distintas: confundirlas mandaba al usuario a
+          // reinstalar una herramienta que ya tiene.
+          if (lynisResolved.kind === "not-installed") {
+            node.status({ fill: "red", shape: "ring", text: "Lynis no instalado" });
+            done(new Error(
+              "Lynis está activado en la configuración del nodo pero no se encontró instalado en el sistema. " +
+              "Instala Lynis (https://cisofy.com/lynis/) o desactiva el módulo en las opciones del nodo."
+            ));
+            return;
+          }
+          if (lynisResolved.kind === "timeout") {
+            node.status({ fill: "red", shape: "ring", text: "Lynis agotó el tiempo" });
+            done(new Error(
+              `Lynis no terminó a tiempo. ${lynisResolved.reason}. ` +
+              "Ejecútalo a mano para ver dónde se detiene, o desactiva el módulo en las opciones del nodo."
+            ));
+            return;
+          }
+          if (lynisResolved.kind === "error") {
+            node.status({ fill: "red", shape: "ring", text: "Lynis falló" });
+            done(new Error(`Lynis no pudo completar la auditoría. ${lynisResolved.reason}`));
+            return;
+          }
+          // kind 'unsupported': esta plataforma no puede ejecutar Lynis (Windows
+          // sin WSL, límite documentado en CLAUDE.md). No es un fallo — es un
+          // límite conocido, y un límite conocido no puede tirar el trabajo que
+          // sí se hizo: la auditoría CONTINÚA con el resto de módulos y el motivo
+          // viaja en scanMeta.lynis hasta el dashboard.
+          node.warn(`[audit-host] lynis omitido: ${lynisResolved.reason}`);
         }
         if (enableTrivy && trivy && trivy.skipped) {
           // Se discrimina por la NATURALEZA del resultado (trivy.kind), no por el
@@ -222,6 +261,24 @@ module.exports = function (RED) {
                 results: (systemScan && systemScan.results) || 0,
               };
             })(),
+            // Índice de hardening: MÉTRICA de cabecera, no hallazgo.
+            //
+            // Antes viajaba como el finding HOST-LYN-IDX y el gauge del
+            // dashboard lo recuperaba escaneando el array por ese ID — o sea, un
+            // hallazgo cuyo único consumidor lo buscaba para sacarlo del flujo
+            // normal. Ahora va donde le corresponde, con la escala al lado para
+            // que la etiqueta (Deficiente/Mejorable/Aceptable) deje de estar
+            // escrita a mano en el HTML.
+            lynis: {
+              status: enableLynis
+                ? (lynisResolved && lynisResolved.skipped ? (lynisResolved.kind || "skipped") : "ok")
+                : "disabled",
+              reason: (lynisResolved && lynisResolved.skipped) ? lynisResolved.reason : null,
+              hardeningIndex: (lynis && lynis.hardeningIndex != null) ? lynis.hardeningIndex : null,
+              version: (lynis && lynis.version) || null,
+              testsDone: (lynis && lynis.testsDone) || null,
+              scale: { deficiente: "<30", mejorable: "30-54", aceptable: ">=55" },
+            },
           },
           raw: { ...raw, osInfo },
           timestamp: new Date().toISOString(),

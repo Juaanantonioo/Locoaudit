@@ -206,7 +206,10 @@ function testLynisPkgs() {
   const raw = { hardeningIndex: null, warnings: [{ id: "PKGS-7346", description: "outdated packages" }], suggestions: [] };
   // Gestor forzado para que el test sea determinista en cualquier SO.
   const out = fromLynisRaw(raw, "linux", "apt");
-  const f = out.find((x) => x.id.startsWith("HOST-LYN-0"));
+  // El id de finding dejó de ser posicional (HOST-LYN-001) y pasó a
+  // HOST-LYN-<CONTROL>-<hash>, porque el orden de aparición no identificaba
+  // nada: se busca por el control, que es lo que este bloque comprueba.
+  const f = out.find((x) => x.control === "PKGS-7346");
   if (!f) { fail("Lynis PKGS: no generó finding individual"); return; }
   if (f.command !== "sudo apt update && sudo apt upgrade") {
     fail(`Lynis PKGS: command esperado "sudo apt update && sudo apt upgrade", got "${f.command}"`);
