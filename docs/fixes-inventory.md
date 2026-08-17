@@ -46,10 +46,10 @@ mismo esquema) quedan en el historial de git.
 | 2 | `HOST-MEM-001` | :166 | "Identificar procesos con alto consumo de RAM…" | no | ninguna | — | no |
 | 3 | `HOST-DISK-nnn` | :193 | "Liberar espacio en `<mount>`…" | no | ninguna | — | no |
 | 4 | `HOST-SW-DANGER-nnn` | `fromSwInventory()` :208 | `getFixForProcess(name, platform, pkgManager)` (§7) | según §7 | recibida | **real detectado** | no *(antes `[PLATAFORMA]`)* |
-| 5 | `HOST-LYN-IDX` | :318 | "Revisar advertencias y sugerencias de Lynis…" | no | ninguna | lynis | no |
-| 6 | `HOST-LYN-nnn` | `getLynisFixText(id, platform, pkgManager)` :286 | 15 prefijos × plataforma. Si un prefijo no aplica a un SO → guía genérica, nunca los pasos del otro | no | **ramificado** | real (PKGS) | no *(antes `[PLATAFORMA]`)* |
-| 7 | `HOST-LYN-WARN-EXTRA` | :359 | "Ejecutar 'lynis show warnings'…" | no | ninguna | lynis | no |
-| 8 | `HOST-LYN-SUG` | :392 | "Consultar 'lynis show suggestions'…" | no | ninguna | lynis | no |
+| 5 | *(retirado)* | — | `HOST-LYN-IDX` dejó de ser finding: el hardening index es una métrica y viaja en `scanMeta.lynis` | — | — | — | — |
+| 6 | `HOST-LYN-<CTRL>-<hash>` | `getLynisFixText(id, platform, pkgManager)` | 15 prefijos × plataforma, aplicado ahora a **todos** los controles (antes solo a ≤5 avisos). Pasos: sugerencia → guía del SO → orden del campo 3 si la hay | sí, si el campo 3 trae `Run '<cmd>'` o el prefijo es PKGS | **ramificado** | real (PKGS) | no |
+| 7 | *(retirado)* | — | `HOST-LYN-WARN-EXTRA`: el cajón de avisos sobrantes desaparece con un finding por entrada | — | — | — | — |
+| 8 | *(retirado)* | — | `HOST-LYN-SUG`: las sugerencias ya no colapsan en una tarjeta que remitía a `lynis show suggestions` | — | — | — | — |
 | 9 | `HOST-SEC-SKIP` | :431 | Acceso a logs en Linux / macOS / Windows | no | las 3 | — | no |
 | 10 | `HOST-SEC-SRC` | :451 | "Revisar permisos de lectura de logs." | no | ninguna | — | no |
 | 11 | `HOST-SEC-SSH-R-nnn` | `sshHardenFix(platform)` :475 | linux → sshd_config + fail2ban · darwin → sshd_config + Sesión remota · win32 → OpenSSH Server | no | **ramificado** | — | no *(antes `[PLATAFORMA]`)* |

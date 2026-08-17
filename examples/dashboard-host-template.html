@@ -86,6 +86,9 @@
           <span style="font-size:11px;color:var(--text-secondary);">
             Lynis · {{ lynisIdx >= 55 ? 'Aceptable' : lynisIdx >= 30 ? 'Mejorable' : 'Deficiente' }}
           </span>
+          <span v-if="lynisMetaLine" style="font-size:10px;color:var(--text-secondary);opacity:.8;">
+            {{ lynisMetaLine }}
+          </span>
         </div>
       </div>
 
@@ -471,7 +474,11 @@
                           :class="sevClass(f.severity)"
                           title="Paquete instalado en disco: la actualización sí te corresponde a ti.">Instalado</span>
                   </template>
-                  <span class="cat-badge">{{ catLabel(f.category) }}</span>
+                  <!-- La etiqueta del grupo de control (AUTH → "Autenticación y
+                       contraseñas") gana a la de categoría cuando existe: dentro
+                       de "Sistema & Actualizaciones" es lo único que distingue
+                       treinta tarjetas de Lynis entre sí. -->
+                  <span class="cat-badge">{{ f.subcategory || catLabel(f.category) }}</span>
                   <span class="finding-title">{{ f.title }}</span>
                   <span v-if="isDeclared(f)" class="finding-note">anotado en un lockfile · nada que actualizar</span>
                   <span class="finding-expand-icon">{{ openFindings[g.key + '-' + fi] ? '▲' : '▼' }}</span>
@@ -510,6 +517,36 @@
                         <div v-if="f.cveCount > 1" class="meta-cell">
                           <span class="meta-label">🧩 CVEs</span>
                           <span class="meta-value">{{ f.cveCount }}</span>
+                        </div>
+                        <!-- Metadatos de control (Lynis). El código va aquí, de
+                             dato secundario: el título de la tarjeta es la
+                             descripción legible, no el identificador. -->
+                        <div v-if="f.control" class="meta-cell">
+                          <span class="meta-label">🔖 Control Lynis</span>
+                          <span class="meta-value meta-mono">{{ f.control }}</span>
+                        </div>
+                        <div v-if="f.lynisType" class="meta-cell">
+                          <span class="meta-label">⚠️ Tipo</span>
+                          <span class="meta-value">{{ lynisTypeLabel(f) }}</span>
+                        </div>
+                        <div v-if="f.detail" class="meta-cell">
+                          <span class="meta-label">🔍 Detalle</span>
+                          <span class="meta-value meta-mono">{{ f.detail }}</span>
+                        </div>
+                        <div v-if="f.actionType === 'reboot'" class="meta-cell">
+                          <span class="meta-label">🔄 Requiere</span>
+                          <span class="meta-value">Reiniciar el equipo</span>
+                        </div>
+                        <!-- Lynis NO puntúa sus controles: el nivel lo pone
+                             LoCoAudit. Decirlo en la tarjeta es la única forma
+                             de que el usuario sepa de quién es el juicio. -->
+                        <div v-if="f.severitySource === 'locoaudit'" class="meta-cell"
+                             title="Lynis no asigna severidad a sus controles. Este nivel lo establece LoCoAudit según el tipo de control (AUTH, FIRE, NETW…) y según si es un aviso o una sugerencia.">
+                          <span class="meta-label">⚖️ Severidad</span>
+                          <span class="meta-value">
+                            {{ sevLabel(f.severity) }}
+                            <span class="meta-muted">· criterio de LoCoAudit</span>
+                          </span>
                         </div>
                         <div class="meta-cell">
                           <span class="meta-label">🔎 Fuente</span>
@@ -915,7 +952,15 @@ export default {
       return new Date(ts).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
     },
 
+    // El índice llega como MÉTRICA en scanMeta.lynis. Dejó de ser el finding
+    // HOST-LYN-IDX: no señalaba ningún defecto concreto que el usuario pudiera
+    // arreglar, y un índice bajo metía un 'high' en el riesgo global por su
+    // cuenta. La rama de findings se conserva SOLO para payloads anteriores a
+    // ese cambio (un dashboard abierto con datos de una ejecución vieja).
     lynisIdx() {
+      var meta = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.lynis;
+      if (meta && meta.hardeningIndex != null) return meta.hardeningIndex;
+
       var findings = this.auditData && this.auditData.findings;
       if (!findings) return null;
       var f = null;
@@ -925,6 +970,16 @@ export default {
       if (!f) return null;
       var m = (f.evidence || '').match(/(\d+)\/100/);
       return m ? parseInt(m[1], 10) : null;
+    },
+
+    // Subtítulo del gauge: "167 controles · Lynis 3.1.6" cuando el payload lo trae.
+    lynisMetaLine() {
+      var meta = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.lynis;
+      if (!meta) return '';
+      var parts = [];
+      if (meta.testsDone) parts.push(meta.testsDone + ' controles');
+      if (meta.version) parts.push('Lynis ' + meta.version);
+      return parts.join(' · ');
     },
 
     lynisColor() {
@@ -1008,9 +1063,16 @@ export default {
         catMap[key].push(f);
       });
       Object.keys(catMap).forEach(function(c) {
+        // Severidad primero, y a igualdad de severidad, por subcategoría. Así
+        // los controles de Lynis del mismo grupo (todos los AUTH, todos los
+        // NETW) quedan contiguos dentro del acordeón que ya existe, sin abrir
+        // un segundo nivel de plegado: eso obligaría a tocar openGroups,
+        // toggleGroup y el clon del snapshot, que ya dio problemas con v-show.
         catMap[c].sort(function(a, b) {
-          return (SEV_ORDER[(b.severity || '').toUpperCase()] || 0) -
-                 (SEV_ORDER[(a.severity || '').toUpperCase()] || 0);
+          var d = (SEV_ORDER[(b.severity || '').toUpperCase()] || 0) -
+                  (SEV_ORDER[(a.severity || '').toUpperCase()] || 0);
+          if (d !== 0) return d;
+          return (a.subcategory || '').localeCompare(b.subcategory || '', 'es');
         });
       });
       return Object.keys(catMap).map(function(c) {
@@ -1377,7 +1439,12 @@ export default {
     // ¿El finding trae metadatos estructurados de Trivy para la tira de detalles?
     hasMeta(f) {
       return !!(f.pkg || f.installedVersion || f.fixedVersion ||
-                (f.cvss != null) || f.cveCount || f.primaryUrl);
+                (f.cvss != null) || f.cveCount || f.primaryUrl ||
+                f.control || f.detail || f.severitySource);
+    },
+
+    lynisTypeLabel(f) {
+      return f.lynisType === 'warning' ? 'Aviso de Lynis' : 'Sugerencia de Lynis';
     },
 
     sevLabel(sev) {
