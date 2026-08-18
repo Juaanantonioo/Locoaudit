@@ -1,0 +1,9 @@
+Filesystem         Type  1024-blocks      Used Available Capacity Mounted on
+udev               devtmpfs   8117408         0   8117408       0% /dev
+tmpfs              tmpfs      1626884      1932   1624952       1% /run
+rpool/ROOT/default zfs      420533120  62914560 357618560      15% /
+rpool/home         zfs      378535936  20917376 357618560       6% /home
+rpool/var/log      zfs      359715840   2097280 357618560       1% /var/log
+rpool/srv          zfs      357749632    131072 357618560       1% /srv
+tank/media         zfs     1857618560 500000000 1357618560      27% /mnt/media
+/dev/sda1          ext4       1046512    312664    733848      30% /boot

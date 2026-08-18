@@ -10,6 +10,12 @@
  *      comprueba que quita IA + descargas, reabre grupos, abre detalles y
  *      produce un documento autocontenido.
  *
+ *   C) FLOWS — examples/flows.json es lo que la gente importa en Node-RED, así
+ *      que su `format` embebido tiene que ser BYTE A BYTE el .html de examples/.
+ *      Sin este paso la deriva es invisible: en julio de 2026 flows.json se
+ *      quedó tres semanas con dashboards viejos y dos ui-template huérfanos
+ *      mientras A) y B) daban verde, porque ninguno de los dos lo miraba.
+ *
  * Sin navegador ni dependencias. `node scripts/export-parity.js`.
  */
 
@@ -143,6 +149,70 @@ ok(body.includes("sudo cosa"), "perdió el comando del hallazgo");
 ok(body.includes("cmd-warn") && body.includes("no ejecuta"), "perdió el aviso inline en el export");
 ok(html.includes("--accent"), "no embebió el CSS del dashboard");
 if (fails === before) console.log("  ✓ prune IA/descargas · acordeón interactivo (grupos abiertos, detalles cerrados) · copiar conservado");
+
+// ── C) flows.json refleja los .html de examples/ ─────────────────────────────
+console.log("C) examples/flows.json ↔ examples/*.html");
+
+const FLOWS_REL = "examples/flows.json";
+const flows = JSON.parse(fs.readFileSync(path.join(ROOT, FLOWS_REL), "utf8"));
+const uiTemplates = flows.filter((n) => n.type === "ui-template");
+
+// Quién apunta a quién: un ui-template sin wire de entrada nunca recibe msg —
+// es basura de una edición anterior y no debe viajar en el flujo de ejemplo.
+const targeted = new Set();
+for (const n of flows) {
+  for (const outs of n.wires || []) for (const t of outs) targeted.add(t);
+}
+
+// El nodo al que pertenece cada template se deduce del sentinel que A) ya exige,
+// no del nombre: el nombre lo cambia cualquiera desde el editor.
+function nodeOf(fmt) {
+  const found = Object.keys(TEMPLATES).filter((k) => String(fmt).includes("LCA-STYLE-DASH:" + k));
+  return found.length === 1 ? found[0] : null;
+}
+
+const beforeC = fails;
+ok(uiTemplates.length === Object.keys(TEMPLATES).length,
+   `${FLOWS_REL} tiene ${uiTemplates.length} ui-template, esperados ${Object.keys(TEMPLATES).length}` +
+   " (¿quedan huérfanos de una edición anterior?)");
+
+const seen = new Map();
+for (const n of uiTemplates) {
+  const node = nodeOf(n.format || "");
+  if (!node) {
+    ok(false, `[${n.id}] ui-template sin sentinel LCA-STYLE-DASH reconocible (nombre: ${JSON.stringify(n.name || "")})`);
+    continue;
+  }
+  if (seen.has(node)) {
+    ok(false, `[${node}] duplicado en ${FLOWS_REL}: ${seen.get(node)} y ${n.id}`);
+    continue;
+  }
+  seen.set(node, n.id);
+
+  ok(targeted.has(n.id),
+     `[${node}] el ui-template ${n.id} no recibe wire de ningún nodo (huérfano)`);
+
+  const disk = fs.readFileSync(path.join(ROOT, TEMPLATES[node]), "utf8");
+  const fmt = String(n.format || "");
+  // Un simple "no coincide" no dice si sobra contenido o si es otra versión:
+  // se señala la primera diferencia para poder ir al sitio exacto.
+  let diff = -1;
+  if (fmt !== disk) {
+    const min = Math.min(fmt.length, disk.length);
+    diff = min;
+    for (let i = 0; i < min; i++) if (fmt[i] !== disk[i]) { diff = i; break; }
+  }
+  ok(fmt === disk,
+     `[${node}] ${FLOWS_REL} no coincide con ${TEMPLATES[node]} ` +
+     `(flows: ${fmt.length} chars, fichero: ${disk.length}; primera diferencia en el carácter ${diff}: ` +
+     `${JSON.stringify(fmt.slice(diff, diff + 30))} vs ${JSON.stringify(disk.slice(diff, diff + 30))}). ` +
+     "Vuelve a pegar el .html en el campo format del nodo " + n.id + ".");
+}
+
+for (const node of Object.keys(TEMPLATES)) {
+  ok(seen.has(node), `[${node}] no hay ningún ui-template para este nodo en ${FLOWS_REL}`);
+}
+if (fails === beforeC) console.log(`  ✓ ${uiTemplates.length} ui-template cableados y byte a byte iguales a examples/*.html`);
 
 if (fails) { console.log(`\n${fails} fallo(s).`); process.exit(1); }
 console.log("\nParidad/cableado OK.");

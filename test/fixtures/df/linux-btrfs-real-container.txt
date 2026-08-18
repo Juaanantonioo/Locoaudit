@@ -1,0 +1,14 @@
+Filesystem     Type    1024-blocks     Used Available Capacity Mounted on
+overlay        overlay   474095688 41305156 408634324      10% /
+tmpfs          tmpfs         65536        0     65536       0% /dev
+shm            tmpfs         65536        0     65536       0% /dev/shm
+/dev/vda1      ext4      474095688 41305156 408634324      10% /etc/hosts
+/dev/loop0     btrfs       2097152   313984   1562880      17% /mnt/sys
+/dev/loop0     btrfs       2097152   313984   1562880      17% /mnt/sys/home
+/dev/loop0     btrfs       2097152   313984   1562880      17% /mnt/sys/root
+/dev/loop0     btrfs       2097152   313984   1562880      17% /mnt/sys/srv
+/dev/loop0     btrfs       2097152   313984   1562880      17% /mnt/sys/var/cache
+/dev/loop0     btrfs       2097152   313984   1562880      17% /mnt/sys/var/log
+/dev/loop0     btrfs       2097152   313984   1562880      17% /mnt/sys/var/tmp
+/dev/loop1     ext4         996780       24    927944       1% /mnt/sys/boot
+/dev/loop2     vfat         523244        4    523240       1% /mnt/sys/efi
