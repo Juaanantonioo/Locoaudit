@@ -138,6 +138,26 @@ function parseNmapXml(xml) {
   return results;
 }
 
+/**
+ * Extrae el nombre de host resuelto por DNS inverso del XML de nmap.
+ *
+ * El escaneo NO usa -n, así que nmap resuelve el PTR del objetivo y lo emite en
+ * <hostnames>. Tres formas posibles, y solo una es un dato nuevo:
+ *
+ *   <hostnames><hostname name="mi-nas" type="PTR"/></hostnames>   → dato real
+ *   <hostnames><hostname name="example.com" type="user"/></...>   → el eco del
+ *       target que escribió el usuario: presentarlo sería devolverle su propia
+ *       entrada disfrazada de descubrimiento
+ *   <hostnames></hostnames>                                       → sin PTR
+ *
+ * @param {string} xml  Salida completa de nmap -oX -
+ * @returns {string|null}  Nombre PTR, o null si no hay
+ */
+function parsePtrHostname(xml) {
+  const m = String(xml || "").match(/<hostname\s+name="([^"]+)"\s+type="PTR"\s*\/>/);
+  return m ? m[1] : null;
+}
+
 // ── Asignación de severidad ───────────────────────────────────────────────────
 
 /**
@@ -237,7 +257,7 @@ async function runNmap(options = {}) {
         skipped: true,
         inconclusive: true,
         reason: `escaneo no concluyente: ${(err.stderr || err.message || "timeout o proceso interrumpido").trim()}`,
-        scan: { target, portSpec, scanMode, completed: false, filteredCount: 0, filteredReason: null },
+        scan: { target, portSpec, scanMode, completed: false, filteredCount: 0, filteredReason: null, hostname: null },
       };
     }
   }
@@ -256,6 +276,10 @@ async function runNmap(options = {}) {
   const reasonMatch = stdout.match(/<extrareasons\s+reason="([^"]*)"/);
   const filteredReason = reasonMatch ? reasonMatch[1] : null;
 
+  // Nombre PTR del objetivo: dato que nmap ya resolvía y se estaba tirando.
+  // null cuando el objetivo no tiene DNS inverso configurado.
+  const hostname = parsePtrHostname(stdout);
+
   const parsed = parseNmapXml(stdout);
   const ports  = parsed.map(applyMeta);
 
@@ -263,7 +287,7 @@ async function runNmap(options = {}) {
     skipped: false,
     ports,
     inconclusive,
-    scan: { target, portSpec, scanMode, completed, filteredCount, filteredReason },
+    scan: { target, portSpec, scanMode, completed, filteredCount, filteredReason, hostname },
   };
 }
 
@@ -271,4 +295,4 @@ async function runNmap(options = {}) {
 // la misma interfaz en el descubrimiento que la que usará el escaneo: si -sn
 // saliera por otra interfaz, podría decir "no alcanzable" sobre una ruta que el
 // escaneo sí tiene (o al revés).
-module.exports = { runNmap, parseNmapXml, findInterfaceForTarget };
+module.exports = { runNmap, parseNmapXml, parsePtrHostname, findInterfaceForTarget };

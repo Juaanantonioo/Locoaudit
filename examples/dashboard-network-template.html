@@ -60,6 +60,7 @@
           <span class="pill"><span class="pill-label">Fuente</span><span class="pill-sep">·</span>{{ srcLabel }}</span>
           <span class="pill"><span class="pill-label">Modo</span><span class="pill-sep">·</span>{{ modeLabel }}</span>
           <span class="pill" v-if="targetLabel"><span class="pill-label">Target</span><span class="pill-sep">·</span>{{ targetLabel }}</span>
+          <span class="pill" v-if="hostnameLabel"><span class="pill-label">Nombre</span><span class="pill-sep">·</span>{{ hostnameLabel }}</span>
           <span class="pill" v-if="rangeLabel"><span class="pill-label">Puertos</span><span class="pill-sep">·</span>{{ rangeLabel }}</span>
           <span class="pill" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">
             <span class="pill-label">Duración</span><span class="pill-sep">·</span>{{ durLabel }}
@@ -459,6 +460,19 @@ export default {
       var meta = this.auditData && this.auditData.scanMeta;
       if (!meta) return null;
       return meta.target || meta.customTarget || null;
+    },
+
+    hostnameLabel() {
+      var meta = this.auditData && this.auditData.scanMeta;
+      var h = meta && meta.hostname;
+      // Sin PTR no se pinta NADA — ni un guion: un guion sugiere "se comprobó y
+      // no tiene nombre", cuando lo que ocurre es que no hay dato que enseñar.
+      // Se comporta como el resto de campos opcionales de la tira.
+      if (!h) return null;
+      // Si el PTR repite literalmente el target, la píldora sería la misma
+      // información dos veces seguidas (caso "localhost").
+      if (h === this.targetLabel) return null;
+      return h;
     },
 
     rangeLabel() {

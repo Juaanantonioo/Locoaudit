@@ -18,7 +18,8 @@
  *       durationMs: number,
  *       targetState: "reachable" | "unreachable" | "unknown",  // host-discovery.js
  *       discovery: { method, reason, durationMs, cmd, detail }, // host-discovery.js
- *       scanStatus: "ok" | "inconclusive" | "not-run"           // nmap-wrapper.js
+ *       scanStatus: "ok" | "inconclusive" | "not-run",          // nmap-wrapper.js
+ *       hostname: string|null                                   // PTR del objetivo, null si no tiene
  *     },
  *     raw: { ports },
  *     timestamp: string (ISO 8601)
@@ -388,6 +389,11 @@ module.exports = function (RED) {
             // <extraports> no llegaba a emitirse).
             filteredPorts:  nmapScan ? nmapScan.filteredCount  : null,
             filteredReason: nmapScan ? nmapScan.filteredReason : null,
+            // Nombre DNS inverso (PTR) del objetivo, resuelto por el propio
+            // escaneo. null si el objetivo no tiene PTR: el dashboard entonces
+            // NO pinta la píldora, en vez de un guion que sugeriría "se
+            // comprobó y no tiene nombre".
+            hostname:       nmapScan ? nmapScan.hostname : null,
             // Transparencia del escaneo: target y rango exactos para que el
             // resultado sea reproducible (un `nmap localhost` manual escanea
             // otro conjunto de puertos — top-1000 de nmap — y puede diferir).

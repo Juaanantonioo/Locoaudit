@@ -73,6 +73,15 @@ function summarizeScanError(err) {
     return "El informe del análisis es demasiado grande para procesarlo (imagen muy voluminosa con cientos de paquetes). " +
            "El límite de memoria ya se ha ampliado; si persiste, escanea la imagen directamente con 'trivy image <ref>'.";
   }
+  // Lock de la caché de trivy. Va ANTES de la rama de timeout a propósito: el
+  // texto crudo de trivy contiene la palabra "timeout" y caería ahí, aconsejando
+  // subir un límite de tiempo que no tiene nada que ver con la causa.
+  if (/^LOCK:|cache may be in use by another process|unable to initialize (fs )?cache/i.test(e)) {
+    return "Trivy no pudo escanear esta imagen porque otro análisis estaba usando su caché al mismo tiempo " +
+           "(Trivy solo admite un escaneo a la vez). LoCoAudit ya escanea las imágenes de una en una; " +
+           "si ves este aviso, comprueba que no haya otro 'trivy' en marcha (otra auditoría de LoCoAudit " +
+           "en paralelo o una terminal) y repite el escaneo.";
+  }
   if (/^TIMEOUT:|context deadline exceeded|ETIMEDOUT|timed out/i.test(e)) {
     return "El análisis excedió el tiempo límite (imagen grande: la descarga puede tardar varios minutos). " +
            "Aumenta el 'Timeout por imagen' en la configuración del nodo.";
@@ -98,8 +107,44 @@ function summarizeScanError(err) {
   if (/no such host|dial tcp|network is unreachable|i\/o timeout|connection refused|TLS handshake/i.test(e)) {
     return "No se pudo contactar con el registro (problema de red o sin conexión).";
   }
-  const firstLine = e.split("\n").map((s) => s.trim()).filter(Boolean)[0] || "Fallo al escanear con Trivy";
-  return firstLine.slice(0, 200);
+  // Red de seguridad para causas aún sin catalogar: se quita el prefijo de log
+  // de trivy ("2026-…\tFATAL\tFatal error\trun error: "), 40 caracteres de ruido
+  // que empujaban la causa real fuera del recorte — con el error del lock, el
+  // corte a 200 caía justo en "…cache may be in use" y se comía " by another
+  // process: timeout", que era justamente la explicación.
+  const clean = e
+    .replace(/^\S+\s+FATAL\s+Fatal error\s+/m, "")
+    .replace(/^run error:\s*/, "");
+  const firstLine = clean.split("\n").map((s) => s.trim()).filter(Boolean)[0] || "Fallo al escanear con Trivy";
+  return firstLine.slice(0, 400);
+}
+
+/**
+ * Convierte la lista de imágenes que no se pudieron escanear en findings.
+ *
+ * Vive a nivel de módulo porque lo necesitan LOS DOS modos: el modo "specific"
+ * ya lo hacía, pero el modo "local" descartaba `trivy.failed` en silencio — una
+ * imagen que fallaba desaparecía sin finding, sin aviso y sin contar. Un fallo
+ * mudo es peor que cualquier mensaje truncado.
+ *
+ * @param {Array<{ ref: string, error: string }>} failed
+ * @returns {Finding[]}
+ */
+function buildScanErrorFindings(failed) {
+  return (failed || []).map((fa, i) =>
+    createFinding({
+      id:       `IMG-SCAN-ERR-${String(i + 1).padStart(3, "0")}`,
+      title:    `No se pudo escanear la imagen «${fa.ref || "desconocida"}»`,
+      severity: "info",
+      evidence: summarizeScanError(fa.error),
+      // La evidencia ya explica la causa concreta y qué hacer; el fix
+      // remite a ella para no contradecirla con un consejo genérico.
+      fix:      "Consulta el detalle del error arriba: indica la causa (tiempo de espera, tamaño, red, credenciales, caché ocupada o nombre) y cómo resolverla.",
+      category: "image",
+      source:   "trivy",
+      image:    fa.ref || null,
+    })
+  );
 }
 
 /**
@@ -231,22 +276,7 @@ module.exports = function (RED) {
           // Una imagen que no existe / no se detecta / falla → finding explicativo
           // por cada una (no se cae el flujo, y se reporta cuál y por qué).
           const failed = (trivy && trivy.failed) || [];
-          failed.forEach((fa, i) => {
-            findings.push(
-              createFinding({
-                id:       `IMG-SCAN-ERR-${String(i + 1).padStart(3, "0")}`,
-                title:    `No se pudo escanear la imagen «${fa.ref || "desconocida"}»`,
-                severity: "info",
-                evidence: summarizeScanError(fa.error),
-                // La evidencia ya explica la causa concreta y qué hacer; el fix
-                // remite a ella para no contradecirla con un consejo genérico.
-                fix:      "Consulta el detalle del error arriba: indica la causa (tiempo de espera, tamaño, red, credenciales o nombre) y cómo resolverla.",
-                category: "image",
-                source:   "trivy",
-                image:    fa.ref || null,
-              })
-            );
-          });
+          findings.push(...buildScanErrorFindings(failed));
 
           const scannedImages = (trivy && trivy.scannedImages) || [];
 
@@ -338,7 +368,14 @@ module.exports = function (RED) {
           ? normalizeImage(trivy, "trivy")
           : [];
 
-        const findings   = [...configFindings, ...trivyFindings];
+        // Imágenes que no se pudieron escanear. Se leen de `trivy.failed` SIEMPRE,
+        // también cuando el resultado viene con skipped:true — runTrivyImage
+        // devuelve `{ skipped: true, reason: "all image scans failed", failed }`
+        // en el peor caso (ninguna imagen escaneada), y ese es justo el caso que
+        // no puede quedarse mudo.
+        const scanErrors = buildScanErrorFindings(trivy && trivy.failed);
+
+        const findings   = [...configFindings, ...trivyFindings, ...scanErrors];
         const summary    = summarize(findings);
         const durationMs = Date.now() - startTime;
 
@@ -379,7 +416,9 @@ module.exports = function (RED) {
         node.status({
           fill:  statusColor,
           shape: "dot",
-          text:  `${docker.images.length} imágenes · ${docker.containers.length} contenedores · riesgo: ${maxSev}`,
+          text:  `${docker.images.length} imágenes · ${docker.containers.length} contenedores` +
+                 (scanErrors.length ? ` · ${scanErrors.length} fallo(s)` : "") +
+                 ` · riesgo: ${maxSev}`,
         });
 
         send(msg);
