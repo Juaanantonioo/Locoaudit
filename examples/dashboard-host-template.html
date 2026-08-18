@@ -1043,13 +1043,20 @@ export default {
       var findings = this.auditData && this.auditData.findings;
       if (!findings) return [];
       var fsev = this.filterSev;   // filtro por severidad (tarjetas clicables)
+      // 'disk' ESTÁ en la lista a propósito. Antes se descartaba porque la
+      // tarjeta de métricas de disco ya enseña el dato, pero esa tarjeta muestra
+      // CAPACIDAD (GB, %), no HALLAZGOS: un disco al 92 % contaba en la cabecera
+      // y en el donut y luego no tenía fila en ninguna parte de la lista, así que
+      // el usuario veía "1 alto" sin poder encontrarlo. Excluirlo además hacía
+      // que las barras por categoría no sumaran el total de la cabecera.
       var CATS = {
         vulnerability: { icon: '🔒', label: 'Vulnerabilidades',        order: 0 },
         cpu:           { icon: '⚙️', label: 'Procesador (CPU)',         order: 1 },
         memory:        { icon: '🧠', label: 'Memoria RAM',              order: 2 },
-        system:        { icon: '🖥️', label: 'Sistema & Actualizaciones', order: 3 },
-        network:       { icon: '🌐', label: 'Red & Firewall',           order: 4 },
-        'system-logs': { icon: '📋', label: 'Logs del sistema',         order: 5 },
+        disk:          { icon: '💾', label: 'Almacenamiento',           order: 3 },
+        system:        { icon: '🖥️', label: 'Sistema & Actualizaciones', order: 4 },
+        network:       { icon: '🌐', label: 'Red & Firewall',           order: 5 },
+        'system-logs': { icon: '📋', label: 'Logs del sistema',         order: 6 },
         other:         { icon: '📦', label: 'Otros',                    order: 99 }
       };
       var SEV_ORDER = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
@@ -1057,7 +1064,6 @@ export default {
       findings.forEach(function(f) {
         if (fsev !== 'all' && (f.severity || '').toLowerCase() !== fsev) return;
         var c = (f.category || 'other').toLowerCase();
-        if (c === 'disk') return;
         var key = CATS[c] ? c : 'other';
         if (!catMap[key]) catMap[key] = [];
         catMap[key].push(f);

@@ -1,0 +1,16 @@
+Filesystem     Type      1024-blocks      Used Available Capacity Mounted on
+dev            devtmpfs      8117408         0   8117408       0% /dev
+run            tmpfs         8134404      1876   8132528       1% /run
+/dev/nvme0n1p2 btrfs       498986496 168214528 329117184      34% /
+tmpfs          tmpfs         8134404       112   8134292       1% /dev/shm
+/dev/nvme0n1p2 btrfs       498986496 168214528 329117184      34% /home
+/dev/nvme0n1p2 btrfs       498986496 168214528 329117184      34% /root
+/dev/nvme0n1p2 btrfs       498986496 168214528 329117184      34% /srv
+/dev/nvme0n1p2 btrfs       498986496 168214528 329117184      34% /var/cache
+/dev/nvme0n1p2 btrfs       498986496 168214528 329117184      34% /var/log
+/dev/nvme0n1p2 btrfs       498986496 168214528 329117184      34% /var/tmp
+/dev/nvme0n1p3 ext4          1046512    312664    733848      30% /boot
+/dev/nvme0n1p1 vfat           523244     62108    461136      12% /efi
+efivarfs       efivarfs          256       130       122      52% /sys/firmware/efi/efivars
+tmpfs          tmpfs          8134404     41236   8093168       1% /tmp
+tmpfs          tmpfs          1626880      2416   1624464       1% /run/user/1000
