@@ -1,0 +1,38 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "nginx:latest",
+  "ArtifactType": "container_image",
+  "Metadata": {
+    "OS": {
+      "Family": "debian",
+      "Name": "13.6"
+    },
+    "ImageID": "sha256:5253dc86cc93ac6249902934655c6f7c959d8caa45a8c2ecc0b95953834d8ee8",
+    "Size": 164958208
+  },
+  "Results": [
+    {
+      "Target": "nginx:latest (debian 13.6)",
+      "Class": "os-pkgs",
+      "Type": "debian",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2011-3374",
+          "PkgName": "apt",
+          "InstalledVersion": "3.0.3",
+          "Severity": "LOW",
+          "Title": "It was found that apt-key in apt, all versions, do not correctly valid ...",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2011-3374"
+        },
+        {
+          "VulnerabilityID": "TEMP-0841856-B18BAF",
+          "PkgName": "bash",
+          "InstalledVersion": "5.2.37-2+b9",
+          "Severity": "LOW",
+          "Title": "[Privilege escalation possible to other user than root]",
+          "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0841856-B18BAF"
+        }
+      ]
+    }
+  ]
+}
