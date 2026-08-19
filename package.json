@@ -1,7 +1,7 @@
 {
     "name": "locoaudit",
     "version": "1.0.0",
-    "description": "Framework modular de auditoría de seguridad para Node-RED — Host, Red, Imagen y Reporter",
+    "description": "Framework modular de auditoría de seguridad para Node-RED — Host, Red, Imagen, llm",
     "keywords": [
         "node-red",
         "security",
