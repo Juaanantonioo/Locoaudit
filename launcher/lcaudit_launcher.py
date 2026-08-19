@@ -403,8 +403,8 @@ def get_auto_install_cmd(tool: str) -> str | None:
     if OS == "Windows":
         if shutil.which("winget"):
             return {
-                "nmap":   "winget install -e --id Insecure.Nmap",
-                "docker": "winget install -e --id Docker.DockerDesktop",
+                "nmap":   "winget install -e --id Insecure.Nmap --source winget",
+                "docker": "winget install -e --id Docker.DockerDesktop --source winget",
             }.get(tool)
         return None
 
