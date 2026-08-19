@@ -260,7 +260,7 @@ MANUAL_INSTALL = {
     "node": {
         "Darwin":  "brew install node",
         "Linux":   "(apt) sudo apt install nodejs   |   (pacman) sudo pacman -S nodejs   |   (dnf) sudo dnf install nodejs",
-        "Windows": "winget install -e --id OpenJS.NodeJS   o   https://nodejs.org",
+        "Windows": "winget install -e --idOpenJS.NodeJS --source winget   o   https://nodejs.org",
     },
     "npm": {
         "Darwin":  "Se instala junto con Node.js: brew install node",
