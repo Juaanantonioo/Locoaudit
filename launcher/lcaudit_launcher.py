@@ -275,7 +275,7 @@ MANUAL_INSTALL = {
     "nmap": {
         "Darwin":  "brew install nmap",
         "Linux":   "(apt) sudo apt install nmap   |   (pacman) sudo pacman -S nmap   |   (dnf) sudo dnf install nmap",
-        "Windows": "winget install -e --id Insecure.Nmap   o   https://nmap.org/download.html",
+        "Windows": "winget install -e --id Insecure.Nmap --source winget   o   https://nmap.org/download.html",
     },
     "lynis": {
         "Darwin":  "brew install lynis",
