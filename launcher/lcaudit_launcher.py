@@ -15,6 +15,7 @@ import sys
 import shutil
 import platform
 import os
+import signal
 import json
 import threading
 import queue
@@ -722,7 +723,9 @@ def step2_optional_tools():
                 "result": result,
             })
             evt.wait()
-            if result:
+            # result queda vacía si la ventana se cierra sin responder;
+            # ["No, omitir"] mete False, así que hay que mirar el contenido
+            if result and result[0]:
                 blank()
                 success = run_install(auto_cmd, label)
                 if success and command_exists(cmd):
@@ -874,9 +877,48 @@ def step5_copy_flows():
 
 
 # ─────────────────────────────────────────────
+#  Proceso de Node-RED — referencia y parada
+# ─────────────────────────────────────────────
+NODE_RED_PROC = None   # subprocess.Popen mientras Node-RED corre en modo GUI
+
+
+def _detached_popen_kwargs() -> dict:
+    """Flags de arranque que permiten matar luego al hijo y a su descendencia."""
+    if OS == "Windows":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def stop_node_red(timeout: int = 10) -> bool:
+    """Detiene Node-RED y su descendencia. True si había algo que parar."""
+    global NODE_RED_PROC
+    proc = NODE_RED_PROC
+    if proc is None or proc.poll() is not None:
+        NODE_RED_PROC = None
+        return False
+    try:
+        if OS == "Windows":
+            # node-red.cmd lanza node.exe como hijo: /T mata el árbol completo
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=timeout)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        proc.wait(timeout=timeout)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    finally:
+        NODE_RED_PROC = None
+    return True
+
+
+# ─────────────────────────────────────────────
 #  Paso 6 — Arrancar Node-RED
 # ─────────────────────────────────────────────
 def step6_launch():
+    global NODE_RED_PROC
     step_header(6, "Iniciando Node-RED")
     _print_summary()
     ok("Todo listo. Arrancando Node-RED...")
@@ -884,7 +926,9 @@ def step6_launch():
     if OUTPUT_QUEUE is not None:
         # GUI mode: launch without blocking the background thread
         try:
-            subprocess.Popen([NODE_RED_CMD])
+            NODE_RED_PROC = subprocess.Popen(
+                [NODE_RED_CMD], **_detached_popen_kwargs()
+            )
             blank()
             ok("Node-RED iniciado — abre http://localhost:1880 en tu navegador")
         except FileNotFoundError:
@@ -933,7 +977,7 @@ def run_all_steps():
     step5_copy_flows()
     step6_launch()
     _gui_flush_card()
-    OUTPUT_QUEUE.put({"type": "done"})
+    OUTPUT_QUEUE.put({"type": "done", "node_red": NODE_RED_PROC is not None})
 
 
 if False:  # dead code — kept only so the file diff stays readable
@@ -1134,7 +1178,8 @@ if False:  # dead code — kept only so the file diff stays readable
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     if HAS_GUI:
-        gui = LoCoAuditGUI(VERSION, OS, platform.python_version())
+        gui = LoCoAuditGUI(VERSION, OS, platform.python_version(),
+                           on_stop=stop_node_red)
         OUTPUT_QUEUE = gui.q
         threading.Thread(target=run_all_steps, daemon=True).start()
         gui.run()

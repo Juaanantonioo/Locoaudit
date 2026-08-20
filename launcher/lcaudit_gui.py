@@ -7,8 +7,9 @@ import webbrowser
 
 
 class LoCoAuditGUI:
-    def __init__(self, version, os_name, py_version):
+    def __init__(self, version, os_name, py_version, on_stop=None):
         self.q = queue.Queue()
+        self.on_stop = on_stop
         self.root = tk.Tk()
         self.root.title("LoCoAudit")
         self.root.configure(bg="#1e1e2e")
@@ -22,6 +23,7 @@ class LoCoAuditGUI:
         else:
             self.root.state("zoomed")
         self._build(version, os_name, py_version)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll)
 
     def _build(self, version, os_name, py_version):
@@ -113,7 +115,7 @@ class LoCoAuditGUI:
         self.no_btn.pack(side="left", padx=8)
 
         # FOOTER
-        footer = tk.Frame(self.root, bg="#181825", height=60)
+        footer = tk.Frame(self.root, bg="#181825", height=80)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
         style = ttk.Style()
@@ -128,12 +130,18 @@ class LoCoAuditGUI:
         self.footer_label = tk.Label(footer, text="Iniciando...",
                                      font=("Courier", 9), fg="#6c7086", bg="#181825")
         self.footer_label.pack()
-        self.open_btn = tk.Button(footer, text="🚀  Abrir Node-RED en el navegador",
+        self.btn_row = tk.Frame(footer, bg="#181825")
+        self.open_btn = tk.Button(self.btn_row, text="🚀  Abrir Node-RED en el navegador",
                                   bg="#89dceb", fg="#1e1e2e",
                                   font=("Courier", 11, "bold"), relief="flat",
-                                  width=40, padx=20, pady=8,
+                                  padx=20, pady=8,
                                   command=lambda: webbrowser.open("http://localhost:1880"))
-        # open_btn se muestra solo al terminar
+        self.stop_btn = tk.Button(self.btn_row, text="⏹  Detener Node-RED",
+                                  bg="#f38ba8", fg="#1e1e2e",
+                                  font=("Courier", 11, "bold"), relief="flat",
+                                  padx=20, pady=8,
+                                  command=self._stop_clicked)
+        # btn_row se muestra solo al terminar
 
     def add_card(self, title, items):
         """items = lista de (icono, texto, color)"""
@@ -161,6 +169,25 @@ class LoCoAuditGUI:
         result.append(yes)
         event.set()
         self.ask_frame.pack_forget()
+
+    def _stop_clicked(self):
+        self.stop_btn.config(state="disabled", text="Deteniendo...")
+        self.root.update_idletasks()
+        if self.on_stop is not None:
+            try:
+                self.on_stop()
+            except Exception:
+                pass
+        self.stop_btn.config(text="✓  Node-RED detenido")
+        self.open_btn.config(state="disabled", bg="#45475a", fg="#6c7086")
+
+    def _on_close(self):
+        if self.on_stop is not None:
+            try:
+                self.on_stop()
+            except Exception:
+                pass
+        self.root.destroy()
 
     def update_step(self, idx, icon, color, sub=""):
         icons = {"ok": ("✓", "#a6e3a1"), "err": ("✗", "#f38ba8"),
@@ -204,7 +231,10 @@ class LoCoAuditGUI:
                     self.update_step(5, "ok", "")
                     self.footer_label.pack_forget()
                     self.progress.pack_forget()
-                    self.open_btn.pack(pady=12, anchor="center")
+                    self.open_btn.pack(side="left", padx=8)
+                    if msg.get("node_red"):
+                        self.stop_btn.pack(side="left", padx=8)
+                    self.btn_row.pack(pady=14, anchor="center")
         except Exception:
             pass
         self.root.after(100, self._poll)
