@@ -68,6 +68,7 @@ OUTPUT_QUEUE = None  # queue.Queue when GUI is active
 # Card buffer para el modo GUI (agrupa los mensajes de cada paso en una tarjeta)
 _gui_card_title = ""
 _gui_card_items = []  # list of (icon, text, color)
+_gui_step_label = ""  # texto del pie del paso actual, para restaurarlo tras instalar
 
 
 def _gui_flush_card():
@@ -217,6 +218,14 @@ def tip(msg):
     else:
         _tip_p(msg)
 
+def status(msg):
+    """Texto vivo en el pie de la GUI. Las tarjetas no se vuelcan hasta la
+    cabecera del paso siguiente, así que sin esto una descarga larga deja la
+    ventana sin ningún signo de actividad. En modo terminal no aplica: ahí la
+    salida del propio comando ya se ve."""
+    if OUTPUT_QUEUE is not None:
+        OUTPUT_QUEUE.put({"type": "status", "text": msg})
+
 def blank():
     if OUTPUT_QUEUE is None:
         if RICH:
@@ -232,12 +241,13 @@ def sep():
             _sep_p()
 
 def step_header(n: int, title: str):
-    global _gui_card_title, _gui_card_items
+    global _gui_card_title, _gui_card_items, _gui_step_label
     if OUTPUT_QUEUE is not None:
         _gui_flush_card()
         _gui_card_title = title
         _gui_card_items = []
-        OUTPUT_QUEUE.put({"type": "progress", "step": n, "label": f"Paso {n}/6 — {title}"})
+        _gui_step_label = f"Paso {n}/6 — {title}"
+        OUTPUT_QUEUE.put({"type": "progress", "step": n, "label": _gui_step_label})
     elif RICH:
         _step_header_r(n, title)
     else:
@@ -261,7 +271,7 @@ MANUAL_INSTALL = {
     "node": {
         "Darwin":  "brew install node",
         "Linux":   "(apt) sudo apt install nodejs   |   (pacman) sudo pacman -S nodejs   |   (dnf) sudo dnf install nodejs",
-        "Windows": "winget install -e --idOpenJS.NodeJS --source winget   o   https://nodejs.org",
+        "Windows": "winget install --id OpenJS.NodeJS --source winget -e   o   https://nodejs.org",
     },
     "npm": {
         "Darwin":  "Se instala junto con Node.js: brew install node",
@@ -286,7 +296,8 @@ MANUAL_INSTALL = {
     "trivy": {
         "Darwin":  "brew install aquasecurity/trivy/trivy",
         "Linux":   _TRIVY_SCRIPT,
-        "Windows": "https://aquasecurity.github.io/trivy/latest/getting-started/installation",
+        "Windows": "winget install --id AquaSecurity.Trivy --source winget -e   o   "
+                   "https://aquasecurity.github.io/trivy/latest/getting-started/installation",
     },
     "docker": {
         "Darwin":  "https://www.docker.com/products/docker-desktop",
@@ -300,6 +311,27 @@ TOOL_DESC = {
     "lynis":  "audit-host   — análisis de hardening y +300 comprobaciones del sistema",
     "trivy":  "audit-host + audit-image — CVEs en paquetes del SO e imágenes Docker",
     "docker": "audit-image  — auditoría de imágenes y contenedores Docker",
+}
+
+# Avisos que se muestran junto a la pregunta de instalación, por herramienta.
+_INSTALL_NOTES = {
+    "docker": "Descarga considerable y requiere reiniciar Windows al terminar.",
+}
+
+# Margen de tiempo por herramienta. Docker Desktop descarga bastante más que el
+# resto, así que 10 minutos se le quedan cortos.
+_INSTALL_TIMEOUT_DEFAULT = 600
+_INSTALL_TIMEOUTS = {
+    "docker": 1800,
+}
+
+# Códigos estándar de Windows Installer que NO son fallo: la instalación terminó
+# bien y solo queda reiniciar. No se listan códigos propios de winget porque sus
+# valores no se han podido verificar; ese caso lo cubre la revalidación del
+# binario en run_install().
+_REBOOT_CODES = {
+    3010: "hay un reinicio de Windows pendiente para completar la instalación",
+    1641: "el instalador ha iniciado un reinicio de Windows",
 }
 
 # Estado de herramientas opcionales (rellenado en step2, usado en resumen final)
@@ -403,30 +435,115 @@ def get_auto_install_cmd(tool: str) -> str | None:
 
     if OS == "Windows":
         if shutil.which("winget"):
+            # Mismo orden de flags que la invocación manual verificada, y con los
+            # acuerdos aceptados de antemano: sin ellos winget puede pedirlos por
+            # consola, y en modo GUI esa consola no está a la vista.
+            # Sin --silent a propósito: oculta el instalador y estorba al diagnóstico.
+            base = "winget install --id {} --source winget -e " \
+                   "--accept-source-agreements --accept-package-agreements"
             return {
-                "nmap":   "winget install -e --id Insecure.Nmap --source winget",
-                "docker": "winget install -e --id Docker.DockerDesktop --source winget",
+                "nmap":   base.format("Insecure.Nmap"),
+                "docker": base.format("Docker.DockerDesktop"),
+                "trivy":  base.format("AquaSecurity.Trivy"),
             }.get(tool)
         return None
 
     return None
 
 
-def run_install(cmd: str, label: str, timeout: int = 300) -> bool:
-    """Runs a shell install command. Returns True on success."""
+def _decode_output(raw: bytes) -> str:
+    """Decodifica la salida de un proceso sin poder lanzar nunca.
+
+    La consola española de Windows no es UTF-8 (cp1252/cp850), así que
+    `text=True` —que usa la codificación local con errors='strict'— puede
+    reventar con UnicodeDecodeError justo cuando más falta hace leer el error.
+    """
+    if not raw:
+        return ""
+    for enc in ("utf-8", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _format_rc(rc: int) -> str:
+    """Código de salida en decimal y hexadecimal.
+
+    Windows documenta los suyos en hex (0x8A15...). El AND normaliza el valor a
+    32 bits sin signo para que un código negativo salga con el hex que aparece
+    en la documentación y no con uno distinto.
+    """
+    return f"{rc} (0x{rc & 0xFFFFFFFF:08X})"
+
+
+def _tail_lines(text: str, n: int = 8) -> list:
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    return lines[-n:]
+
+
+def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
+    """Ejecuta un comando de instalación. Devuelve True si la herramienta quedó
+    instalada.
+
+    `tool` es la clave interna ("nmap", "docker"...). Si no se pasa se deriva del
+    label, que es como lo llaman las dos ramas de step2.
+    """
+    tool = tool or label.lower()
+    timeout = timeout or _INSTALL_TIMEOUTS.get(tool, _INSTALL_TIMEOUT_DEFAULT)
+
     work(f"Instalando {label}...")
     tip(f"Ejecutando: {cmd}")
+    status(f"Instalando {label} — puede tardar varios minutos, no cierres la ventana")
     blank()
+
     try:
-        result = subprocess.run(cmd, shell=True, timeout=timeout)
-        return result.returncode == 0
+        # Se captura la salida en bytes (no text=True) para decodificarla a mano.
+        # stdin cerrado a propósito: si el instalador pidiera confirmación, falla
+        # rápido y con mensaje en vez de colgarse hasta agotar el timeout.
+        result = subprocess.run(
+            cmd, shell=True, timeout=timeout,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
     except subprocess.TimeoutExpired:
+        status(_gui_step_label)
         err(f"La instalación de {label} superó el tiempo límite ({timeout}s)")
-        tip(f"Intenta manualmente: {MANUAL_INSTALL.get(label.lower(), {}).get(OS, '?')}")
+        tip(f"Intenta manualmente: {MANUAL_INSTALL.get(tool, {}).get(OS, '?')}")
         return False
     except Exception as exc:
+        status(_gui_step_label)
         err(f"Error inesperado instalando {label}: {exc}")
         return False
+
+    status(_gui_step_label)
+    rc = result.returncode
+    if rc == 0:
+        return True
+
+    # Códigos estándar del instalador de Windows: terminó bien, falta reiniciar.
+    if rc in _REBOOT_CODES:
+        warn(f"{label}: {_REBOOT_CODES[rc]}")
+        return True
+
+    # Cualquier otro código no cero: manda la evidencia, no una tabla de códigos.
+    # winget devuelve no-cero en casos que no son error (ya instalado, entre
+    # otros); si el binario está ahí, la instalación cumplió su objetivo.
+    if command_exists(tool):
+        warn(f"{label}: el comando devolvió {_format_rc(rc)}, "
+             f"pero el binario ya está disponible")
+        return True
+
+    err(f"La instalación de {label} falló — código de salida {_format_rc(rc)}")
+    detail = _decode_output(result.stderr).strip() or _decode_output(result.stdout).strip()
+    if detail:
+        for line in _tail_lines(detail):
+            tip(line)
+    else:
+        tip("El comando no devolvió ningún mensaje de error.")
+    tip(f"Intenta manualmente: {MANUAL_INSTALL.get(tool, {}).get(OS, 'Consulta la documentación oficial')}")
+    return False
 
 
 def _run_npm(cmd: str, label: str, timeout: int = 120) -> bool:
@@ -675,11 +792,70 @@ def step1_required_deps() -> list:
 # ─────────────────────────────────────────────
 #  Paso 2 — Herramientas opcionales
 # ─────────────────────────────────────────────
+def _ask_install_all(pending: list, is_tty: bool) -> bool:
+    """Pregunta previa: instalar de golpe todo lo que falta.
+
+    `pending` solo trae herramientas que faltan Y tienen instalación automática
+    en esta plataforma, así que Lynis en Windows no llega hasta aquí.
+    """
+    names = ", ".join(label for _, label in pending)
+    note  = "  ".join(_INSTALL_NOTES[c] for c, _ in pending if c in _INSTALL_NOTES)
+
+    if OUTPUT_QUEUE is not None:
+        evt    = threading.Event()
+        result = []
+        OUTPUT_QUEUE.put({
+            "type":     "ask",
+            "title":    f"Faltan {len(pending)} herramientas recomendadas",
+            "tool":     names,
+            "desc":     names,
+            "note":     note,
+            "yes_text": "Sí, instalar todas",
+            "no_text":  "No, preguntar una a una",
+            "event":    evt,
+            "result":   result,
+        })
+        evt.wait()
+        return bool(result and result[0])
+
+    if not is_tty:
+        return False
+
+    blank()
+    tip(f"Faltan {len(pending)} herramientas recomendadas: {names}")
+    if note:
+        tip(note)
+    if RICH:
+        try:
+            return bool(Confirm.ask("  ¿Instalarlas [bold]todas[/bold] ahora?", default=False))
+        except (EOFError, KeyboardInterrupt):
+            blank()
+            return False
+    print(f"\n  ¿Instalarlas {BO}todas{RS} ahora? (s/n)")
+    try:
+        return input("  → ").strip().lower() in ("s", "si", "sí", "y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        blank()
+        return False
+
+
 def step2_optional_tools():
     step_header(2, "Herramientas opcionales")
 
     is_tty     = sys.stdin.isatty()
     all_present = True
+
+    # Pre-pasada: si falta más de una herramienta instalable, se ofrece hacerlo
+    # todo de una vez antes de entrar al bucle. Lynis queda fuera por sí solo
+    # porque en Windows get_auto_install_cmd() no le devuelve comando.
+    pending = [
+        (c, l) for c, l in OPTIONAL_TOOLS
+        if not command_exists(c) and get_auto_install_cmd(c)
+    ]
+    install_all = _ask_install_all(pending, is_tty) if len(pending) >= 2 else False
+    if install_all:
+        ok(f"Se instalarán sin preguntar: {', '.join(l for _, l in pending)}")
+        blank()
 
     for cmd, label in OPTIONAL_TOOLS:
         # Lynis is not available natively on Windows
@@ -712,20 +888,25 @@ def step2_optional_tools():
         auto_cmd = get_auto_install_cmd(cmd)
 
         if auto_cmd and OUTPUT_QUEUE is not None:
-            # GUI mode: ask via queue, block until user responds
-            evt    = threading.Event()
-            result = []
-            OUTPUT_QUEUE.put({
-                "type":   "ask",
-                "tool":   label,
-                "desc":   auto_cmd,
-                "event":  evt,
-                "result": result,
-            })
-            evt.wait()
-            # result queda vacía si la ventana se cierra sin responder;
-            # ["No, omitir"] mete False, así que hay que mirar el contenido
-            if result and result[0]:
+            if install_all:
+                answer = True
+            else:
+                # GUI mode: ask via queue, block until user responds
+                evt    = threading.Event()
+                result = []
+                OUTPUT_QUEUE.put({
+                    "type":   "ask",
+                    "tool":   label,
+                    "desc":   auto_cmd,
+                    "note":   _INSTALL_NOTES.get(cmd, ""),
+                    "event":  evt,
+                    "result": result,
+                })
+                evt.wait()
+                # result queda vacía si la ventana se cierra sin responder;
+                # ["No, omitir"] mete False, así que hay que mirar el contenido
+                answer = bool(result and result[0])
+            if answer:
                 blank()
                 success = run_install(auto_cmd, label)
                 if success and command_exists(cmd):
@@ -737,16 +918,20 @@ def step2_optional_tools():
                             _tool_status[cmd] = False
                             warn(f"Docker {daemon_warn}")
                 elif success:
-                    warn(f"Instalación completada pero {label} no se encontró en PATH")
-                    tip("Puede ser necesario reabrir la terminal o actualizar el PATH")
-                else:
-                    err(f"La instalación de {label} falló")
-                    tip(f"Intenta manualmente: {MANUAL_INSTALL.get(cmd, {}).get(OS, 'Consulta la documentación oficial')}")
+                    # Capa 1: no se toca el PATH del proceso; se avisa y punto.
+                    # shutil.which() lee el PATH heredado al arrancar Python, así
+                    # que un binario recién instalado no aparece hasta relanzar.
+                    warn(f"{label} se instaló, pero aún no aparece en el PATH de este proceso")
+                    tip("Reinicia el launcher para que lo detecte")
+                # El fallo ya lo ha detallado run_install(): código de salida,
+                # stderr real e instrucciones manuales. No se repite aquí.
             else:
                 warn(f"Omitiendo {label} — el nodo correspondiente usará el modo de fallback")
 
         elif auto_cmd and is_tty:
-            if RICH:
+            if install_all:
+                answer = True
+            elif RICH:
                 tip(f"Comando: {auto_cmd}")
                 blank()
                 try:
@@ -782,11 +967,13 @@ def step2_optional_tools():
                             _tool_status[cmd] = False
                             warn(f"Docker {daemon_warn}")
                 elif success:
-                    warn(f"Instalación completada pero {label} no se encontró en PATH")
-                    tip("Puede ser necesario reabrir la terminal o actualizar el PATH")
-                else:
-                    err(f"La instalación de {label} falló")
-                    tip(f"Intenta manualmente: {MANUAL_INSTALL.get(cmd, {}).get(OS, 'Consulta la documentación oficial')}")
+                    # Capa 1: no se toca el PATH del proceso; se avisa y punto.
+                    # shutil.which() lee el PATH heredado al arrancar Python, así
+                    # que un binario recién instalado no aparece hasta relanzar.
+                    warn(f"{label} se instaló, pero aún no aparece en el PATH de este proceso")
+                    tip("Reinicia el launcher para que lo detecte")
+                # El fallo ya lo ha detallado run_install(): código de salida,
+                # stderr real e instrucciones manuales. No se repite aquí.
             else:
                 warn(f"Omitiendo {label} — el nodo correspondiente usará el modo de fallback")
         else:

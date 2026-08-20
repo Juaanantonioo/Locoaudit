@@ -103,6 +103,11 @@ class LoCoAuditGUI:
         self.ask_desc = tk.Label(self.ask_frame, text="", font=("Courier", 9),
                                  fg="#6c7086", bg="#45475a")
         self.ask_desc.pack(pady=(0, 8))
+        # Aviso opcional (tamaño de descarga, reinicio requerido...). Se empaqueta
+        # solo cuando el mensaje trae "note": sin nota no ocupa sitio.
+        self.ask_note = tk.Label(self.ask_frame, text="", font=("Courier", 9),
+                                 fg="#f9e2af", bg="#45475a",
+                                 wraplength=760, justify="center")
         btn_row = tk.Frame(self.ask_frame, bg="#45475a")
         btn_row.pack()
         self.yes_btn = tk.Button(btn_row, text="Sí, instalar",
@@ -158,11 +163,20 @@ class LoCoAuditGUI:
                      fg=color, bg="#313244",
                      wraplength=680, justify="left").pack(side="left", padx=6)
 
-    def show_question(self, tool, desc, event, result):
-        self.ask_label.config(text=f"⚠  ¿Instalar {tool}?")
+    def show_question(self, tool, desc, event, result, note="",
+                      yes_text="Sí, instalar", no_text="No, omitir",
+                      title=None):
+        self.ask_label.config(text=title or f"⚠  ¿Instalar {tool}?")
         self.ask_desc.config(text=desc)
-        self.yes_btn.config(command=lambda: self._answer(True, event, result))
-        self.no_btn.config(command=lambda: self._answer(False, event, result))
+        if note:
+            self.ask_note.config(text=note)
+            self.ask_note.pack(pady=(0, 8))
+        else:
+            self.ask_note.pack_forget()
+        self.yes_btn.config(text=yes_text,
+                            command=lambda: self._answer(True, event, result))
+        self.no_btn.config(text=no_text,
+                           command=lambda: self._answer(False, event, result))
         self.ask_frame.pack(fill="x", before=self.root.winfo_children()[-1])
 
     def _answer(self, yes, event, result):
@@ -222,7 +236,14 @@ class LoCoAuditGUI:
                     self.add_card(msg["title"], msg["items"])
                 elif t == "ask":
                     self.show_question(msg["tool"], msg["desc"],
-                                       msg["event"], msg["result"])
+                                       msg["event"], msg["result"],
+                                       note=msg.get("note", ""),
+                                       yes_text=msg.get("yes_text", "Sí, instalar"),
+                                       no_text=msg.get("no_text", "No, omitir"),
+                                       title=msg.get("title"))
+                elif t == "status":
+                    # Instalaciones largas: sin esto la ventana parece colgada.
+                    self.footer_label.config(text=msg.get("text", ""))
                 elif t == "step_status":
                     self.update_step(msg["step"], msg["icon"],
                                      msg.get("color", ""), msg.get("sub", ""))
