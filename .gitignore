@@ -1,2 +1,5 @@
 .DS_Store
 clonarrepos.txt
+__pycache__/
+*.pyc
+node_modules/
