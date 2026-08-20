@@ -16,6 +16,7 @@ import shutil
 import platform
 import os
 import signal
+import tempfile
 import json
 import threading
 import queue
@@ -334,6 +335,29 @@ _REBOOT_CODES = {
     1641: "el instalador ha iniciado un reinicio de Windows",
 }
 
+# Herramientas cuyo instalador necesita permisos de administrador.
+# Solo Nmap: su instalador NSIS registra la ruta en el PATH de SISTEMA (HKLM) y
+# sin elevar falla en silencio — copia los ficheros pero deja nmap.exe invisible.
+# Docker y Trivy se registran en la carpeta de enlaces de winget, que ya está en
+# el PATH de usuario, así que no la necesitan. Se restringe a Nmap a propósito:
+# el camino elevado usa ctypes y no se ha podido probar, así que cuanto menos
+# tráfico pase por él, mejor. La condición es una sola expresión en cualquier caso.
+_NEEDS_ELEVATION = {"nmap"}
+
+# Directorios donde el instalador oficial de Nmap deja el binario. Constantes en
+# código, nunca entrada del usuario. Solo se usan para el PATH de la COPIA en
+# memoria del entorno que hereda Node-RED; no se toca ningún PATH persistente.
+_WINDOWS_TOOL_DIRS = (
+    r"C:\Program Files (x86)\Nmap",
+    r"C:\Program Files\Nmap",
+)
+
+_SE_ERR_ACCESSDENIED = 5     # ShellExecute: acceso denegado
+_ERROR_CANCELLED     = 1223  # GetLastError: el usuario canceló el diálogo de UAC
+
+# El aviso de que Windows va a pedir permisos se da una sola vez por ejecución.
+_uac_notice_shown = False
+
 # Estado de herramientas opcionales (rellenado en step2, usado en resumen final)
 _tool_status: dict = {}
 
@@ -451,6 +475,177 @@ def get_auto_install_cmd(tool: str) -> str | None:
     return None
 
 
+def _is_windows_admin():
+    """True/False en Windows, None en el resto de sistemas.
+
+    Ante cualquier problema devuelve False: dar por hecho que NO somos
+    administrador es el camino seguro — como mucho se piden permisos de más.
+    """
+    if OS != "Windows":
+        return None
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def _shellexecuteinfo_type():
+    """Construye el tipo SHELLEXECUTEINFOW.
+
+    Se usan tipos de ancho FIJO en vez de ctypes.wintypes a propósito:
+    wintypes.DWORD es c_ulong, que mide 4 bytes en Windows pero 8 en LP64. Con
+    anchos fijos el layout es el mismo se mire desde donde se mire, que es la
+    única forma de comprobar sizeof() sin una máquina Windows delante.
+    """
+    import ctypes
+    DWORD  = ctypes.c_uint32
+    HANDLE = ctypes.c_void_p
+    LPCWSTR = ctypes.c_wchar_p
+
+    class SHELLEXECUTEINFOW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize",       DWORD),
+            ("fMask",        DWORD),
+            ("hwnd",         HANDLE),
+            ("lpVerb",       LPCWSTR),
+            ("lpFile",       LPCWSTR),
+            ("lpParameters", LPCWSTR),
+            ("lpDirectory",  LPCWSTR),
+            ("nShow",        ctypes.c_int),
+            ("hInstApp",     HANDLE),
+            ("lpIDList",     ctypes.c_void_p),
+            ("lpClass",      LPCWSTR),
+            ("hkeyClass",    HANDLE),
+            ("dwHotKey",     DWORD),
+            ("hIcon",        HANDLE),
+            ("hProcess",     HANDLE),
+        ]
+
+    return SHELLEXECUTEINFOW
+
+
+def _run_elevated_windows(cmd: str, timeout: int):
+    """Ejecuta `cmd` elevado y devuelve (returncode, salida).
+
+    returncode None significa que el usuario canceló el diálogo de UAC — eso no
+    es un fallo de instalación, es una decisión suya.
+
+    Se eleva SOLO el comando de instalación, nunca el launcher entero: si el
+    launcher corriera como administrador, Node-RED heredaría los privilegios, y
+    Node-RED ejecuta herramientas de auditoría y sirve un dashboard en el 1880.
+    """
+    import ctypes
+
+    SEE_MASK_NOCLOSEPROCESS = 0x00000040
+    SW_SHOWNORMAL = 1
+    WAIT_TIMEOUT  = 0x00000102
+
+    SHELLEXECUTEINFOW = _shellexecuteinfo_type()
+    DWORD  = ctypes.c_uint32
+    HANDLE = ctypes.c_void_p
+
+    shell32  = ctypes.WinDLL("shell32",  use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
+    shell32.ShellExecuteExW.restype  = ctypes.c_int
+    kernel32.WaitForSingleObject.argtypes = [HANDLE, DWORD]
+    kernel32.WaitForSingleObject.restype  = DWORD
+    kernel32.GetExitCodeProcess.argtypes  = [HANDLE, ctypes.POINTER(DWORD)]
+    kernel32.GetExitCodeProcess.restype   = ctypes.c_int
+    kernel32.CloseHandle.argtypes = [HANDLE]
+    kernel32.CloseHandle.restype  = ctypes.c_int
+
+    # El proceso elevado no comparte las tuberías del padre, así que la salida se
+    # vuelca a un fichero y se lee después. Es lo que permite conservar el
+    # diagnóstico (código de salida + stderr) pese a la elevación.
+    fd, log_path = tempfile.mkstemp(prefix="lcaudit-install-", suffix=".log")
+    os.close(fd)
+    try:
+        # cmd.exe /s /c — con /s, cmd quita SOLO la primera y la última comilla y
+        # deja el resto tal cual. Es la forma documentada de que la ruta temporal
+        # sobreviva entre comillas: %TEMP% suele ir bajo C:\Users\<nombre>, y el
+        # nombre de usuario puede llevar espacios. Sin /s, cmd intenta interpretar
+        # las comillas interiores y parte el comando.
+        params = f'/s /c "{cmd} > "{log_path}" 2>&1"'
+
+        info = SHELLEXECUTEINFOW()
+        info.cbSize       = ctypes.sizeof(info)
+        info.fMask        = SEE_MASK_NOCLOSEPROCESS
+        info.hwnd         = None
+        info.lpVerb       = "runas"
+        info.lpFile       = "cmd.exe"
+        info.lpParameters = params
+        info.lpDirectory  = None
+        info.nShow        = SW_SHOWNORMAL
+
+        if not shell32.ShellExecuteExW(ctypes.byref(info)):
+            hinst = int(info.hInstApp or 0)
+            last  = ctypes.get_last_error()
+            # UAC cancelado: documentado por las dos vías según la versión, así
+            # que se comprueban ambas.
+            if hinst == _SE_ERR_ACCESSDENIED or last == _ERROR_CANCELLED:
+                return None, ""
+            raise OSError(
+                f"ShellExecuteExW falló (hInstApp={hinst}, GetLastError={last})"
+            )
+
+        handle = info.hProcess
+        if not handle:
+            raise OSError("ShellExecuteExW no devolvió handle del proceso elevado")
+
+        try:
+            if kernel32.WaitForSingleObject(handle, max(1, int(timeout)) * 1000) == WAIT_TIMEOUT:
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            rc = DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(rc)):
+                raise OSError("GetExitCodeProcess falló")
+            code = int(rc.value)
+        finally:
+            kernel32.CloseHandle(handle)
+
+        try:
+            with open(log_path, "rb") as fh:
+                output = _decode_output(fh.read()).strip()
+        except OSError:
+            output = ""
+        return code, output
+    finally:
+        try:
+            os.unlink(log_path)
+        except OSError:
+            pass
+
+
+def _run_plain(cmd: str, timeout: int):
+    """Ejecución normal, sin elevar. Devuelve (returncode, salida)."""
+    result = subprocess.run(
+        cmd, shell=True, timeout=timeout,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    salida = _decode_output(result.stderr).strip() or _decode_output(result.stdout).strip()
+    return result.returncode, salida
+
+
+def _child_env() -> dict:
+    """Copia del entorno para los procesos hijo, con las carpetas conocidas de
+    herramientas añadidas al PATH.
+
+    Solo en memoria y solo para el hijo: no se escribe en el registro ni se
+    ejecuta setx. Muere con el proceso. Cubre el hueco entre que el instalador
+    registra la ruta en el PATH del sistema y que esa sesión se entera.
+    """
+    env = os.environ.copy()
+    if OS != "Windows":
+        return env
+    extra = [d for d in _WINDOWS_TOOL_DIRS if os.path.isdir(d)]
+    if extra:
+        env["PATH"] = os.pathsep.join(extra + [env.get("PATH", "")])
+    return env
+
+
 def _decode_output(raw: bytes) -> str:
     """Decodifica la salida de un proceso sin poder lanzar nunca.
 
@@ -490,23 +685,47 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
     `tool` es la clave interna ("nmap", "docker"...). Si no se pasa se deriva del
     label, que es como lo llaman las dos ramas de step2.
     """
+    global _uac_notice_shown
     tool = tool or label.lower()
     timeout = timeout or _INSTALL_TIMEOUTS.get(tool, _INSTALL_TIMEOUT_DEFAULT)
 
+    # Solo se eleva si hace falta de verdad: Windows, herramienta de la lista, y
+    # no somos ya administrador. Si el launcher ya corre elevado, camino normal.
+    elevar = (
+        OS == "Windows"
+        and tool in _NEEDS_ELEVATION
+        and _is_windows_admin() is False
+    )
+
     work(f"Instalando {label}...")
     tip(f"Ejecutando: {cmd}")
+    if elevar and not _uac_notice_shown:
+        _uac_notice_shown = True
+        warn("Windows va a pedir permisos de administrador para esta instalación")
+        tip("El instalador de Nmap tiene que registrar su ruta en el PATH del "
+            "sistema, y eso solo lo puede hacer un administrador. Sin ello el "
+            "programa se copia pero queda invisible.")
+        tip("Se eleva solo el comando de instalación: Node-RED se arrancará sin "
+            "privilegios de administrador.")
+        tip("Si hay varias herramientas que lo requieran, pedirá permiso una vez "
+            "por cada una.")
     status(f"Instalando {label} — puede tardar varios minutos, no cierres la ventana")
     blank()
 
     try:
-        # Se captura la salida en bytes (no text=True) para decodificarla a mano.
-        # stdin cerrado a propósito: si el instalador pidiera confirmación, falla
-        # rápido y con mensaje en vez de colgarse hasta agotar el timeout.
-        result = subprocess.run(
-            cmd, shell=True, timeout=timeout,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        )
+        if elevar:
+            try:
+                rc, salida = _run_elevated_windows(cmd, timeout)
+            except subprocess.TimeoutExpired:
+                raise
+            except Exception as exc:
+                # Cualquier imprevisto en la ruta elevada degrada a la normal:
+                # peor una instalación sin elevar que un launcher reventado.
+                warn(f"No se pudo lanzar la instalación elevada: {exc}")
+                tip("Se reintenta sin permisos de administrador")
+                rc, salida = _run_plain(cmd, timeout)
+        else:
+            rc, salida = _run_plain(cmd, timeout)
     except subprocess.TimeoutExpired:
         status(_gui_step_label)
         err(f"La instalación de {label} superó el tiempo límite ({timeout}s)")
@@ -518,7 +737,15 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
         return False
 
     status(_gui_step_label)
-    rc = result.returncode
+
+    # El usuario cerró el diálogo de UAC. Decisión suya, no un fallo: aviso en
+    # amarillo y el bucle sigue con el resto de herramientas.
+    if rc is None:
+        warn(f"Instalación de {label} cancelada: se necesitan permisos de administrador")
+        tip(f"Puedes instalarlo manualmente: "
+            f"{MANUAL_INSTALL.get(tool, {}).get(OS, 'Consulta la documentación oficial')}")
+        return False
+
     if rc == 0:
         return True
 
@@ -536,9 +763,8 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
         return True
 
     err(f"La instalación de {label} falló — código de salida {_format_rc(rc)}")
-    detail = _decode_output(result.stderr).strip() or _decode_output(result.stdout).strip()
-    if detail:
-        for line in _tail_lines(detail):
+    if salida:
+        for line in _tail_lines(salida):
             tip(line)
     else:
         tip("El comando no devolvió ningún mensaje de error.")
@@ -1114,7 +1340,7 @@ def step6_launch():
         # GUI mode: launch without blocking the background thread
         try:
             NODE_RED_PROC = subprocess.Popen(
-                [NODE_RED_CMD], **_detached_popen_kwargs()
+                [NODE_RED_CMD], env=_child_env(), **_detached_popen_kwargs()
             )
             blank()
             ok("Node-RED iniciado — abre http://localhost:1880 en tu navegador")
@@ -1135,7 +1361,7 @@ def step6_launch():
         blank()
 
     try:
-        subprocess.run([NODE_RED_CMD])
+        subprocess.run([NODE_RED_CMD], env=_child_env())
     except KeyboardInterrupt:
         blank()
         warn("Node-RED detenido por el usuario")
