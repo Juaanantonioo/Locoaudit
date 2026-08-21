@@ -53,10 +53,25 @@ const { getFixForPort }              = require("./network-utils");
  * sin -e, nmap falla con SO_ERROR 50 (ENETDOWN) al no saber cuál usar.
  * Para localhost devuelve null (no hace falta -e).
  *
+ * WINDOWS: devuelve SIEMPRE null, o sea que el comando sale sin -e.
+ * os.networkInterfaces() da el nombre amigable del adaptador ("Wi-Fi"), que el
+ * nmap de Windows no entiende: usa sus propios alias (eth0, eth1…) o el nombre
+ * de dispositivo NPF. Comprobado en Windows con `-e Wi-Fi`:
+ *     "I cannot figure out what source address to use for device Wi-Fi,
+ *      does it even exist?"  QUITTING!
+ * y el XML sale con exit="error" y <hosts up="0" down="0" total="0"/>, que el
+ * pre-check leía como "host caído". Sin -e el mismo comando funciona: la tabla
+ * de rutas de Windows ya enruta por la interfaz correcta. -e es una
+ * optimización para el caso de varias interfaces en la misma subred, no un
+ * requisito, así que en Windows se omite. Se descartó traducir el nombre con
+ * `nmap --iflist`: una llamada extra y un parseo de texto frágil.
+ *
  * @param {string} targetIp
+ * @param {string} [platform]  process.platform por defecto (inyectable en tests)
  * @returns {string|null}  Nombre de interfaz (ej: "en6") o null
  */
-function findInterfaceForTarget(targetIp) {
+function findInterfaceForTarget(targetIp, platform = process.platform) {
+  if (platform === "win32") return null;
   if (targetIp === "127.0.0.1" || targetIp === "localhost") return null;
   const targetParts = targetIp.split(".").map(Number);
   if (targetParts.length !== 4 || targetParts.some(isNaN)) return null;
@@ -76,6 +91,48 @@ function findInterfaceForTarget(targetIp) {
 }
 
 // ── Parser XML ────────────────────────────────────────────────────────────────
+
+/**
+ * Detecta si nmap terminó con un error fatal, leyendo el <finished> del XML.
+ *
+ * nmap emite <runstats> incluso cuando aborta (QUITTING!), y en ese caso el
+ * bloque lleva exit="error" y unos <hosts up="0" …> que NO son un dato: no ha
+ * llegado a sondear nada. Confundir eso con "0 puertos" o con "host caído" es
+ * el mismo anti-patrón de siempre — fallo de la herramienta ≠ resultado
+ * negativo — así que quien llama tiene que poder distinguirlo.
+ *
+ * Vive aquí y lo consume también host-discovery.js: una sola lectura de este
+ * dato para los dos comandos.
+ *
+ * @param {string} xml  Salida de nmap -oX -
+ * @returns {string|null}  errormsg de nmap, o null si no hubo error fatal
+ */
+function parseNmapFatalError(xml) {
+  const m = String(xml || "").match(/<finished\b([^>]*)>/);
+  if (!m) return null;
+  const attrs  = m[1];
+  const exitAt = attrs.match(/\bexit="([^"]*)"/);
+  if (!exitAt || exitAt[1] === "success") return null;
+  const msgAt = attrs.match(/\berrormsg="([^"]*)"/);
+  const msg   = msgAt ? decodeXmlEntities(msgAt[1]) : "";
+  return msg || `nmap terminó con exit="${exitAt[1]}"`;
+}
+
+/**
+ * Decodifica las cinco entidades XML predefinidas. Suficiente para el errormsg
+ * de nmap, que es texto plano con comillas ocasionales.
+ *
+ * @param {string} s
+ * @returns {string}
+ */
+function decodeXmlEntities(s) {
+  return String(s)
+    .replace(/&lt;/g,   "<")
+    .replace(/&gt;/g,   ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g,  "&");
+}
 
 /**
  * Extrae el valor de un atributo de una cadena de apertura de etiqueta XML.
@@ -262,6 +319,20 @@ async function runNmap(options = {}) {
     }
   }
 
+  // nmap abortado (exit="error"): emite <runstats> igual, con 0 puertos y
+  // <hosts up="0">. Eso no es un escaneo con resultado, es un escaneo que no se
+  // hizo. Converge en el camino "no concluyente" que ya existe para el timeout:
+  // mismo finding NET-SCAN-WARN, sin inventar estados nuevos.
+  const fatalError = parseNmapFatalError(stdout);
+  if (fatalError) {
+    return {
+      skipped: true,
+      inconclusive: true,
+      reason: `escaneo no concluyente: nmap terminó con error: ${fatalError}`,
+      scan: { target, portSpec, scanMode, completed: false, filteredCount: 0, filteredReason: null, hostname: null },
+    };
+  }
+
   // NO se deriva aquí ningún "hostUp": con -Pn nmap devuelve SIEMPRE
   // <hosts up="1" down="0"> y <status state="up" reason="user-set">, o sea que
   // no ha comprobado nada. Quien decide si el objetivo existe es
@@ -295,4 +366,4 @@ async function runNmap(options = {}) {
 // la misma interfaz en el descubrimiento que la que usará el escaneo: si -sn
 // saliera por otra interfaz, podría decir "no alcanzable" sobre una ruta que el
 // escaneo sí tiene (o al revés).
-module.exports = { runNmap, parseNmapXml, parsePtrHostname, findInterfaceForTarget };
+module.exports = { runNmap, parseNmapXml, parsePtrHostname, findInterfaceForTarget, parseNmapFatalError };

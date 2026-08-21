@@ -65,8 +65,13 @@ console.log("\n── 2 · runNmap propaga el hostname con la misma forma ──
 // para que el dashboard no tenga que distinguir casos.
 const wrapperSrc = fs.readFileSync(path.join(ROOT, "nodes", "audit-network", "modules", "nmap-wrapper.js"), "utf8");
 const scanLines = wrapperSrc.split("\n").filter((l) => /scan: \{ target, portSpec, scanMode/.test(l));
-ok(scanLines.length === 2, "hay dos formas de salida de `scan` (ok y no concluyente)", `encontradas: ${scanLines.length}`);
-ok(scanLines.every((l) => /hostname/.test(l)), "las dos llevan `hostname`");
+// Tres salidas posibles: escaneo OK, no concluyente por timeout, y no concluyente
+// porque nmap abortó (exit="error"). Lo que importa no es cuántas son, sino que
+// TODAS lleven el campo, para que el dashboard no tenga que distinguir casos.
+ok(scanLines.length >= 2, "hay varias formas de salida de `scan`", `encontradas: ${scanLines.length}`);
+ok(scanLines.every((l) => /hostname/.test(l)),
+   "todas las formas de salida de `scan` llevan hostname",
+   `sin hostname: ${scanLines.filter((l) => !/hostname/.test(l)).length}`);
 ok(/scan: \{[^}]*hostname: null[^}]*\}/.test(wrapperSrc), "la rama no concluyente lo deja explícitamente en null");
 
 const nodeSrc = fs.readFileSync(path.join(ROOT, "nodes", "audit-network", "audit-network.js"), "utf8");

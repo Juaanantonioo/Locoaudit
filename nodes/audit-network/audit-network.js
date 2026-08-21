@@ -168,8 +168,9 @@ module.exports = function (RED) {
         // devuelve siempre "host up (user-set)". Sin esta comprobación, una IP
         // inexistente producía 0 puertos abiertos y el dashboard lo pintaba de
         // verde ("SIN RIESGO"), comunicando seguridad donde solo hay ausencia
-        // de host. Además evita esperar: 3 s de -sn frente a los 212 s que tarda
-        // el escaneo de 1024 puertos contra una IP muerta.
+        // de host. Además evita esperar: medido en macOS contra una IP muerta, el
+        // descubrimiento tardó 3 s frente a los 212 s del escaneo de 1024 puertos.
+        // Ese 3 s es una medida, no un timeout configurado (ver host-discovery.js).
         //
         // Para localhost no se ejecuta: este equipo siempre se alcanza a sí mismo.
         const targetIsLocal = isLocalTarget(target);
