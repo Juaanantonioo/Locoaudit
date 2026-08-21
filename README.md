@@ -100,7 +100,7 @@ En Windows el asistente funciona igual que en el resto de sistemas, con una dife
 
 ### Qué ocurre
 
-Antes de pedir nada, el asistente muestra en pantalla el comando exacto que va a ejecutar y el motivo. Si aceptas, se abre una ventana de terminal como administrador **únicamente** para ejecutar ese comando de instalación. Cuando termina, la ventana se cierra y el asistente continúa sin privilegios.
+El asistente muestra el comando exacto que va a ejecutar en la propia pregunta de instalación, junto con el motivo del permiso. Si aceptas, se abre una ventana de terminal como administrador **únicamente** para ejecutar ese comando de instalación. Cuando termina, la ventana se cierra y el asistente continúa sin privilegios.
 
 ### Por qué hace falta
 

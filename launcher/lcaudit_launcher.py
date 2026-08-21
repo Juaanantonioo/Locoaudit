@@ -583,9 +583,10 @@ def _run_elevated_windows(cmd: str, timeout: int):
     que inyecta los directorios conocidos en el entorno del Node-RED hijo sin
     persistir nada.
 
-    Consentimiento. El comando exacto se imprime en pantalla antes de lanzarlo y
-    el usuario puede rechazar el prompt de UAC. Si lo rechaza se omite la
-    instalación, se muestra el comando manual y el asistente sigue.
+    Consentimiento. Nada se instala sin que el usuario diga que sí: el comando
+    exacto se muestra en la pregunta de instalación, y vuelve a mostrarse en el
+    bloque de error si falla. Además puede rechazar el prompt de UAC; si lo hace
+    se omite la instalación, se muestra el comando manual y el asistente sigue.
 
     Sólo se eleva lo que está en _NEEDS_ELEVATION. Docker y Trivy no lo
     necesitan: winget los registra en su carpeta Links, ya presente en el PATH
@@ -807,27 +808,16 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
     )
 
     work(f"Instalando {label}...")
-    tip(f"Ejecutando: {cmd}")
+    # El comando no se ecoa aquí: en el camino de éxito es ruido. Si algo falla,
+    # se imprime dentro del bloque de error, que es donde hace falta.
     if elevar and not _uac_notice_shown:
         _uac_notice_shown = True
-        warn("Windows va a pedirte permisos de administrador para esta instalación")
-        tip("Se abrirá una ventana de terminal como administrador únicamente para "
-            "ejecutar el comando que acabas de ver arriba. Nada más.")
-        tip(f"Por qué hace falta: el instalador de {label} apunta su ubicación en la "
-            "lista de programas del sistema, y esa lista solo la puede modificar un "
-            "administrador. Sin ese permiso los ficheros se copian igual, pero el "
-            "sistema no encuentra la herramienta después.")
-        tip("LoCoAudit no toca por su cuenta la configuración del sistema: quien la "
-            "modifica es el instalador oficial, igual que si lo instalases a mano.")
-        tip("El asistente y Node-RED siguen ejecutándose SIN permisos de "
-            "administrador. Es una decisión de seguridad: Node-RED lanza "
-            "herramientas de auditoría y publica un panel web en el puerto 1880, "
-            "así que se le dan los privilegios mínimos.")
-        tip("Puedes rechazar el permiso. Si lo haces, se salta esta instalación, se "
-            "te muestra el comando para hacerla a mano y el asistente continúa.")
-        tip("Docker y Trivy no necesitan este permiso.")
-        tip("Si hay varias herramientas que lo requieran, pedirá permiso una vez "
-            "por cada una.")
+        # La justificación completa de la elevación vive en README.md y CLAUDE.md.
+        # Aquí solo lo que el usuario necesita para decidir en ese momento.
+        warn(f"Windows va a pedirte permisos de administrador para instalar {label}")
+        tip("Solo se usa para este paso — Node-RED seguirá sin privilegios de "
+            "administrador")
+        tip("Si rechazas el permiso, se salta la instalación y puedes hacerla a mano")
     status(f"Instalando {label} — puede tardar varios minutos, no cierres la ventana")
     blank()
 
@@ -848,6 +838,7 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
     except subprocess.TimeoutExpired:
         status(_gui_step_label)
         err(f"La instalación de {label} superó el tiempo límite ({timeout}s)")
+        tip(f"Comando: {cmd}")
         tip(f"Intenta manualmente: {MANUAL_INSTALL.get(tool, {}).get(OS, '?')}")
         return False
     except Exception as exc:
@@ -883,6 +874,7 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
         return True
 
     err(f"La instalación de {label} falló — código de salida {_format_rc(rc)}")
+    tip(f"Comando: {cmd}")
     if salida:
         for line in _tail_lines(salida):
             tip(line)
@@ -1200,18 +1192,12 @@ def _report_install_result(cmd: str, label: str) -> None:
         return
 
     _tool_status[cmd] = True
+    # Una sola línea: si el estado es "correcto", el detalle sobra. Lo que sí
+    # cambia el mensaje es si hacía falta instalar o ya estaba en el equipo.
     if _already_installed:
-        ok(f"{label} ya estaba instalado en este equipo")
-        tip("No ha hecho falta instalarlo otra vez. Está listo para usarse.")
+        ok(f"{label} ya estaba instalado — listo para usar")
     else:
-        ok(f"{label} instalado correctamente")
-
-    # Disponible por carpeta conocida pero no por PATH: para LoCoAudit da igual,
-    # porque _child_env() se la pasa a Node-RED. Conviene decirlo, para que el
-    # usuario no lo busque en una terminal y crea que falló.
-    if not command_exists(cmd):
-        tip("LoCoAudit ya puede usarlo en esta misma sesión. "
-            "No hace falta reiniciar nada.")
+        ok(f"{label} instalado correctamente — listo para usar")
 
     if cmd == "docker":
         daemon_warn = check_docker_daemon()
