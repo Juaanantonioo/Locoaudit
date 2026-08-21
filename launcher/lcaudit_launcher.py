@@ -344,19 +344,45 @@ _REBOOT_CODES = {
 # tráfico pase por él, mejor. La condición es una sola expresión en cualquier caso.
 _NEEDS_ELEVATION = {"nmap"}
 
-# Directorios donde el instalador oficial de Nmap deja el binario. Constantes en
-# código, nunca entrada del usuario. Solo se usan para el PATH de la COPIA en
-# memoria del entorno que hereda Node-RED; no se toca ningún PATH persistente.
-_WINDOWS_TOOL_DIRS = (
-    r"C:\Program Files (x86)\Nmap",
-    r"C:\Program Files\Nmap",
-)
+def _default_windows_tool_dirs() -> tuple:
+    """Carpetas donde acaban los binarios de las herramientas en Windows.
+
+    Rutas fijas en código, nunca entrada del usuario. Se usan para dos cosas, y
+    ninguna toca nada persistente: el PATH de la COPIA en memoria del entorno que
+    hereda Node-RED, y saber si una herramienta recién instalada ya está al
+    alcance de los nodos sin reiniciar nada.
+    """
+    dirs = [
+        # Instalador oficial de Nmap.
+        r"C:\Program Files (x86)\Nmap",
+        r"C:\Program Files\Nmap",
+    ]
+    # Carpeta de enlaces de winget: ahí registra los binarios de Docker y Trivy.
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        dirs.append(os.path.join(local, "Microsoft", "WinGet", "Links"))
+    return tuple(dirs)
+
+
+_WINDOWS_TOOL_DIRS = _default_windows_tool_dirs()
+
+# Extensiones de ejecutable que se buscan al comprobar si una herramienta ya está
+# en una de esas carpetas. La carpeta de winget guarda .exe; Nmap también.
+_WINDOWS_EXEC_EXTS = (".exe", ".cmd", ".bat", "")
+
+# Herramientas instaladas durante ESTA ejecución (para el consejo final).
+_installed_this_run: list = []
 
 _SE_ERR_ACCESSDENIED = 5     # ShellExecute: acceso denegado
 _ERROR_CANCELLED     = 1223  # GetLastError: el usuario canceló el diálogo de UAC
 
 # El aviso de que Windows va a pedir permisos se da una sola vez por ejecución.
 _uac_notice_shown = False
+
+# Lo pone run_install() cuando la regla de evidencia salva un returncode no cero:
+# la herramienta ya estaba en el equipo y no hizo falta instalarla. Solo cambia la
+# redacción del mensaje final, no si la instalación se considera correcta o no.
+_already_installed = False
 
 # Estado de herramientas opcionales (rellenado en step2, usado en resumen final)
 _tool_status: dict = {}
@@ -406,8 +432,12 @@ def get_node_version() -> tuple:
 
 
 def check_docker_daemon() -> str | None:
+    # Se resuelve la ruta por la fuente única: en Windows docker puede estar
+    # disponible para LoCoAudit sin figurar en el PATH de este proceso, y entonces
+    # invocarlo por nombre fallaría con un error que no es del daemon.
+    exe = _tool_path("docker") or "docker"
     try:
-        r = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=8)
+        r = subprocess.run([exe, "info"], capture_output=True, text=True, timeout=8)
         if r.returncode != 0:
             return "instalado pero el daemon no está en ejecución — ábrelo primero"
         return None
@@ -526,14 +556,40 @@ def _shellexecuteinfo_type():
 
 
 def _run_elevated_windows(cmd: str, timeout: int):
-    """Ejecuta `cmd` elevado y devuelve (returncode, salida).
+    """Ejecuta `cmd` elevado vía UAC y devuelve (returncode, salida).
 
     returncode None significa que el usuario canceló el diálogo de UAC — eso no
-    es un fallo de instalación, es una decisión suya.
+    es un fallo de instalación, es una decisión suya, y se trata como tal.
 
-    Se eleva SOLO el comando de instalación, nunca el launcher entero: si el
-    launcher corriera como administrador, Node-RED heredaría los privilegios, y
-    Node-RED ejecuta herramientas de auditoría y sirve un dashboard en el 1880.
+    DECISIÓN DE DISEÑO — por qué existe esta función (no relitigar):
+
+    Motivo técnico. El instalador de Nmap (NSIS) registra su ruta en el PATH de
+    sistema, que vive en HKLM y solo es escribible por un administrador. Sin
+    elevación el instalador copia los ficheros y falla esa parte en silencio:
+    comprobado en Windows, `winget list` daba Nmap por instalado, el binario
+    estaba en C:\\Program Files (x86)\\Nmap\\nmap.exe, y aun así `nmap` no se
+    resolvía ni tras reiniciar el equipo. Con elevación funciona.
+
+    Alcance mínimo. Se eleva SOLO el comando de instalación, nunca el launcher
+    entero. Si el launcher corriera como administrador, Node-RED heredaría los
+    privilegios, y Node-RED ejecuta herramientas de auditoría y sirve un panel
+    web en el puerto 1880: elevarlo ampliaría la superficie de ataque sin
+    ninguna necesidad. Principio de mínimo privilegio.
+
+    Quién escribe el PATH. LoCoAudit no modifica el PATH del usuario ni del
+    sistema por su cuenta: nada de setx, nada de escritura en el registro. Lo
+    hace el instalador oficial de Nmap haciendo su trabajo documentado, igual
+    que en una instalación manual. Para la sesión en curso basta con _child_env(),
+    que inyecta los directorios conocidos en el entorno del Node-RED hijo sin
+    persistir nada.
+
+    Consentimiento. El comando exacto se imprime en pantalla antes de lanzarlo y
+    el usuario puede rechazar el prompt de UAC. Si lo rechaza se omite la
+    instalación, se muestra el comando manual y el asistente sigue.
+
+    Sólo se eleva lo que está en _NEEDS_ELEVATION. Docker y Trivy no lo
+    necesitan: winget los registra en su carpeta Links, ya presente en el PATH
+    de usuario.
     """
     import ctypes
 
@@ -629,6 +685,58 @@ def _run_plain(cmd: str, timeout: int):
     return result.returncode, salida
 
 
+def _tool_in_known_dirs(tool: str):
+    """Devuelve la carpeta conocida donde está el binario de `tool`, o None.
+
+    Es lo que distingue "instalada y ya usable" de "instalada pero todavía fuera
+    de nuestro alcance". Si está en una de estas carpetas, el Node-RED que arranca
+    el asistente la va a encontrar, porque _child_env() se las añade al entorno
+    del proceso hijo. No hace falta reiniciar nada.
+    """
+    if OS != "Windows":
+        return None
+    for d in _WINDOWS_TOOL_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for ext in _WINDOWS_EXEC_EXTS:
+            if os.path.isfile(os.path.join(d, tool + ext)):
+                return d
+    return None
+
+
+def _tool_path(tool: str):
+    """Ruta del ejecutable de `tool`, o None si no está disponible.
+
+    FUENTE ÚNICA DE VERDAD para "¿está esta herramienta disponible?". Combina las
+    dos señales que existen, en orden de preferencia:
+
+      1. El PATH que heredó este proceso (shutil.which).
+      2. Las carpetas conocidas de _WINDOWS_TOOL_DIRS, que _child_env() inyecta en
+         el entorno del Node-RED hijo.
+
+    Preguntar solo por (1) daba respuestas que contradecían lo que el usuario veía
+    funcionando: en Windows una herramienta puede estar en disco y ser perfectamente
+    usable por los nodos, sin figurar en el PATH de este proceso. Todo lo que decida
+    en función de la disponibilidad tiene que derivar de aquí, no de shutil.which
+    por su cuenta.
+    """
+    ruta = shutil.which(tool)
+    if ruta:
+        return ruta
+    carpeta = _tool_in_known_dirs(tool)
+    if carpeta:
+        for ext in _WINDOWS_EXEC_EXTS:
+            candidato = os.path.join(carpeta, tool + ext)
+            if os.path.isfile(candidato):
+                return candidato
+    return None
+
+
+def _tool_available(tool: str) -> bool:
+    """¿Puede LoCoAudit usar esta herramienta? Ver _tool_path()."""
+    return _tool_path(tool) is not None
+
+
 def _child_env() -> dict:
     """Copia del entorno para los procesos hijo, con las carpetas conocidas de
     herramientas añadidas al PATH.
@@ -685,7 +793,8 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
     `tool` es la clave interna ("nmap", "docker"...). Si no se pasa se deriva del
     label, que es como lo llaman las dos ramas de step2.
     """
-    global _uac_notice_shown
+    global _uac_notice_shown, _already_installed
+    _already_installed = False
     tool = tool or label.lower()
     timeout = timeout or _INSTALL_TIMEOUTS.get(tool, _INSTALL_TIMEOUT_DEFAULT)
 
@@ -701,12 +810,22 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
     tip(f"Ejecutando: {cmd}")
     if elevar and not _uac_notice_shown:
         _uac_notice_shown = True
-        warn("Windows va a pedir permisos de administrador para esta instalación")
-        tip("El instalador de Nmap tiene que registrar su ruta en el PATH del "
-            "sistema, y eso solo lo puede hacer un administrador. Sin ello el "
-            "programa se copia pero queda invisible.")
-        tip("Se eleva solo el comando de instalación: Node-RED se arrancará sin "
-            "privilegios de administrador.")
+        warn("Windows va a pedirte permisos de administrador para esta instalación")
+        tip("Se abrirá una ventana de terminal como administrador únicamente para "
+            "ejecutar el comando que acabas de ver arriba. Nada más.")
+        tip(f"Por qué hace falta: el instalador de {label} apunta su ubicación en la "
+            "lista de programas del sistema, y esa lista solo la puede modificar un "
+            "administrador. Sin ese permiso los ficheros se copian igual, pero el "
+            "sistema no encuentra la herramienta después.")
+        tip("LoCoAudit no toca por su cuenta la configuración del sistema: quien la "
+            "modifica es el instalador oficial, igual que si lo instalases a mano.")
+        tip("El asistente y Node-RED siguen ejecutándose SIN permisos de "
+            "administrador. Es una decisión de seguridad: Node-RED lanza "
+            "herramientas de auditoría y publica un panel web en el puerto 1880, "
+            "así que se le dan los privilegios mínimos.")
+        tip("Puedes rechazar el permiso. Si lo haces, se salta esta instalación, se "
+            "te muestra el comando para hacerla a mano y el asistente continúa.")
+        tip("Docker y Trivy no necesitan este permiso.")
         tip("Si hay varias herramientas que lo requieran, pedirá permiso una vez "
             "por cada una.")
     status(f"Instalando {label} — puede tardar varios minutos, no cierres la ventana")
@@ -756,10 +875,11 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
 
     # Cualquier otro código no cero: manda la evidencia, no una tabla de códigos.
     # winget devuelve no-cero en casos que no son error (ya instalado, entre
-    # otros); si el binario está ahí, la instalación cumplió su objetivo.
-    if command_exists(tool):
-        warn(f"{label}: el comando devolvió {_format_rc(rc)}, "
-             f"pero el binario ya está disponible")
+    # otros); si la herramienta está disponible, la instalación cumplió su objetivo.
+    # La evidencia se mide con la fuente única, no con el PATH a secas: si no,
+    # sale un error rojo por una herramienta que el usuario ve funcionando.
+    if _tool_available(tool):
+        _already_installed = True
         return True
 
     err(f"La instalación de {label} falló — código de salida {_format_rc(rc)}")
@@ -1065,6 +1185,41 @@ def _ask_install_all(pending: list, is_tty: bool) -> bool:
         return False
 
 
+def _report_install_result(cmd: str, label: str) -> None:
+    """Mensaje final tras una instalación que run_install() dio por buena.
+
+    Único sitio donde se redacta ese resultado: antes estaba duplicado en la rama
+    GUI y en la de terminal, con el riesgo de que se separaran. Toda la decisión
+    sale de _tool_available(), la fuente única.
+    """
+    if not _tool_available(cmd):
+        _tool_status[cmd] = False
+        warn(f"{label} se instaló, pero el sistema todavía no lo encuentra")
+        tip("Abre una ventana de terminal nueva o reinicia el equipo "
+            "para empezar a usarlo.")
+        return
+
+    _tool_status[cmd] = True
+    if _already_installed:
+        ok(f"{label} ya estaba instalado en este equipo")
+        tip("No ha hecho falta instalarlo otra vez. Está listo para usarse.")
+    else:
+        ok(f"{label} instalado correctamente")
+
+    # Disponible por carpeta conocida pero no por PATH: para LoCoAudit da igual,
+    # porque _child_env() se la pasa a Node-RED. Conviene decirlo, para que el
+    # usuario no lo busque en una terminal y crea que falló.
+    if not command_exists(cmd):
+        tip("LoCoAudit ya puede usarlo en esta misma sesión. "
+            "No hace falta reiniciar nada.")
+
+    if cmd == "docker":
+        daemon_warn = check_docker_daemon()
+        if daemon_warn:
+            _tool_status[cmd] = False
+            warn(f"Docker {daemon_warn}")
+
+
 def step2_optional_tools():
     step_header(2, "Herramientas opcionales")
 
@@ -1076,7 +1231,7 @@ def step2_optional_tools():
     # porque en Windows get_auto_install_cmd() no le devuelve comando.
     pending = [
         (c, l) for c, l in OPTIONAL_TOOLS
-        if not command_exists(c) and get_auto_install_cmd(c)
+        if not _tool_available(c) and get_auto_install_cmd(c)
     ]
     install_all = _ask_install_all(pending, is_tty) if len(pending) >= 2 else False
     if install_all:
@@ -1092,7 +1247,8 @@ def step2_optional_tools():
             blank()
             continue
 
-        if command_exists(cmd):
+        # Misma vara de medir que el resto: si LoCoAudit puede usarla, está.
+        if _tool_available(cmd):
             if cmd == "docker":
                 daemon_warn = check_docker_daemon()
                 if daemon_warn:
@@ -1104,6 +1260,10 @@ def step2_optional_tools():
             else:
                 _tool_status[cmd] = True
                 ok(f"{label} instalado — {TOOL_DESC.get(cmd, '')}")
+            if not command_exists(cmd):
+                tip("Está en el equipo, pero el sistema no la tiene registrada: "
+                    "LoCoAudit la usará igualmente, y otros programas no la "
+                    "encontrarán hasta que la reinstales desde su instalador oficial.")
             continue
 
         # ── Tool missing ──
@@ -1135,20 +1295,12 @@ def step2_optional_tools():
             if answer:
                 blank()
                 success = run_install(auto_cmd, label)
-                if success and command_exists(cmd):
-                    _tool_status[cmd] = True
-                    ok(f"{label} instalado correctamente")
-                    if cmd == "docker":
-                        daemon_warn = check_docker_daemon()
-                        if daemon_warn:
-                            _tool_status[cmd] = False
-                            warn(f"Docker {daemon_warn}")
-                elif success:
-                    # Capa 1: no se toca el PATH del proceso; se avisa y punto.
-                    # shutil.which() lee el PATH heredado al arrancar Python, así
-                    # que un binario recién instalado no aparece hasta relanzar.
-                    warn(f"{label} se instaló, pero aún no aparece en el PATH de este proceso")
-                    tip("Reinicia el launcher para que lo detecte")
+                if success:
+                    # Si ya estaba, no cuenta como instalada en esta ejecución:
+                    # el aviso final de reinicio no tiene por qué mencionarla.
+                    if not _already_installed:
+                        _installed_this_run.append(label)
+                    _report_install_result(cmd, label)
                 # El fallo ya lo ha detallado run_install(): código de salida,
                 # stderr real e instrucciones manuales. No se repite aquí.
             else:
@@ -1184,20 +1336,12 @@ def step2_optional_tools():
             if answer:
                 blank()
                 success = run_install(auto_cmd, label)
-                if success and command_exists(cmd):
-                    _tool_status[cmd] = True
-                    ok(f"{label} instalado correctamente")
-                    if cmd == "docker":
-                        daemon_warn = check_docker_daemon()
-                        if daemon_warn:
-                            _tool_status[cmd] = False
-                            warn(f"Docker {daemon_warn}")
-                elif success:
-                    # Capa 1: no se toca el PATH del proceso; se avisa y punto.
-                    # shutil.which() lee el PATH heredado al arrancar Python, así
-                    # que un binario recién instalado no aparece hasta relanzar.
-                    warn(f"{label} se instaló, pero aún no aparece en el PATH de este proceso")
-                    tip("Reinicia el launcher para que lo detecte")
+                if success:
+                    # Si ya estaba, no cuenta como instalada en esta ejecución:
+                    # el aviso final de reinicio no tiene por qué mencionarla.
+                    if not _already_installed:
+                        _installed_this_run.append(label)
+                    _report_install_result(cmd, label)
                 # El fallo ya lo ha detallado run_install(): código de salida,
                 # stderr real e instrucciones manuales. No se repite aquí.
             else:
@@ -1210,6 +1354,15 @@ def step2_optional_tools():
 
     if all_present:
         ok("Todas las herramientas opcionales están disponibles")
+
+    if _installed_this_run:
+        blank()
+        ok(f"Instaladas en esta sesión: {', '.join(_installed_this_run)}")
+        tip("LoCoAudit ya puede usarlas. Puedes continuar sin reiniciar nada.")
+        if OS == "Windows":
+            tip("Cuando te venga bien, reinicia Windows para que queden disponibles "
+                "también en cualquier otro programa o ventana de terminal. Es una "
+                "recomendación, no un requisito para usar LoCoAudit.")
 
 
 # ─────────────────────────────────────────────

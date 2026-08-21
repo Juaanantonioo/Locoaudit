@@ -12,6 +12,7 @@ LoCoAudit añade nodos que puedes arrastrar a un flujo de Node-RED, conectar y e
 - [Nodos disponibles](#nodos-disponibles)
 - [Requisitos](#requisitos)
 - [Instalación con el asistente](#instalación-con-el-asistente)
+- [Instalación en Windows](#instalación-en-windows)
 - [Instalación manual](#instalación-manual)
 - [Herramientas externas](#herramientas-externas)
 - [Primeros pasos](#primeros-pasos)
@@ -93,6 +94,39 @@ Al terminar, el editor queda en `http://localhost:1880` y los paneles en `http:/
 
 ---
 
+## Instalación en Windows
+
+En Windows el asistente funciona igual que en el resto de sistemas, con una diferencia: al instalar **Nmap** aparecerá el diálogo de control de cuentas de usuario (UAC) pidiendo permisos de administrador. Esta sección explica por qué y qué se hace exactamente con ese permiso.
+
+### Qué ocurre
+
+Antes de pedir nada, el asistente muestra en pantalla el comando exacto que va a ejecutar y el motivo. Si aceptas, se abre una ventana de terminal como administrador **únicamente** para ejecutar ese comando de instalación. Cuando termina, la ventana se cierra y el asistente continúa sin privilegios.
+
+### Por qué hace falta
+
+El instalador de Nmap registra la ruta del programa en el PATH del sistema (`HKLM`), una operación reservada a administradores. Sin ese permiso el instalador copia los ficheros pero esa parte falla en silencio: `winget list` da Nmap por instalado, el ejecutable está en `C:\Program Files (x86)\Nmap\nmap.exe`, y aun así el sistema no encuentra el comando `nmap` — comprobado en Windows, ni siquiera reiniciando el equipo. Con la instalación elevada funciona a la primera.
+
+### Qué NO se hace
+
+- **El asistente no se ejecuta como administrador**, y **Node-RED tampoco**. Es una decisión deliberada de seguridad: Node-RED lanza herramientas de auditoría y sirve un panel web en el puerto 1880; ejecutarlo con privilegios elevados ampliaría la superficie de ataque sin ninguna necesidad. Principio de mínimo privilegio.
+- **LoCoAudit no modifica el PATH del usuario ni del sistema por su cuenta.** No usa `setx` ni escribe en el registro. Quien registra la ruta es el instalador oficial de Nmap, haciendo exactamente lo mismo que si lo instalases a mano.
+
+### Si prefieres no dar el permiso
+
+Puedes rechazar el diálogo de UAC. En ese caso se omite esa instalación, el asistente muestra el comando para hacerla por tu cuenta y el resto del proceso continúa con normalidad. Instalado a mano desde una terminal de administrador, el resultado es idéntico:
+
+```powershell
+winget install --id Insecure.Nmap --source winget -e
+```
+
+**Docker y Trivy no necesitan elevación.** winget registra sus ejecutables en su propia carpeta de enlaces, que ya está en el PATH del usuario.
+
+### Después de instalar
+
+Las herramientas instaladas quedan disponibles para LoCoAudit en la misma sesión, sin reiniciar nada: el asistente pasa las rutas conocidas al Node-RED que arranca. Para que estén disponibles también en cualquier otro programa o terminal del sistema, conviene reiniciar Windows cuando te venga bien. Es una recomendación, no un requisito para usar LoCoAudit.
+
+---
+
 ## Instalación manual
 
 Si prefieres controlar cada paso, o el asistente falla en tu sistema:
@@ -145,7 +179,7 @@ Ninguna es obligatoria para que Node-RED arranque, pero cada módulo necesita la
 | Herramienta | Para qué | macOS | Linux | Windows |
 | --- | --- | --- | --- | --- |
 | Nmap | Escaneo de puertos | `brew install nmap` | `sudo pacman -S nmap` / `sudo apt install nmap` | `winget install -e --id Insecure.Nmap` |
-| Trivy | Vulnerabilidades en dependencias e imágenes | `brew install trivy` | Repositorio oficial de Aqua Security | Binario desde las *releases* de GitHub |
+| Trivy | Vulnerabilidades en dependencias e imágenes | `brew install trivy` | Repositorio oficial de Aqua Security | `winget install -e --id AquaSecurity.Trivy` |
 | Lynis | Endurecimiento del sistema | `brew install lynis` | `sudo pacman -S lynis` / `sudo apt install lynis` | No disponible de forma nativa |
 | Docker | Necesario para `audit-image` | Docker Desktop | Paquete de la distribución | Docker Desktop con WSL2 |
 
