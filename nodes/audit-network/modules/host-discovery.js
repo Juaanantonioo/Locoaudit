@@ -16,14 +16,17 @@
  * Este módulo es la ÚNICA fuente de verdad sobre si el objetivo existe. Lanza
  * un descubrimiento explícito (`nmap -sn`) ANTES del escaneo de puertos.
  *
- * Además ahorra tiempo: medido contra 10.0.0.5 (IP sin host, ruta por
- * WireGuard), `nmap -sn` tarda 3,0 s mientras que el escaneo de puertos del
- * nodo con `-p 1-1024` tarda 212,6 s — a 28 s de morir por el timeout de 240 s
- * del modo estándar.
+ * Además ahorra tiempo: medido en macOS contra 10.0.0.5 (IP sin host, ruta por
+ * WireGuard), este descubrimiento tardó 3,0 s mientras que el escaneo de puertos
+ * del nodo con `-p 1-1024` tardó 212,6 s — a 28 s de morir por el timeout de
+ * 240 s del modo estándar. Ese 3,0 s es una MEDIDA de aquel caso, no un límite
+ * configurado: los techos reales son --host-timeout 8s (nmap) y
+ * DISCOVERY_TIMEOUT_MS = 15000 (executor).
  *
  * DECISIÓN (una sola señal: runstats/hosts del XML de -sn)
  *   <hosts up="N" …>  con N >= 1                 → reachable: true
  *   <hosts up="0" down="1" …> y <finished …>     → reachable: false
+ *   <finished … exit="error">                    → reachable: null  (AMBIGUO)
  *   cualquier otra cosa (sin runstats, timeout,
  *   excepción, nmap ausente, XML ilegible)       → reachable: null  (AMBIGUO)
  *
@@ -40,20 +43,21 @@
  *
  * Exporta:
  *   checkHostReachable(options)  → Promise<Discovery>   (ejecuta nmap -sn)
- *   parseDiscoveryXml(xml)       → { reachable, reason } (puro, para tests)
+ *   parseDiscoveryXml(xml)       → { reachable, reason, error } (puro, para tests)
  *   buildDiscoveryCmd(target)    → string                (comando exacto)
  *
  * @typedef {Object} Discovery
  * @property {boolean|null} reachable  true | false | null (ambiguo)
  * @property {"nmap-sn"|"local"|"error"} method
  * @property {string|null} reason      Motivo de nmap (informativo)
+ * @property {string|null} error       errormsg de nmap si abortó (diagnóstico)
  * @property {string} detail           Texto listo para la evidencia del finding
  * @property {number} durationMs
  * @property {string|null} cmd         Comando exacto ejecutado
  */
 
 const { execCommand, commandExists } = require("../../../lib/executor");
-const { findInterfaceForTarget }     = require("./nmap-wrapper");
+const { findInterfaceForTarget, parseNmapFatalError } = require("./nmap-wrapper");
 
 /** Timeout del executor para el descubrimiento. Techo duro: nunca es el cuello
  *  de botella (el --host-timeout de nmap corta antes, a los 8 s). */
@@ -71,7 +75,8 @@ const DISCOVERY_TIMEOUT_MS = 15000;
  *   --max-retries 1          un reintento basta para decidir vivo/no vivo
  *   --host-timeout 8s        techo por host
  *   -e <iface>               igual que el escaneo: en macOS con varias
- *                            interfaces en la misma subred, sin -e nmap falla
+ *                            interfaces en la misma subred, sin -e nmap falla.
+ *                            En Windows NO se pasa: ver findInterfaceForTarget()
  *
  * @param {string} target
  * @returns {string}
@@ -89,17 +94,27 @@ function buildDiscoveryCmd(target) {
  * fijarla con fixtures en los tests.
  *
  * @param {string} xml  Salida de nmap -sn -oX -
- * @returns {{ reachable: boolean|null, reason: string|null }}
+ * @returns {{ reachable: boolean|null, reason: string|null, error: string|null }}
  */
 function parseDiscoveryXml(xml) {
   const text = xml || "";
+
+  // nmap abortado (exit="error"): emite <runstats> y <hosts up="0" down="0"
+  // total="0"/> igualmente. Esos ceros NO dicen que el host esté caído, dicen
+  // que nmap no llegó a preguntárselo — ocurre, por ejemplo, con un -e que
+  // apunta a una interfaz que no existe. Se comprueba ANTES que los <hosts>
+  // porque esa etiqueta también casa aquí y daría un "no alcanzable" falso.
+  const fatalError = parseNmapFatalError(text);
+  if (fatalError) {
+    return { reachable: null, reason: null, error: fatalError };
+  }
 
   // Un descubrimiento VÁLIDO termina con <runstats><finished …><hosts …>.
   // Sin esos dos elementos el resultado no es interpretable → ambiguo.
   const hostsMatch = text.match(/<hosts\s+up="(\d+)"\s+down="(\d+)"/);
   const finished   = text.includes("<finished");
   if (!hostsMatch || !finished) {
-    return { reachable: null, reason: null };
+    return { reachable: null, reason: null, error: null };
   }
 
   // reason del bloque <status state="…" reason="…">, solo informativo.
@@ -114,7 +129,7 @@ function parseDiscoveryXml(xml) {
   }
 
   const up = parseInt(hostsMatch[1], 10);
-  return { reachable: up > 0, reason: reason || null };
+  return { reachable: up > 0, reason: reason || null, error: null };
 }
 
 /**
@@ -124,9 +139,10 @@ function parseDiscoveryXml(xml) {
  * @param {boolean|null} reachable
  * @param {string|null} reason
  * @param {number} durationMs
+ * @param {string|null} [error]  errormsg de nmap cuando abortó
  * @returns {string}
  */
-function describe(target, reachable, reason, durationMs) {
+function describe(target, reachable, reason, durationMs, error) {
   const secs = (durationMs / 1000).toFixed(1);
   if (reachable === true) {
     return `${target} respondió al descubrimiento de red en ${secs} s` +
@@ -141,6 +157,13 @@ function describe(target, reachable, reason, durationMs) {
              "este equipo no sabe por dónde llegar hasta él.";
     }
     return `${target} no respondió al descubrimiento de red (nmap -sn, ${secs} s).`;
+  }
+  if (error) {
+    // Fallo de la herramienta, no del objetivo. Se dice tal cual: el equipo
+    // puede estar perfectamente encendido.
+    return `No se ha podido comprobar si ${target} está accesible (${secs} s): ` +
+           `nmap terminó con error (${error}). No es un dato sobre el equipo, ` +
+           "es que la comprobación no se pudo hacer.";
   }
   return `No se pudo determinar si ${target} está accesible (${secs} s): ` +
          "el descubrimiento no dio un resultado interpretable.";
@@ -207,14 +230,15 @@ async function checkHostReachable(options = {}) {
     }
   }
 
-  const { reachable, reason } = parseDiscoveryXml(stdout);
+  const { reachable, reason, error } = parseDiscoveryXml(stdout);
   const durationMs = Date.now() - started;
 
   return {
     reachable,
     method: "nmap-sn",
     reason,
-    detail: describe(target, reachable, reason, durationMs),
+    error: error || null,
+    detail: describe(target, reachable, reason, durationMs, error),
     durationMs,
     cmd,
   };

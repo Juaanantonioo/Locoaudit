@@ -90,6 +90,20 @@ function testDiscovery() {
   eq("salida truncada sin <runstats> → reachable null (ambiguo)", r3.reachable, null);
   eq("ambiguo → targetState 'unknown'", deriveTargetState({ reachable: r3.reachable }), "unknown");
 
+  // nmap abortado: emite <runstats> y <hosts up="0" down="0" total="0"/>, que
+  // antes se leía como "host caído". Es un fallo de la herramienta, no un dato
+  // sobre el objetivo. Caso real de Windows: -e con el nombre amigable del
+  // adaptador ("Wi-Fi"), que el nmap de Windows no entiende.
+  const errXml = '<?xml version="1.0"?><nmaprun><runstats><finished time="1" ' +
+    'timestr="x" elapsed="0.05" summary="s" exit="error" errormsg="I cannot ' +
+    'figure out what source address to use for device Wi-Fi, does it even ' +
+    'exist?"/><hosts up="0" down="0" total="0"/></runstats></nmaprun>';
+  const r5 = parseDiscoveryXml(errXml);
+  eq("nmap abortado (exit=error) → reachable null, NUNCA false", r5.reachable, null);
+  eq("nmap abortado → targetState 'unknown'", deriveTargetState({ reachable: r5.reachable }), "unknown");
+  ok("nmap abortado → se guarda el errormsg para diagnóstico",
+     typeof r5.error === "string" && r5.error.includes("Wi-Fi"), String(r5.error));
+
   eq("XML vacío → ambiguo, nunca false", parseDiscoveryXml("").reachable, null);
   eq("basura → ambiguo, nunca false", parseDiscoveryXml("<nope/>").reachable, null);
 
@@ -114,6 +128,13 @@ function testDiscovery() {
   ok("el comando de descubrimiento es -sn", cmd.includes("nmap -sn"), cmd);
   ok("el descubrimiento NO lleva -Pn (lo anularía)", !cmd.includes("-Pn"), cmd);
   ok("amplía las sondas TCP más allá de 80/443", cmd.includes("-PS22,80,443,8080"), cmd);
+
+  // En Windows os.networkInterfaces() da el nombre amigable ("Wi-Fi"), que el
+  // nmap de Windows no entiende: allí el comando sale sin -e.
+  const { findInterfaceForTarget } = require("../../nodes/audit-network/modules/nmap-wrapper");
+  eq("Windows → sin interfaz para -e", findInterfaceForTarget("192.168.0.30", "win32"), null);
+  ok("macOS/Linux → se sigue eligiendo interfaz cuando la hay",
+     findInterfaceForTarget("127.0.0.1", "darwin") === null, "localhost nunca lleva -e");
 }
 
 // ── 2. Escaneo de puertos ─────────────────────────────────────────────────────
