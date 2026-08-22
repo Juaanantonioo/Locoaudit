@@ -295,9 +295,21 @@ check("tope 200 + truncated: true", () => {
   assert.strictEqual(out.truncated, true);
 });
 
-check("skipped → events: []", () => {
+check("skipped → events: [] y sessionsChecked: false", () => {
   const out = buildEventList({ skipped: true, reason: "x", windowHours: 12, platform: "win32" });
-  assert.deepStrictEqual(out, { windowHours: 12, events: [], truncated: false });
+  // sessionsChecked=false: sin recolección no se preguntó a nadie, y el panel no
+  // puede pintar "Sin sesiones remotas activas" sobre eso.
+  assert.deepStrictEqual(out, { windowHours: 12, events: [], truncated: false, sessionsChecked: false });
+});
+
+check("sessionsChecked viaja al dashboard cuando sí se consultó", () => {
+  const out = buildEventList({
+    windowHours: 5, platform: "win32", sessionsChecked: true,
+    sessions: [{ user: "ines", tty: "rdp-tcp#1", since: "2026-08-22 12:00", origin: "192.168.0.25" }],
+    ssh: { accepted: [], failed: [] }, sudo: { ok: [], failed: [] },
+  });
+  assert.strictEqual(out.sessionsChecked, true);
+  assert.strictEqual(out.events.filter((e) => e.type === "session").length, 1);
 });
 
 console.log(`\n${passed} comprobaciones OK`);

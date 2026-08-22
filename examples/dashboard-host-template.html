@@ -684,7 +684,12 @@
                      es la de INICIO de sesión, no la de un evento. -->
                 <div class="seclog-title seclog-title-sessions">Sesiones activas ahora</div>
                 <div v-if="sessionEvents.length === 0" class="seclog-empty">
-                  Sin sesiones remotas activas.
+                  <template v-if="sessionsChecked">Sin sesiones remotas activas.</template>
+                  <template v-else>
+                    No se ha podido comprobar quién tiene la sesión abierta: este
+                    equipo no dispone de la herramienta que lo consulta. La lista
+                    vacía no significa que no haya nadie conectado.
+                  </template>
                 </div>
                 <div v-else class="seclog-table-wrap">
                   <table class="seclog-table">
@@ -1103,6 +1108,15 @@ export default {
     sessionEvents() {
       var evs = (this.secEvents && this.secEvents.events) || [];
       return evs.filter(function(e) { return e.type === 'session'; });
+    },
+
+    // ¿Se llegó a consultar? Una lista vacía solo tranquiliza si consta que
+    // alguien miró: en Windows Home no existen `query` ni `qwinsta`, y sin esta
+    // señal el panel decía "Sin sesiones remotas activas" sin haber preguntado.
+    // Payloads antiguos no traen el campo → se asume que sí se consultó.
+    sessionsChecked() {
+      var m = this.secEvents;
+      return !m || m.sessionsChecked !== false;
     },
 
     catBars() {

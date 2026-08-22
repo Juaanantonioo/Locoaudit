@@ -701,20 +701,37 @@ async function collectWin32(windowHours, sources, partial) {
     }
   }
 
-  // C) Sesiones activas: query user, con qwinsta como fallback
-  const quOut = await tryExec("query user", CMD_TIMEOUT_MS, "query user", partial);
-  if (quOut) {
-    sessions = parseQueryUserLines(quOut);
-    sources.push("query user");
-  } else {
+  // C) Sesiones activas: query user, con qwinsta como fallback.
+  //
+  // Ambos pertenecen a las herramientas de Servicios de Escritorio Remoto y NO
+  // vienen en Windows Home: `where.exe query` y `where.exe qwinsta` no
+  // encuentran nada. Sin comprobarlo antes, la ejecución fallaba y el motivo
+  // que llegaba al usuario era «Command failed: query user — 'query' no se
+  // reconoce como un comando interno o externo», que suena a avería cuando lo
+  // que pasa es que esa edición de Windows no trae la herramienta.
+  const SIN_RDS = "no disponible en esta edición de Windows " +
+                  "(herramientas de Servicios de Escritorio Remoto no instaladas)";
+  let sessionsChecked = false;
+
+  if (await commandExists("query")) {
+    const quOut = await tryExec("query user", CMD_TIMEOUT_MS, "query user", partial);
+    if (quOut) {
+      sessions = parseQueryUserLines(quOut);
+      sources.push("query user");
+      sessionsChecked = true;
+    }
+  } else if (await commandExists("qwinsta")) {
     const qwOut = await tryExec("qwinsta", CMD_TIMEOUT_MS, "qwinsta", partial);
     if (qwOut) {
       sessions = parseQwinstaLines(qwOut);
       sources.push("qwinsta");
+      sessionsChecked = true;
     }
+  } else {
+    partial.push({ source: "query user / qwinsta", reason: SIN_RDS });
   }
 
-  return { windows, sessions, ssh };
+  return { windows, sessions, ssh, sessionsChecked };
 }
 
 // ── Lista plana de eventos para el dashboard ────────────────────────────────
@@ -749,7 +766,7 @@ function tsToEpoch(ts) {
 function buildEventList(result) {
   const windowHours = (result && result.windowHours) || 24;
   if (!result || result.skipped) {
-    return { windowHours, events: [], truncated: false };
+    return { windowHours, events: [], truncated: false, sessionsChecked: false };
   }
 
   const events = [];
@@ -792,6 +809,9 @@ function buildEventList(result) {
     windowHours,
     events: truncated ? events.slice(0, MAX_EVENT_LIST) : events,
     truncated,
+    // El dashboard lo necesita para no pintar "Sin sesiones remotas activas"
+    // cuando lo cierto es que no se pudo consultar.
+    sessionsChecked: result.sessionsChecked === true,
   };
 }
 
@@ -821,9 +841,12 @@ async function runSecurityEvents(windowHours = 24) {
   let sudo = { ok: [], failed: [] };
   let windows = null;
   let sessions = [];
+  // ¿Se llegó a consultar quién tiene sesión abierta? Una lista vacía no
+  // significa "no hay nadie" si no se pudo preguntar.
+  let sessionsChecked = false;
 
   if (platform === "win32") {
-    ({ windows, sessions, ssh } = await collectWin32(hours, sources, partial));
+    ({ windows, sessions, ssh, sessionsChecked } = await collectWin32(hours, sources, partial));
   } else {
     ({ ssh, sudo } =
       platform === "linux"
@@ -834,7 +857,10 @@ async function runSecurityEvents(windowHours = 24) {
     if (await commandExists("who")) {
       const whoOut = await tryExec("who", CMD_TIMEOUT_MS, "who", partial);
       sessions = parseWhoLines(whoOut);
-      if (whoOut) sources.push("who");
+      if (whoOut) {
+        sources.push("who");
+        sessionsChecked = true;
+      }
     } else {
       partial.push({ source: "who", reason: "comando `who` no disponible" });
     }
@@ -861,6 +887,7 @@ async function runSecurityEvents(windowHours = 24) {
     ssh,
     sudo,
     sessions,
+    sessionsChecked,
   };
   if (windows) result.windows = windows;
   return result;
