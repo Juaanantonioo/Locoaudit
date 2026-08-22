@@ -86,6 +86,28 @@ function tagPid(line, tagRe) {
 const SSHD_PID_RE = /sshd(?:-session|-auth)?\[(\d+)\]/;
 
 /**
+ * Identificador de conexión cuando la línea no trae [PID].
+ *
+ * El canal OpenSSH/Operational de Windows emite "sshd: Failed password for ..."
+ * sin el PID que sí lleva journalctl. Sin una clave de sesión, cada línea de
+ * respaldo ("Invalid user ...", "Connection closed by authenticating user ...")
+ * se contaba como un intento propio: 3 intentos reales salían como 5.
+ *
+ * El par IP+puerto identifica la conexión igual de bien que el PID — el puerto
+ * de origen es único por conexión TCP — y aparece en las tres formas de línea:
+ *   ... for <user> from <ip> port <n> ssh2
+ *   Invalid user <user> from <ip> port <n>
+ *   Connection closed by authenticating user <user> <ip> port <n> [preauth]
+ *
+ * Solo se usa como respaldo del PID, así que Linux y macOS no cambian.
+ */
+function connKey(line) {
+  let m = line.match(/\bfrom (\S+) port (\d+)/);
+  if (!m) m = line.match(/\buser \S+ (\S+) port (\d+)/);
+  return m ? `${m[1]}:${m[2]}` : null;
+}
+
+/**
  * Parsea líneas de sshd → logins aceptados y fallidos.
  * Formatos cubiertos (Linux y macOS comparten OpenSSH):
  *   Accepted password|publickey|keyboard-interactive/pam for [invalid user] <user> from <ip> port ...
@@ -104,20 +126,23 @@ const SSHD_PID_RE = /sshd(?:-session|-auth)?\[(\d+)\]/;
  * emitieron un "Failed password" (p.ej. fallos de publickey), a razón de un
  * único evento por PID, para no inflar el conteo de fuerza bruta.
  *
- * El [PID] procede del prefijo de `-o short-iso`; con `-o cat` (sin prefijo)
- * `pid` es null y el respaldo se añade en modo best-effort sin correlación.
+ * El [PID] procede del prefijo de `-o short-iso`. Cuando no lo hay — `-o cat`,
+ * o el canal OpenSSH/Operational de Windows — se usa IP:puerto como clave de
+ * sesión (ver connKey()); si tampoco hubiera, el respaldo se añade sin
+ * correlación, en modo best-effort.
  */
 function parseSshdLines(text) {
   const accepted = [];
   const failed = [];
-  const failedPids = new Set();        // PIDs con al menos un "Failed password"
-  const fallbackByPid = new Map();     // pid → evento de respaldo (uno por conexión)
-  let noPidSeq = 0;                     // clave sintética cuando no hay PID (-o cat)
+  const failedKeys = new Set();        // sesiones con al menos un "Failed password"
+  const fallbackByKey = new Map();     // sesión → evento de respaldo (uno por conexión)
+  let noKeySeq = 0;                     // clave sintética cuando no hay PID ni IP:puerto
 
   for (const rawLine of String(text || "").split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
-    const pid = tagPid(line, SSHD_PID_RE);
+    // PID cuando lo hay (journalctl, log de macOS); si no, IP:puerto — ver connKey().
+    const sessionKey = tagPid(line, SSHD_PID_RE) || connKey(line);
 
     let m = line.match(/Accepted (\S+) for (?:invalid user )?(\S+) from (\S+)/);
     if (m) {
@@ -143,7 +168,7 @@ function parseSshdLines(text) {
         timestamp: extractTimestamp(line),
         line,
       });
-      if (pid) failedPids.add(pid);
+      if (sessionKey) failedKeys.add(sessionKey);
       continue;
     }
 
@@ -155,19 +180,19 @@ function parseSshdLines(text) {
     m = line.match(/Connection closed by (?:authenticating|invalid) user (\S+) (\S+) port/);
     if (!m) m = line.match(/\bInvalid user (\S+) from (\S+)/);
     if (m) {
-      const key = pid || `nopid:${noPidSeq++}`;
-      if (!fallbackByPid.has(key)) {
-        fallbackByPid.set(key, {
-          pid,
+      const key = sessionKey || `nokey:${noKeySeq++}`;
+      if (!fallbackByKey.has(key)) {
+        fallbackByKey.set(key, {
+          key: sessionKey,
           ev: { user: m[1], ip: m[2], timestamp: extractTimestamp(line), line },
         });
       }
     }
   }
 
-  // Añadir respaldos cuyo PID nunca produjo un "Failed password".
-  for (const { pid, ev } of fallbackByPid.values()) {
-    if (pid && failedPids.has(pid)) continue;
+  // Añadir respaldos cuya sesión nunca produjo un "Failed password".
+  for (const { key, ev } of fallbackByKey.values()) {
+    if (key && failedKeys.has(key)) continue;
     failed.push(ev);
   }
 
@@ -413,8 +438,20 @@ function toArray(v) {
  *    de los 4624 para saber si la sesión privilegiada es remota (tipo 3/10).
  *  - Cuentas de servicio (SYSTEM, LOCAL/NETWORK SERVICE, cuentas de máquina $)
  *    se excluyen: generan miles de 4624/4672 por hora y son ruido puro.
- *  - "No events found" NO es un error (ventana sin eventos); acceso denegado
- *    (canal Security sin admin) se captura y se marca denied=true sin romper.
+ *  - "No events found" NO significa "no pasó nada": sin permisos sobre el canal
+ *    Security, Get-WinEvent devuelve NoMatchingEventsFound igual que si la
+ *    ventana estuviera vacía, y NO lanza UnauthorizedAccessException. Medido en
+ *    Windows con 5 eventos 4625 reales: como administrador salían los 5; sin
+ *    elevar, "No se encontraron eventos que coincidan con los criterios".
+ *    Por eso, ante NoMatchingEventsFound se SONDEA el canal antes de concluir
+ *    nada (ver el bloque `$probeDenied`): si el canal está habilitado y tiene
+ *    registros pero no devuelve ni uno, es permiso, no ausencia → denied=true.
+ *    No se comprueba si el proceso es administrador: un usuario del grupo
+ *    "Event Log Readers" lee el canal sin serlo, y suponerlo daría un falso
+ *    "denegado".
+ *  - Canal OpenSSH/Operational: legible SIN elevar, y sus mensajes los escribe
+ *    OpenSSH (inglés siempre, sea cual sea el idioma de Windows), con el mismo
+ *    formato que Linux/macOS. Se vuelca tal cual para parseSshdLines().
  */
 function buildWinEventsScript(windowHours) {
   return `
@@ -422,14 +459,39 @@ $ErrorActionPreference = 'Stop'
 $start = (Get-Date).AddHours(-${windowHours})
 function V($p, $i) { if ($p.Count -gt $i -and $null -ne $p[$i].Value) { [string]$p[$i].Value } else { '' } }
 function T($p, $i) { $v = V $p $i; if ($v -match '^[0-9]+$') { [int]$v } else { -1 } }
-$out = @{ denied = $false; logons = @(); localLogonCount = 0; failed = @(); privileged = @() }
+$out = @{ denied = $false; logons = @(); localLogonCount = 0; failed = @(); privileged = @(); ssh = @(); sshLog = '' }
 $events = @()
+$noneFound = $false
 try {
   $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4624, 4625, 4672; StartTime = $start } -ErrorAction Stop)
 } catch {
-  if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $events = @() }
+  if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $events = @(); $noneFound = $true }
   elseif ($_.Exception.GetType().Name -eq 'UnauthorizedAccessException' -or $_.Exception.Message -match 'unauthorized|denied|denegad|autoriza') { $out.denied = $true }
   else { throw }
+}
+if ($noneFound -and -not $out.denied) {
+  try {
+    $log = Get-WinEvent -ListLog 'Security' -ErrorAction Stop
+    if ($log.IsEnabled -and $log.RecordCount -gt 0) {
+      $probe = @()
+      try { $probe = @(Get-WinEvent -LogName 'Security' -MaxEvents 1 -ErrorAction Stop) }
+      catch {
+        if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $probe = @() }
+        else { $out.denied = $true }
+      }
+      if ($probe.Count -eq 0) { $out.denied = $true }
+    }
+  } catch { $out.denied = $true }
+}
+try {
+  $sshEv = @(Get-WinEvent -FilterHashtable @{ LogName = 'OpenSSH/Operational'; StartTime = $start } -ErrorAction Stop)
+  foreach ($e in $sshEv) {
+    $msg = ($e.Message -split '\\r?\\n')[0]
+    $out.ssh += ($e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss') + ' ' + $msg)
+  }
+} catch {
+  if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $out.ssh = @() }
+  else { $out.sshLog = $_.Exception.GetType().Name }
 }
 $byLogonId = @{}
 foreach ($e in $events) {
@@ -477,6 +539,10 @@ function parseWinEventsJson(jsonText) {
   const data = JSON.parse(String(jsonText).trim());
   return {
     securityLogDenied: data.denied === true,
+    // Líneas crudas del canal OpenSSH/Operational y, si no se pudo leer, el
+    // nombre del tipo .NET de la excepción (no su mensaje: viene traducido).
+    sshLines: toArray(data.ssh).map((l) => String(l)),
+    sshLogError: data.sshLog ? String(data.sshLog) : "",
     logons: {
       remote: toArray(data.logons).map((l) => ({
         user: l.user || "",
@@ -574,6 +640,9 @@ async function collectWin32(windowHours, sources, partial) {
     privileged: [],
   };
   let sessions = [];
+  // Misma estructura que Linux/macOS: el normalizador y el dashboard no
+  // necesitan saber de qué plataforma vino.
+  let ssh = { accepted: [], failed: [] };
 
   let psCmd = null;
   if (await commandExists("powershell")) psCmd = "powershell";
@@ -591,15 +660,37 @@ async function collectWin32(windowHours, sources, partial) {
     if (out) {
       try {
         const parsed = parseWinEventsJson(out);
+
+        // Canal OpenSSH/Operational: independiente del canal Security, se lea
+        // este o no. Su ausencia es lo normal (Windows no trae OpenSSH Server
+        // instalado por defecto): skip parcial, nunca un hallazgo.
+        if (parsed.sshLogError) {
+          partial.push({
+            source: "Get-WinEvent(OpenSSH/Operational)",
+            reason: parsed.sshLogError === "EventLogNotFoundException"
+              ? "el canal no existe: OpenSSH Server no está instalado"
+              : `no se pudo leer (${parsed.sshLogError})`,
+          });
+        } else {
+          ssh = parseSshdLines(parsed.sshLines.join("\n"));
+          sources.push("Get-WinEvent(OpenSSH)");
+        }
+
         if (parsed.securityLogDenied) {
           windows.securityLogDenied = true;
           partial.push({
             source: "Get-WinEvent(Security)",
-            reason: "acceso denegado: el canal Security requiere ejecutar Node-RED como administrador",
+            reason: "sin permisos de lectura sobre el canal Security: no se ha " +
+                    "podido comprobar si hubo accesos, fallos de login o elevaciones",
           });
         } else {
-          Object.assign(windows, parsed);
-          sources.push("Get-WinEvent");
+          Object.assign(windows, {
+            securityLogDenied: parsed.securityLogDenied,
+            logons: parsed.logons,
+            failed: parsed.failed,
+            privileged: parsed.privileged,
+          });
+          sources.push("Get-WinEvent(Security)");
         }
       } catch (err) {
         partial.push({
@@ -623,7 +714,7 @@ async function collectWin32(windowHours, sources, partial) {
     }
   }
 
-  return { windows, sessions };
+  return { windows, sessions, ssh };
 }
 
 // ── Lista plana de eventos para el dashboard ────────────────────────────────
@@ -732,7 +823,7 @@ async function runSecurityEvents(windowHours = 24) {
   let sessions = [];
 
   if (platform === "win32") {
-    ({ windows, sessions } = await collectWin32(hours, sources, partial));
+    ({ windows, sessions, ssh } = await collectWin32(hours, sources, partial));
   } else {
     ({ ssh, sudo } =
       platform === "linux"

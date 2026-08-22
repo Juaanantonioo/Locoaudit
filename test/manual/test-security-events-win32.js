@@ -202,7 +202,7 @@ check("sesión RDP activa → info individual; locales → agregado", () => {
   assert.strictEqual(byId(f, "HOST-SEC-SES-LOC").length, 1);
 });
 
-check("acceso denegado → HOST-SEC-WIN-PERM info, sin UAC ni 'sin eventos'", () => {
+check("acceso denegado → HOST-SEC-WIN-PERM info, sin 'sin eventos'", () => {
   const raw = baseRaw();
   raw.windows.securityLogDenied = true;
   const f = fromSecurityEvents(raw);
@@ -214,11 +214,13 @@ check("acceso denegado → HOST-SEC-WIN-PERM info, sin UAC ni 'sin eventos'", ()
   assert.strictEqual(byId(f, "HOST-SEC-INF").length, 0);
 });
 
-check("aviso UAC/4688 (limitación v1) presente con canal Security legible", () => {
+check("no se emite el aviso UAC/4688: no se comprobaba nada real", () => {
+  // Se emitía siempre que el canal Security fuera legible, sin mirar la
+  // directiva, y su fix (auditpol) no afectaba a lo que el módulo lee:
+  // Get-WinEvent nunca pide el 4688.
   const f = fromSecurityEvents(baseRaw());
-  const uac = byId(f, "HOST-SEC-WIN-UAC");
-  assert.strictEqual(uac.length, 1);
-  assert.ok(/auditpol/.test(uac[0].fix));
+  assert.strictEqual(byId(f, "HOST-SEC-WIN-UAC").length, 0);
+  assert.ok(!f.some((x) => /auditpol/.test(x.fix || "")));
 });
 
 check("skipped (sin PowerShell) → HOST-SEC-SKIP", () => {
