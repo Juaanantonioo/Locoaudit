@@ -384,8 +384,81 @@ _uac_notice_shown = False
 # redacción del mensaje final, no si la instalación se considera correcta o no.
 _already_installed = False
 
-# Estado de herramientas opcionales (rellenado en step2, usado en resumen final)
+# Estado de las herramientas opcionales: lo rellena el paso 2 y es la ÚNICA
+# fuente de la que salen los dos resúmenes (final del paso 2 y _print_summary).
+# Antes convivía con un `all_present` local que se calculaba por su cuenta, y los
+# dos se contradecían en pantalla.
+#
+#   _tool_status[cmd] = {"state": <estado>, "reason": <motivo o "">}
+#
+# Cuatro estados, porque "instalada" y "utilizable" no son lo mismo:
+#   "available"        instalada y operativa
+#   "not_operational"  instalada, pero ahora mismo no se puede usar
+#                      (Docker con el daemon parado, binario que el sistema no
+#                      encuentra tras instalarlo)
+#   "unsupported"      no existe para esta plataforma (Lynis en Windows)
+#   "missing"          no instalada
 _tool_status: dict = {}
+
+TOOL_STATES = ("available", "not_operational", "unsupported", "missing")
+
+
+def _set_tool_state(cmd: str, state: str, reason: str = "") -> None:
+    """Registra el estado de una herramienta y, si aplica, por qué.
+
+    El motivo se guarda aquí y no en una variable local del bucle: sin él, el
+    resumen del paso 6 no puede distinguir "Docker sin daemon" de "Docker no
+    instalado", que es justo lo que pasaba antes.
+    """
+    _tool_status[cmd] = {"state": state, "reason": reason}
+
+
+def _tool_state(cmd: str) -> str:
+    registro = _tool_status.get(cmd)
+    return registro.get("state", "missing") if registro else "missing"
+
+
+def _tool_groups() -> dict:
+    """Agrupa las herramientas por estado. De aquí salen AMBOS resúmenes."""
+    grupos = {estado: [] for estado in TOOL_STATES}
+    for cmd, label in OPTIONAL_TOOLS:
+        registro = _tool_status.get(cmd) or {}
+        estado = registro.get("state", "missing")
+        grupos.setdefault(estado, []).append(
+            (label, TOOL_DESC.get(cmd, ""), registro.get("reason", ""))
+        )
+    return grupos
+
+
+def _tool_summary_lines() -> list:
+    """Resumen del estado de las herramientas, ya redactado.
+
+    Devuelve [(tipo, texto)] con tipo "ok" o "warn", omitiendo los grupos vacíos.
+    Lo usan el final del paso 2 y el resumen del paso 6, para que no puedan
+    decir cosas distintas.
+    """
+    g = _tool_groups()
+    lineas = []
+    if g["available"]:
+        lineas.append(("ok", "Módulos activos: " +
+                       ", ".join(l for l, _, _ in g["available"])))
+    if g["not_operational"]:
+        detalle = ", ".join(
+            f"{l} ({_short_reason(r)})" if r else l for l, _, r in g["not_operational"]
+        )
+        lineas.append(("warn", "Requieren atención: " + detalle))
+    if g["unsupported"]:
+        lineas.append(("warn", "No disponibles en este sistema: " +
+                       ", ".join(l for l, _, _ in g["unsupported"])))
+    if g["missing"]:
+        lineas.append(("warn", "No instaladas: " +
+                       ", ".join(l for l, _, _ in g["missing"])))
+    return lineas
+
+
+def _short_reason(reason: str) -> str:
+    """Quita el "instalado pero" del motivo: el grupo ya lo dice."""
+    return reason.removeprefix("instalado pero ").strip()
 
 OPTIONAL_TOOLS = [
     ("docker", "Docker"),
@@ -974,40 +1047,49 @@ def print_welcome():
 # ─────────────────────────────────────────────
 #  Resumen final (antes de arrancar Node-RED)
 # ─────────────────────────────────────────────
+# Secciones del resumen final, en orden de aparición. Las comparten la rama
+# plana y la tabla de rich: antes cada una construía sus listas por su cuenta.
+_SUMMARY_SECTIONS = [
+    ("available",       "Módulos activos",               "green"),
+    ("not_operational", "Requieren atención",            "yellow"),
+    ("unsupported",     "No disponibles en este sistema", "yellow"),
+    ("missing",         "No instaladas",                 "yellow"),
+]
+
+
 def _print_summary():
     if OUTPUT_QUEUE is not None:
-        active   = [(label, TOOL_DESC.get(cmd, "")) for cmd, label in OPTIONAL_TOOLS if _tool_status.get(cmd)]
-        inactive = [(label, TOOL_DESC.get(cmd, "")) for cmd, label in OPTIONAL_TOOLS if not _tool_status.get(cmd)]
-        if active:
-            ok("Módulos activos: " + ", ".join(label for label, _ in active))
-        if inactive:
-            warn("Fallback (no instalados): " + ", ".join(label for label, _ in inactive))
+        for tipo, texto in _tool_summary_lines():
+            (ok if tipo == "ok" else warn)(texto)
         return
 
     if not RICH:
         return
 
-    active   = [(label, TOOL_DESC.get(cmd, "")) for cmd, label in OPTIONAL_TOOLS if _tool_status.get(cmd)]
-    inactive = [(label, TOOL_DESC.get(cmd, "")) for cmd, label in OPTIONAL_TOOLS if not _tool_status.get(cmd)]
+    grupos = _tool_groups()
 
     t = Table(box=rbox.SIMPLE, show_header=False, pad_edge=False, expand=True)
     t.add_column("icon", width=5,  no_wrap=True)
     t.add_column("name", width=18, no_wrap=True, style="bold")
     t.add_column("desc", style="dim")
 
-    if active:
-        t.add_row("", "[bold green]Módulos activos[/bold green]", "")
-        for label, desc in active:
-            t.add_row("  [green]✅[/green]", f"[green]{label}[/green]", desc)
-        if inactive:
+    primera = True
+    for estado, titulo, color in _SUMMARY_SECTIONS:
+        filas = grupos.get(estado) or []
+        if not filas:
+            continue
+        if not primera:
             t.add_row("", "", "")
+        primera = False
+        icono = "✅" if estado == "available" else "⚠️ "
+        t.add_row("", f"[bold {color}]{titulo}[/bold {color}]", "")
+        for label, desc, reason in filas:
+            # El motivo manda sobre la descripción: es lo que el usuario
+            # necesita para saber qué hacer con esa herramienta.
+            detalle = _short_reason(reason) if reason else desc
+            t.add_row(f"  [{color}]{icono}[/{color}]", f"[{color}]{label}[/{color}]", detalle)
 
-    if inactive:
-        t.add_row("", "[bold yellow]Fallback[/bold yellow]", "")
-        for label, desc in inactive:
-            t.add_row("  [yellow]⚠️ [/yellow]", f"[yellow]{label}[/yellow]", desc)
-
-    if not active and not inactive:
+    if primera:
         t.add_row("", "[dim]Sin herramientas opcionales[/dim]", "")
 
     url = Text()
@@ -1185,13 +1267,15 @@ def _report_install_result(cmd: str, label: str) -> None:
     sale de _tool_available(), la fuente única.
     """
     if not _tool_available(cmd):
-        _tool_status[cmd] = False
+        # Instalada, pero no utilizable: ni el PATH ni las carpetas conocidas la
+        # ven, así que los nodos tampoco. No es "available".
+        _set_tool_state(cmd, "not_operational", "el sistema todavía no lo encuentra")
         warn(f"{label} se instaló, pero el sistema todavía no lo encuentra")
         tip("Abre una ventana de terminal nueva o reinicia el equipo "
             "para empezar a usarlo.")
         return
 
-    _tool_status[cmd] = True
+    _set_tool_state(cmd, "available")
     # Una sola línea: si el estado es "correcto", el detalle sobra. Lo que sí
     # cambia el mensaje es si hacía falta instalar o ya estaba en el equipo.
     if _already_installed:
@@ -1202,15 +1286,14 @@ def _report_install_result(cmd: str, label: str) -> None:
     if cmd == "docker":
         daemon_warn = check_docker_daemon()
         if daemon_warn:
-            _tool_status[cmd] = False
+            _set_tool_state(cmd, "not_operational", daemon_warn)
             warn(f"Docker {daemon_warn}")
 
 
 def step2_optional_tools():
     step_header(2, "Herramientas opcionales")
 
-    is_tty     = sys.stdin.isatty()
-    all_present = True
+    is_tty = sys.stdin.isatty()
 
     # Pre-pasada: si falta más de una herramienta instalable, se ofrece hacerlo
     # todo de una vez antes de entrar al bucle. Lynis queda fuera por sí solo
@@ -1227,7 +1310,9 @@ def step2_optional_tools():
     for cmd, label in OPTIONAL_TOOLS:
         # Lynis is not available natively on Windows
         if cmd == "lynis" and OS == "Windows":
-            _tool_status[cmd] = False
+            # No es que falte: es que no existe para esta plataforma. Meterla en
+            # "no instaladas" invitaba a buscar una instalación que no hay.
+            _set_tool_state(cmd, "unsupported", "no existe versión para Windows sin WSL")
             warn(f"{label} — no disponible en Windows sin WSL")
             tip("Instala WSL: https://learn.microsoft.com/es-es/windows/wsl/install")
             blank()
@@ -1238,13 +1323,13 @@ def step2_optional_tools():
             if cmd == "docker":
                 daemon_warn = check_docker_daemon()
                 if daemon_warn:
-                    _tool_status[cmd] = False
+                    _set_tool_state(cmd, "not_operational", daemon_warn)
                     warn(f"Docker {daemon_warn}")
                 else:
-                    _tool_status[cmd] = True
+                    _set_tool_state(cmd, "available")
                     ok("Docker instalado y daemon activo")
             else:
-                _tool_status[cmd] = True
+                _set_tool_state(cmd, "available")
                 ok(f"{label} instalado — {TOOL_DESC.get(cmd, '')}")
             if not command_exists(cmd):
                 tip("Está en el equipo, pero el sistema no la tiene registrada: "
@@ -1253,8 +1338,7 @@ def step2_optional_tools():
             continue
 
         # ── Tool missing ──
-        _tool_status[cmd] = False
-        all_present = False
+        _set_tool_state(cmd, "missing")
         warn(f"{label} no encontrado — {TOOL_DESC.get(cmd, '')}")
 
         auto_cmd = get_auto_install_cmd(cmd)
@@ -1290,7 +1374,7 @@ def step2_optional_tools():
                 # El fallo ya lo ha detallado run_install(): código de salida,
                 # stderr real e instrucciones manuales. No se repite aquí.
             else:
-                warn(f"Omitiendo {label} — el nodo correspondiente usará el modo de fallback")
+                warn(f"Omitiendo {label} — el nodo correspondiente funcionará en modo reducido")
 
         elif auto_cmd and is_tty:
             if install_all:
@@ -1331,15 +1415,23 @@ def step2_optional_tools():
                 # El fallo ya lo ha detallado run_install(): código de salida,
                 # stderr real e instrucciones manuales. No se repite aquí.
             else:
-                warn(f"Omitiendo {label} — el nodo correspondiente usará el modo de fallback")
+                warn(f"Omitiendo {label} — el nodo correspondiente funcionará en modo reducido")
         else:
             # No auto-install available or non-interactive shell
             tip(f"Para instalarlo: {MANUAL_INSTALL.get(cmd, {}).get(OS, 'Consulta la documentación oficial')}")
 
         blank()
 
-    if all_present:
+    # Derivado de _tool_status, nunca de un contador aparte: antes convivían
+    # "todas disponibles" y un aviso de que dos no lo estaban.
+    lineas = _tool_summary_lines()
+    if len(lineas) == 1 and lineas[0][0] == "ok":
         ok("Todas las herramientas opcionales están disponibles")
+    else:
+        for tipo, texto in lineas:
+            (ok if tipo == "ok" else warn)(texto)
+        tip("Los nodos que dependen de ellas seguirán funcionando en modo "
+            "reducido: avisarán en el panel en vez de dar un resultado vacío.")
 
     if _installed_this_run:
         blank()
@@ -1441,6 +1533,41 @@ def _detached_popen_kwargs() -> dict:
     return {"start_new_session": True}
 
 
+def is_node_red_running() -> bool:
+    """¿Está Node-RED corriendo ahora mismo?
+
+    FUENTE ÚNICA DE VERDAD de ese dato. El texto, el color y el estado de los
+    dos botones de la ventana derivan de aquí; ningún widget lo deduce por su
+    cuenta. Ya ha mordido dos veces en este proyecto que dos componentes
+    calculen el mismo valor por separado (ver CLAUDE.md).
+    """
+    return NODE_RED_PROC is not None and NODE_RED_PROC.poll() is None
+
+
+def start_node_red() -> bool:
+    """Lanza Node-RED en segundo plano. True si el proceso arrancó.
+
+    Solo lanza el proceso: registrar el paquete, instalar dependencias y copiar
+    los flujos son pasos del asistente que ya se hicieron. Un re-arranque desde
+    el botón no los repite.
+
+    El entorno se recalcula con _child_env() en cada llamada, así que el segundo
+    arranque hereda los directorios de herramientas exactamente igual que el
+    primero (capa A).
+    """
+    global NODE_RED_PROC
+    try:
+        NODE_RED_PROC = subprocess.Popen(
+            [NODE_RED_CMD], env=_child_env(), **_detached_popen_kwargs()
+        )
+    except FileNotFoundError:
+        NODE_RED_PROC = None
+        err(f"No se pudo lanzar '{NODE_RED_CMD}' — comprueba que está en el PATH")
+        tip(f"Instálalo: {MANUAL_INSTALL['node-red'].get(OS)}")
+        return False
+    return True
+
+
 def stop_node_red(timeout: int = 10) -> bool:
     """Detiene Node-RED y su descendencia. True si había algo que parar."""
     global NODE_RED_PROC
@@ -1470,22 +1597,15 @@ def stop_node_red(timeout: int = 10) -> bool:
 #  Paso 6 — Arrancar Node-RED
 # ─────────────────────────────────────────────
 def step6_launch():
-    global NODE_RED_PROC
     step_header(6, "Iniciando Node-RED")
     _print_summary()
     ok("Todo listo. Arrancando Node-RED...")
 
     if OUTPUT_QUEUE is not None:
         # GUI mode: launch without blocking the background thread
-        try:
-            NODE_RED_PROC = subprocess.Popen(
-                [NODE_RED_CMD], env=_child_env(), **_detached_popen_kwargs()
-            )
+        if start_node_red():
             blank()
             ok("Node-RED iniciado — abre http://localhost:1880 en tu navegador")
-        except FileNotFoundError:
-            err(f"No se pudo lanzar '{NODE_RED_CMD}' — comprueba que está en el PATH")
-            tip(f"Instálalo: {MANUAL_INSTALL['node-red'].get(OS)}")
         return
 
     # Terminal mode: blocking
@@ -1509,6 +1629,21 @@ def step6_launch():
         err(f"No se pudo lanzar '{NODE_RED_CMD}' — comprueba que está en el PATH")
         tip(f"Instálalo: {MANUAL_INSTALL['node-red'].get(OS)}")
         sys.exit(1)
+
+
+def _gui_start_node_red() -> bool:
+    """Arranque pedido desde el botón de la ventana.
+
+    En modo GUI ok()/err()/tip() solo acumulan en la tarjeta pendiente, así que
+    hay que volcarla aquí: fuera del flujo de pasos nadie más lo va a hacer.
+    """
+    global _gui_card_title
+    exito = start_node_red()
+    if exito:
+        ok("Node-RED iniciado — abre http://localhost:1880 en tu navegador")
+    _gui_card_title = "Node-RED"
+    _gui_flush_card()
+    return exito
 
 
 # ─────────────────────────────────────────────
@@ -1538,7 +1673,9 @@ def run_all_steps():
 if __name__ == "__main__":
     if HAS_GUI:
         gui = LoCoAuditGUI(VERSION, OS, platform.python_version(),
-                           on_stop=stop_node_red)
+                           on_stop=stop_node_red,
+                           on_start=_gui_start_node_red,
+                           is_running=is_node_red_running)
         OUTPUT_QUEUE = gui.q
         threading.Thread(target=run_all_steps, daemon=True).start()
         gui.run()

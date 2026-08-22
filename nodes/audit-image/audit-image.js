@@ -222,7 +222,10 @@ module.exports = function (RED) {
                 title:    "No se indicó ninguna imagen a escanear",
                 severity: "info",
                 evidence: "scanMode='specific' pero la referencia de imagen está vacía",
-                fix:      "Indica una imagen en el nodo (ej: nginx:latest) o proporciónala vía msg.",
+                // Sin ": " en el texto: el dashboard lo leería como "etiqueta:
+                // comando" y ofrecería copiar "nginx:latest) o proporciónala…".
+                // Esto no es un comando, es una instrucción de configuración.
+                fix:      "Indica una imagen en el nodo, por ejemplo nginx:latest, o proporciónala vía msg.",
                 category: "image",
                 source:   "native",
               }),
