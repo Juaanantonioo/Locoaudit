@@ -53,6 +53,11 @@
 
 const fs = require("fs");
 const { execCommand, commandExists } = require("../../../lib/executor");
+const {
+  isServiceAccount,
+  normalizeWinIp,
+  correlateWindowsLogons,
+} = require("../../../lib/win-logons");
 
 const LOG_TIMEOUT_MS = 60000;   // `log show` en macOS puede tardar
 const CMD_TIMEOUT_MS = 15000;   // journalctl / who / last / lastb
@@ -436,8 +441,19 @@ function toArray(v) {
  *      4672: 1=SubjectUserName, 3=SubjectLogonId
  *  - 4672 no incluye IP: se correlaciona SubjectLogonId con el TargetLogonId
  *    de los 4624 para saber si la sesión privilegiada es remota (tipo 3/10).
+ *  - Ese LogonId se EMITE al JSON (`logonId`), no solo se usa aquí dentro. Es
+ *    el identificador exacto que permite atribuir un 4672 a su 4624 fuera de
+ *    PowerShell, sin heurística, en lib/win-logons.js. Antes se calculaba y se
+ *    tiraba, y el consumidor tenía que adivinar.
  *  - Cuentas de servicio (SYSTEM, LOCAL/NETWORK SERVICE, cuentas de máquina $)
- *    se excluyen: generan miles de 4624/4672 por hora y son ruido puro.
+ *    se excluyen: generan miles de 4624/4672 por hora y son ruido puro. La
+ *    decisión vive en la función `Svc`, un solo sitio para los tres Ids.
+ *    `sshd_<PID>` entra por PATRÓN, no por la lista literal: no es un usuario
+ *    sino la cuenta de separación de privilegios que sshd crea POR CONEXIÓN,
+ *    con el PID en el nombre, así que ninguna entrada fija puede casarla. Su
+ *    4672 salía en el panel como «sesión admin de sshd_13048», y encima como
+ *    local, que es como lo reporta Windows (el token lo crea sshd en la propia
+ *    máquina) pero no es un acceso de nadie.
  *  - "No events found" NO significa "no pasó nada": sin permisos sobre el canal
  *    Security, Get-WinEvent devuelve NoMatchingEventsFound igual que si la
  *    ventana estuviera vacía, y NO lanza UnauthorizedAccessException. Medido en
@@ -498,27 +514,31 @@ foreach ($e in $events) {
   if ($e.Id -eq 4624) { $p = $e.Properties; $byLogonId[(V $p 7)] = @{ type = (T $p 8); ip = (V $p 18) } }
 }
 $svc = @('SYSTEM', 'LOCAL SERVICE', 'NETWORK SERVICE', 'ANONYMOUS LOGON', 'SERVICIO LOCAL', 'SERVICIO DE RED')
+function Svc($u) { return ($svc -contains $u.ToUpper() -or $u.EndsWith('$') -or $u -match '^sshd_\\d+$') }
 foreach ($e in $events) {
   $p = $e.Properties
   $t = $e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss')
   if ($e.Id -eq 4624) {
     $user = V $p 5
-    if ($svc -contains $user.ToUpper() -or $user.EndsWith('$')) { continue }
+    if (Svc $user) { continue }
     $lt = T $p 8
     if ($lt -eq 10 -or $lt -eq 3) {
-      $out.logons += @{ t = $t; user = $user; type = $lt; ip = (V $p 18) }
+      $out.logons += @{ t = $t; user = $user; type = $lt; ip = (V $p 18); logonId = (V $p 7) }
     } else {
       $out.localLogonCount++
     }
   } elseif ($e.Id -eq 4625) {
-    $out.failed += @{ t = $t; user = (V $p 5); type = (T $p 10); ip = (V $p 19) }
+    $failedUser = V $p 5
+    if (Svc $failedUser) { continue }
+    $out.failed += @{ t = $t; user = $failedUser; type = (T $p 10); ip = (V $p 19) }
   } elseif ($e.Id -eq 4672) {
     $user = V $p 1
-    if ($svc -contains $user.ToUpper() -or $user.EndsWith('$')) { continue }
-    $info = $byLogonId[(V $p 3)]
+    if (Svc $user) { continue }
+    $logonId = V $p 3
+    $info = $byLogonId[$logonId]
     $remote = ($null -ne $info -and ($info.type -eq 10 -or $info.type -eq 3))
     $ip = ''; if ($remote) { $ip = $info.ip }
-    $out.privileged += @{ t = $t; user = $user; remote = $remote; ip = $ip }
+    $out.privileged += @{ t = $t; user = $user; remote = $remote; ip = $ip; logonId = $logonId }
   }
 }
 $out | ConvertTo-Json -Depth 4 -Compress
@@ -534,6 +554,19 @@ function toEncodedCommand(script) {
 /**
  * Parsea el JSON emitido por buildWinEventsScript → estructura `windows` del
  * resultado del módulo. Tolera objeto-en-vez-de-array (ConvertTo-Json).
+ *
+ * Tres cosas se resuelven aquí y no en el consumidor:
+ *  - `logonId` se conserva tal cual (cadena tipo "0x3E7"): es la clave de
+ *    correlación 4624↔4672 (ver lib/win-logons.js).
+ *  - La IP pasa por normalizeWinIp(): Windows escribe el guion literal "-" en
+ *    IpAddress cuando el logon no lleva dirección de red —lo que hace el 4624
+ *    de tipo 3 que crea sshd—, y como "-" es truthy viajaba intacto hasta la
+ *    columna ORIGEN del panel, que pintaba "-" donde el resto de celdas vacías
+ *    pintan "—". Es null: ese evento no trae origen.
+ *  - Las cuentas de servicio se vuelven a filtrar aquí. El filtro de verdad
+ *    está en el script PowerShell (`Svc`), que las descarta en origen; este es
+ *    la red de seguridad para datos recogidos por una versión anterior y, de
+ *    paso, la única mitad de la regla que se puede probar sin Windows.
  */
 function parseWinEventsJson(jsonText) {
   const data = JSON.parse(String(jsonText).trim());
@@ -544,26 +577,34 @@ function parseWinEventsJson(jsonText) {
     sshLines: toArray(data.ssh).map((l) => String(l)),
     sshLogError: data.sshLog ? String(data.sshLog) : "",
     logons: {
-      remote: toArray(data.logons).map((l) => ({
-        user: l.user || "",
-        ip: l.ip || null,
-        logonType: typeof l.type === "number" ? l.type : parseInt(l.type, 10) || -1,
-        timestamp: l.t || null,
-      })),
+      remote: toArray(data.logons)
+        .filter((l) => !isServiceAccount(l.user))
+        .map((l) => ({
+          user: l.user || "",
+          ip: normalizeWinIp(l.ip),
+          logonType: typeof l.type === "number" ? l.type : parseInt(l.type, 10) || -1,
+          logonId: l.logonId ? String(l.logonId) : null,
+          timestamp: l.t || null,
+        })),
       localCount: parseInt(data.localLogonCount, 10) || 0,
     },
-    failed: toArray(data.failed).map((f) => ({
-      user: f.user || "",
-      ip: f.ip || null,
-      logonType: typeof f.type === "number" ? f.type : parseInt(f.type, 10) || -1,
-      timestamp: f.t || null,
-    })),
-    privileged: toArray(data.privileged).map((p) => ({
-      user: p.user || "",
-      remote: p.remote === true,
-      ip: p.ip || null,
-      timestamp: p.t || null,
-    })),
+    failed: toArray(data.failed)
+      .filter((f) => !isServiceAccount(f.user))
+      .map((f) => ({
+        user: f.user || "",
+        ip: normalizeWinIp(f.ip),
+        logonType: typeof f.type === "number" ? f.type : parseInt(f.type, 10) || -1,
+        timestamp: f.t || null,
+      })),
+    privileged: toArray(data.privileged)
+      .filter((p) => !isServiceAccount(p.user))
+      .map((p) => ({
+        user: p.user || "",
+        remote: p.remote === true,
+        ip: normalizeWinIp(p.ip),
+        logonId: p.logonId ? String(p.logonId) : null,
+        timestamp: p.t || null,
+      })),
   };
 }
 
@@ -762,6 +803,24 @@ function tsToEpoch(ts) {
  *   { windowHours, events: [{ ts, type, user, origin, detail }], truncated }
  * Eventos PARSEADOS (no log crudo), orden ts descendente, tope MAX_EVENT_LIST.
  * Con skipped devuelve events: [] (el finding informativo ya lo cubre).
+ *
+ * ── Windows: una fila por acceso, no una por fuente ─────────────────────────
+ * Con Node-RED elevado se leen DOS canales que describen el mismo hecho, y sin
+ * correlacionarlos un único login SSH producía cuatro filas: la de SSH, el 4624
+ * remoto, el 4672 de esa sesión y el 4672 de la cuenta sshd_<PID>. La cuenta de
+ * separación de privilegios ya no llega hasta aquí (la filtra el script y, por
+ * si acaso, parseWinEventsJson); las otras tres se colapsan en una.
+ *
+ * Sobrevive la fila de SSH porque es la que más información trae: la IP de
+ * origen REAL —el 4624 de sshd no la lleva— y el método de autenticación. Lo
+ * único que aporta el 4672 absorbido es que esa sesión tenía privilegios de
+ * administrador, y eso no se pierde: se anota en la propia fila superviviente,
+ * en `detail` (lo que lee la persona) y en el campo `privileged` (lo que leen
+ * el chat con el LLM y cualquier consumidor programático).
+ *
+ * La regla de correlación NO está aquí: vive en lib/win-logons.js y la comparte
+ * con lib/normalizer.js, que tiene que tomar exactamente la misma decisión para
+ * los findings. Dos copias de esta regla es el fallo que se estaba corrigiendo.
  */
 function buildEventList(result) {
   const windowHours = (result && result.windowHours) || 24;
@@ -770,14 +829,33 @@ function buildEventList(result) {
   }
 
   const events = [];
-  const push = (ts, type, user, origin, detail) =>
-    events.push({ ts: ts || null, type, user: user || null, origin: origin || null, detail: detail || null });
+  const push = (ts, type, user, origin, detail, extra) =>
+    events.push({
+      ts: ts || null,
+      type,
+      user: user || null,
+      origin: origin || null,
+      detail: detail || null,
+      ...(extra || {}),
+    });
 
   const ssh = result.ssh || { accepted: [], failed: [] };
   const sudo = result.sudo || { ok: [], failed: [] };
   const sessions = Array.isArray(result.sessions) ? result.sessions : [];
 
-  for (const a of ssh.accepted) push(a.timestamp, "ssh-accepted", a.user, a.ip, `Login SSH correcto (${a.method || "?"})`);
+  // En Linux/macOS no hay segunda fuente y la correlación sale vacía: estos
+  // bucles se comportan exactamente igual que antes.
+  const corr = correlateWindowsLogons(result);
+
+  for (const a of ssh.accepted) {
+    const priv = corr.hasPrivilege(a);
+    push(
+      a.timestamp, "ssh-accepted", a.user, a.ip,
+      `Login SSH correcto (${a.method || "?"})` +
+        (priv ? " · la sesión obtuvo privilegios de administrador (4672)" : ""),
+      priv ? { privileged: true } : null
+    );
+  }
   for (const f of ssh.failed) push(f.timestamp, "ssh-failed", f.user, f.ip, "Intento de login SSH fallido");
   for (const s of sudo.ok) push(s.timestamp, "sudo", s.user, null, s.command || "sudo");
   for (const f of sudo.failed)
@@ -786,12 +864,19 @@ function buildEventList(result) {
 
   if (result.windows) {
     const win = result.windows;
-    for (const l of (win.logons && win.logons.remote) || []) {
+    // `absorbed*`: ese evento del canal Security ya está contado en una fila de
+    // SSH de arriba. Emitirlo otra vez sería la misma sesión pintada dos veces.
+    for (const [i, l] of (((win.logons && win.logons.remote) || [])).entries()) {
+      if (corr.absorbedRemote.has(i)) continue;
       push(l.timestamp, "logon-remote", l.user, l.ip,
         l.logonType === 10 ? "Login remoto RDP (4624)" : "Login remoto de red (4624)");
     }
-    for (const f of win.failed || []) push(f.timestamp, "logon-failed", f.user, f.ip, `Login fallido (4625, tipo ${f.logonType})`);
-    for (const p of win.privileged || []) {
+    for (const [i, f] of ((win.failed || [])).entries()) {
+      if (corr.absorbedFailed.has(i)) continue;
+      push(f.timestamp, "logon-failed", f.user, f.ip, `Login fallido (4625, tipo ${f.logonType})`);
+    }
+    for (const [i, p] of ((win.privileged || [])).entries()) {
+      if (corr.absorbedPriv.has(i)) continue;
       push(p.timestamp, "logon-privileged", p.user, p.ip,
         p.remote ? "Sesión con privilegios de administrador — remota (4672)" : "Sesión con privilegios de administrador — local (4672)");
     }
