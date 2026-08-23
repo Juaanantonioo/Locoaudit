@@ -58,6 +58,7 @@ const {
   normalizeWinIp,
   correlateWindowsLogons,
 } = require("../../../lib/win-logons");
+const { withTempFile } = require("../../../lib/utils");
 
 const LOG_TIMEOUT_MS = 60000;   // `log show` en macOS puede tardar
 const CMD_TIMEOUT_MS = 15000;   // journalctl / who / last / lastb
@@ -545,12 +546,6 @@ $out | ConvertTo-Json -Depth 4 -Compress
 `.trim();
 }
 
-/** Codifica el script para -EncodedCommand (UTF-16LE + base64): evita por
- *  completo el infierno de quoting de cmd.exe con comillas anidadas. */
-function toEncodedCommand(script) {
-  return Buffer.from(script, "utf16le").toString("base64");
-}
-
 /**
  * Parsea el JSON emitido por buildWinEventsScript → estructura `windows` del
  * resultado del módulo. Tolera objeto-en-vez-de-array (ConvertTo-Json).
@@ -695,9 +690,53 @@ async function collectWin32(windowHours, sources, partial) {
       reason: "ni powershell ni pwsh disponibles en el PATH",
     });
   } else {
-    const encoded = toEncodedCommand(buildWinEventsScript(windowHours));
-    const cmd = `${psCmd} -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
-    const out = await tryExec(cmd, PS_TIMEOUT_MS, "Get-WinEvent(Security)", partial);
+    // ── Por qué un fichero temporal y no -EncodedCommand ────────────────────
+    //
+    // El script se pasaba con `-EncodedCommand <base64>`, o sea ENTERO dentro de
+    // la línea de comandos, y Windows la limita a 8191 caracteres. La
+    // codificación UTF-16LE + base64 multiplica el tamaño por ~2,67, así que el
+    // margen real eran unos 3070 caracteres de script. Medido en Windows cuando
+    // dejó de funcionar: script 3109 → base64 8292, o sea 101 de más. El script
+    // había crecido (logonId en 4624/4672, la función Svc, el sondeo -ListLog y
+    // la lectura de OpenSSH/Operational) y cruzó el umbral.
+    //
+    // El fallo fue del peor tipo: silencioso y TOTAL. Como los dos canales se
+    // leen en una sola invocación, al no ejecutarse nada se perdían a la vez el
+    // canal Security y el de OpenSSH, y no salía ni un evento SSH, ni elevado ni
+    // sin elevar. Lo único que funcionó fue la degradación honesta: el nodo dijo
+    // "fuentes de log no disponibles", no "sin eventos relevantes".
+    //
+    // Con -File el script no pasa por la línea de comandos y el límite deja de
+    // aplicar. NO volver a -EncodedCommand ni a -Command: el guardarraíl está en
+    // test/manual/test-security-events-win32.js.
+    //
+    // BOM de UTF-8: Windows PowerShell 5.1 lee un .ps1 SIN BOM con la página de
+    // códigos ANSI del sistema, no como UTF-8. Hoy el script es ASCII puro y
+    // daría igual, pero el día que alguien meta una tilde en un mensaje o en un
+    // nombre de grupo localizado, sin BOM se convierte en mojibake dentro de una
+    // cadena o de un patrón. Con BOM lo leen bien tanto 5.1 como PowerShell 7.
+    const script = buildWinEventsScript(windowHours);
+    let out = "";
+    try {
+      out = await withTempFile(
+        script,
+        { prefix: "lcaudit-winevents-", ext: ".ps1", bom: true },
+        (scriptPath) =>
+          tryExec(
+            `${psCmd} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`,
+            PS_TIMEOUT_MS,
+            "Get-WinEvent(Security)",
+            partial
+          )
+      );
+    } catch (err) {
+      // No se pudo ni crear el fichero (tmp lleno, sin permisos, ruta ocupada).
+      // Misma regla que el resto: fuente no disponible, nunca un dato de auditoría.
+      partial.push({
+        source: "Get-WinEvent(Security)",
+        reason: `no se pudo escribir el script temporal: ${err.message || err}`,
+      });
+    }
     if (out) {
       try {
         const parsed = parseWinEventsJson(out);

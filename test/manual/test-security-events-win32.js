@@ -19,6 +19,9 @@
  */
 
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const {
   parseWinEventsJson,
   parseSshdLines,
@@ -28,6 +31,8 @@ const {
   buildEventList,
 } = require("../../nodes/audit-host/modules/security-events");
 const { fromSecurityEvents } = require("../../lib/normalizer");
+const { withTempFile } = require("../../lib/utils");
+const { execCommand } = require("../../lib/executor");
 const { SECURITY_EVENT_RULES } = require("../../lib/severity-map");
 
 let passed = 0;
@@ -526,4 +531,164 @@ check("Linux/macOS: sin canal Security la correlación no toca nada", () => {
 });
 
 
-console.log(`\n${passed} comprobaciones OK`);
+// ── 7. Invocación de PowerShell: guardarraíl del límite de línea de comandos ─
+//
+// Regresión real: el script se pasaba con -EncodedCommand, o sea entero dentro
+// de la línea de comandos, que Windows limita a 8191 caracteres. UTF-16LE +
+// base64 lo multiplica por ~2,67. El script creció con los últimos cambios y
+// cruzó el umbral: 3109 caracteres → 8292 de base64, 101 de más. Dejó de
+// ejecutarse ENTERO, y con él se perdían a la vez el canal Security y el de
+// OpenSSH, así que no salía ni un evento SSH. Silencioso: nada avisó.
+//
+// Con -File el límite no aplica. Este test deja constancia de los números y
+// falla si alguien devuelve la invocación a la línea de comandos.
+console.log("invocación de PowerShell (límite de 8191 caracteres):");
+
+const WIN_CMDLINE_LIMIT = 8191;
+const SRC_SECURITY_EVENTS = path.join(__dirname, "..", "..", "nodes", "audit-host", "modules", "security-events.js");
+
+check("el script NO cabría en una línea de comandos, y por eso va por -File", () => {
+  const script = buildWinEventsScript(24);
+  const b64 = Buffer.from(script, "utf16le").toString("base64");
+  const margen = WIN_CMDLINE_LIMIT - b64.length;
+  console.log(
+    `      script ${script.length} car · base64 ${b64.length} car · límite ${WIN_CMDLINE_LIMIT}` +
+    ` · margen ${margen >= 0 ? "+" : ""}${margen}`
+  );
+
+  // La invocación real, tal cual está escrita en el módulo. Se busca la línea
+  // que construye el comando (no los comentarios, que sí nombran la opción
+  // abandonada a propósito para que conste por qué).
+  const src = fs.readFileSync(SRC_SECURITY_EVENTS, "utf8");
+  const invocacion = src.split("\n").filter((l) => l.includes("${psCmd}"));
+  assert.strictEqual(invocacion.length, 1, "debería haber UNA sola invocación de PowerShell");
+
+  const porLineaDeComandos = /-EncodedCommand|-Command\b/.test(invocacion[0]);
+  if (porLineaDeComandos && b64.length > WIN_CMDLINE_LIMIT) {
+    assert.fail(
+      `La invocación vuelve a meter el script en la línea de comandos y no cabe: ` +
+      `${b64.length} caracteres de base64 contra un límite de ${WIN_CMDLINE_LIMIT}. ` +
+      `Windows no ejecutará NADA y se perderán los dos canales a la vez.`
+    );
+  }
+  assert.ok(!porLineaDeComandos, "el script no puede viajar por la línea de comandos");
+  assert.ok(/-File "/.test(invocacion[0]), "el script se pasa por fichero, con la ruta entrecomillada");
+  // Los flags que ya estaban siguen estando: sin perfil, no interactivo, sin
+  // política de ejecución que bloquee un .ps1 recién escrito.
+  for (const flag of ["-NoProfile", "-NonInteractive", "-ExecutionPolicy Bypass"]) {
+    assert.ok(invocacion[0].includes(flag), `falta ${flag}`);
+  }
+});
+
+check("el script sigue siendo ASCII puro (si deja de serlo, el BOM es lo que salva)", () => {
+  const script = buildWinEventsScript(24);
+  const noAscii = [...script].filter((c) => c.charCodeAt(0) > 127);
+  assert.deepStrictEqual(noAscii, []);
+});
+
+// ── 8. Fichero temporal: se borra SIEMPRE ───────────────────────────────────
+console.log("withTempFile (lib/utils.js):");
+
+const asyncChecks = [];
+function checkAsync(name, fn) {
+  asyncChecks.push([name, fn]);
+}
+
+checkAsync("camino feliz: existe durante, borrado después", async () => {
+  let visto = null;
+  const devuelto = await withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
+    visto = f;
+    assert.ok(fs.existsSync(f));
+    return "resultado";
+  });
+  assert.strictEqual(devuelto, "resultado");
+  assert.strictEqual(fs.existsSync(visto), false);
+});
+
+checkAsync("la función lanza: el error sube Y el temporal se borra", async () => {
+  let visto = null;
+  await assert.rejects(
+    () => withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
+      visto = f;
+      throw new Error("boom");
+    }),
+    /boom/
+  );
+  assert.ok(visto);
+  assert.strictEqual(fs.existsSync(visto), false);
+});
+
+checkAsync("timeout real del proceso hijo: el temporal se borra igual", async () => {
+  // Proceso que no termina, matado por el timeout de execCommand. Es el camino
+  // que más importa: si el borrado dependiera del final feliz, cada auditoría
+  // que expirase dejaría un .ps1 en %TEMP%.
+  let visto = null;
+  await assert.rejects(
+    () => withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
+      visto = f;
+      return execCommand(`"${process.execPath}" -e "setTimeout(function(){}, 5000)"`, 300);
+    })
+  );
+  assert.ok(visto);
+  assert.strictEqual(fs.existsSync(visto), false);
+});
+
+checkAsync("nombre aleatorio y no reutilizado", async () => {
+  const nombres = [];
+  for (let i = 0; i < 5; i++) {
+    await withTempFile("x", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
+      nombres.push(path.basename(f));
+      assert.strictEqual(path.dirname(f), os.tmpdir());
+    });
+  }
+  assert.strictEqual(new Set(nombres).size, 5);
+  for (const n of nombres) assert.ok(/^lcaudit-test-[0-9a-f]{24}\.ps1$/.test(n), n);
+});
+
+checkAsync("BOM de UTF-8 al principio cuando se pide", async () => {
+  await withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1", bom: true }, async (f) => {
+    const buf = fs.readFileSync(f);
+    assert.deepStrictEqual([...buf.slice(0, 3)], [0xef, 0xbb, 0xbf]);
+    assert.strictEqual(fs.readFileSync(f, "utf8").replace(/^﻿/, ""), "$x = 1");
+  });
+  // Sin bom: ni un byte de más.
+  await withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
+    assert.strictEqual(fs.readFileSync(f, "utf8"), "$x = 1");
+  });
+});
+
+checkAsync("no escribe sobre una ruta que ya exista (O_EXCL contra enlaces)", async () => {
+  // No se puede forzar la colisión con el nombre aleatorio, así que se comprueba
+  // la propiedad directamente: escribir con flag 'wx' sobre algo existente falla
+  // en vez de seguir el enlace y machacar el destino.
+  const cebo = path.join(os.tmpdir(), `lcaudit-test-cebo-${Date.now()}.ps1`);
+  fs.writeFileSync(cebo, "original");
+  try {
+    await assert.rejects(
+      () => fs.promises.writeFile(cebo, "suplantado", { encoding: "utf8", mode: 0o600, flag: "wx" }),
+      /EEXIST/
+    );
+    assert.strictEqual(fs.readFileSync(cebo, "utf8"), "original");
+  } finally {
+    fs.rmSync(cebo, { force: true });
+  }
+});
+
+checkAsync("no deja restos: ningún lcaudit-winevents-*.ps1 en tmp", async () => {
+  const restos = fs.readdirSync(os.tmpdir()).filter((f) => /^lcaudit-(winevents|test)-.*\.ps1$/.test(f));
+  assert.deepStrictEqual(restos, []);
+});
+
+
+(async () => {
+  for (const [name, fn] of asyncChecks) {
+    await fn();
+    passed++;
+    console.log(`  ✓ ${name}`);
+  }
+  console.log(`\n${passed} comprobaciones OK`);
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+
