@@ -32,6 +32,7 @@ const {
 } = require("../../nodes/audit-host/modules/security-events");
 const { fromSecurityEvents } = require("../../lib/normalizer");
 const { withTempFile } = require("../../lib/utils");
+const { summarize } = require("../../lib/severity-map");
 const { execCommand } = require("../../lib/executor");
 const { SECURITY_EVENT_RULES } = require("../../lib/severity-map");
 
@@ -425,15 +426,54 @@ check("evidencia real: el privilegio no se pierde, se anota en la fila que queda
   const ev = buildEventList(rawDesdePs(EVIDENCIA_PS)).events[0];
   assert.strictEqual(ev.privileged, true);
   assert.ok(/privilegios de administrador \(4672\)/.test(ev.detail));
+  // El 4672 habla de la CUENTA, no de la sesión: Windows lo emite porque la
+  // cuenta está en el grupo Administradores, aunque no se eleve nada. Decir
+  // "la sesión obtuvo privilegios" sugería lo contrario a quien entró por SSH
+  // sin elevar nada en ningún momento.
+  assert.ok(/cuenta/i.test(ev.detail));
+  assert.ok(!/la sesión (obtuvo|tenía|estaba)/i.test(ev.detail));
 });
 
 check("evidencia real: 3 findings → 1, y el 4672 consta en su evidencia", () => {
   const f = fromSecurityEvents(rawDesdePs(EVIDENCIA_PS));
   assert.strictEqual(f.length, 1);
-  assert.strictEqual(f[0].id, "HOST-SEC-SSH-001");
+  // Antes salía como HOST-SEC-SSH-001 en info: el 4672 correlacionado dice que
+  // la cuenta es administradora, y eso es una identidad privilegiada entrando
+  // desde la red — el mismo nivel que un root por SSH en Unix y que el mismo
+  // hecho llegando por RDP. El protocolo ya no decide la severidad.
+  assert.strictEqual(f[0].id, "HOST-SEC-SSH-R-001");
+  assert.strictEqual(f[0].severity, SECURITY_EVENT_RULES.SSH_ACCEPTED_ROOT);
   assert.strictEqual(byId(f, "HOST-SEC-WIN-RDP").length, 0);
+  // Y NO se emite además PRIV-001: sería el mismo hecho dos veces, que es lo
+  // que la deduplicación evita. La señal alta la da ya la vía SSH.
   assert.strictEqual(byId(f, "HOST-SEC-WIN-PRIV").length, 0);
   assert.ok(/4672/.test(f[0].evidence));
+  assert.ok(/LogonId 0x1A2B3C/.test(f[0].evidence));
+});
+
+check("SSH Windows SIN 4672 sigue en info: no todo acceso es privilegiado", () => {
+  const raw = rawDesdePs(EVIDENCIA_PS);
+  raw.windows.privileged = [];          // misma sesión, cuenta sin privilegios
+  const f = fromSecurityEvents(raw);
+  const ssh = f.filter((x) => /^HOST-SEC-SSH-/.test(x.id));
+  assert.strictEqual(ssh.length, 1);
+  assert.strictEqual(ssh[0].id, "HOST-SEC-SSH-001");
+  assert.strictEqual(ssh[0].severity, SECURITY_EVENT_RULES.SSH_ACCEPTED);
+  assert.ok(!/4672/.test(ssh[0].evidence));
+});
+
+check("el predicado es uno: root en Unix sigue dando exactamente lo de siempre", () => {
+  const f = fromSecurityEvents({
+    windowHours: 24, platform: "linux", sources: ["journalctl"], partial: [],
+    ssh: { accepted: [{ user: "root", ip: "192.168.1.9", method: "password", timestamp: "2026-08-22 10:00:00" }], failed: [] },
+    sudo: { ok: [], failed: [] }, sessions: [],
+  });
+  const r = f.filter((x) => /^HOST-SEC-SSH-R-/.test(x.id));
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].title, "Acceso SSH como root detectado");
+  assert.strictEqual(r[0].severity, SECURITY_EVENT_RULES.SSH_ACCEPTED_ROOT);
+  // Sin canal Security no hay 4672 que citar: la evidencia queda como siempre.
+  assert.ok(!/4672/.test(r[0].evidence));
 });
 
 // ── El caso contrario: la señal que NO se puede perder al deduplicar ────────
@@ -447,6 +487,38 @@ const rawIntruso = () => ({
     failed: [],
     privileged: [{ user: "mallory", remote: true, ip: "10.0.0.66", logonId: "0x99", timestamp: "2026-08-22 03:14:00" }],
   },
+});
+
+check("mismo hecho, mismo riesgo: SSH y RDP con cuenta admin coinciden", () => {
+  // La incoherencia que esto corrige: el protocolo de acceso decidía el nivel.
+  const porSsh = fromSecurityEvents(rawDesdePs(EVIDENCIA_PS));
+  const porRdp = fromSecurityEvents(rawIntruso());
+  const altoSsh = porSsh.filter((x) => x.severity === "high");
+  const altoRdp = porRdp.filter((x) => x.severity === "high");
+  assert.strictEqual(altoSsh.length, 1);
+  assert.strictEqual(altoRdp.length, 1);
+  assert.strictEqual(altoSsh[0].severity, altoRdp[0].severity);
+  // Y los dos elevan el riesgo global igual (isActionable: info no eleva).
+  const sSsh = summarize(porSsh.map((x) => Object.assign({ scope: "host" }, x)));
+  const sRdp = summarize(porRdp.map((x) => Object.assign({ scope: "host" }, x)));
+  assert.strictEqual(sSsh.maxSeverity, "high");
+  assert.strictEqual(sRdp.maxSeverity, "high");
+  assert.ok(sSsh.actionable.total >= 1 && sRdp.actionable.total >= 1);
+});
+
+check("ningún texto del 4672 dice que la sesión estuviera elevada", () => {
+  const raw = rawIntruso();
+  const textos = [
+    ...fromSecurityEvents(raw).flatMap((f) => [f.title, f.evidence, f.fix || ""]),
+    ...buildEventList(raw).events.map((e) => e.detail || ""),
+    ...fromSecurityEvents(rawDesdePs(EVIDENCIA_PS)).map((f) => f.evidence),
+  ];
+  const sospechoso = textos.filter((t) => /sesión (con privilegios|obtuvo|elevada|administrativa)/i.test(t));
+  assert.deepStrictEqual(sospechoso, []);
+  // Y los que sí hablan del 4672 dicen de qué hablan: de la cuenta.
+  const del4672 = textos.filter((t) => /4672/.test(t));
+  assert.ok(del4672.length >= 3);
+  for (const t of del4672) assert.ok(/cuenta/i.test(t), t);
 });
 
 check("4672 remoto SIN acceso SSH → sigue saliendo, y con severidad alta", () => {

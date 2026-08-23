@@ -852,10 +852,16 @@ function tsToEpoch(ts) {
  *
  * Sobrevive la fila de SSH porque es la que más información trae: la IP de
  * origen REAL —el 4624 de sshd no la lleva— y el método de autenticación. Lo
- * único que aporta el 4672 absorbido es que esa sesión tenía privilegios de
- * administrador, y eso no se pierde: se anota en la propia fila superviviente,
- * en `detail` (lo que lee la persona) y en el campo `privileged` (lo que leen
- * el chat con el LLM y cualquier consumidor programático).
+ * único que aporta el 4672 absorbido es CON QUÉ CUENTA se entró, y eso no se
+ * pierde: se anota en la propia fila superviviente, en `detail` (lo que lee la
+ * persona) y en el campo `privileged` (lo que leen el chat con el LLM y
+ * cualquier consumidor programático).
+ *
+ * Ojo con lo que significa el 4672: NO es "la sesión estaba elevada". Windows lo
+ * emite al iniciar sesión cuando la CUENTA pertenece al grupo Administradores,
+ * se ejecute algo con permisos elevados o no. Entrar por SSH con una cuenta
+ * administradora lo dispara aunque no se eleve nada, así que el texto habla de
+ * la cuenta, no de la sesión.
  *
  * La regla de correlación NO está aquí: vive en lib/win-logons.js y la comparte
  * con lib/normalizer.js, que tiene que tomar exactamente la misma decisión para
@@ -891,7 +897,7 @@ function buildEventList(result) {
     push(
       a.timestamp, "ssh-accepted", a.user, a.ip,
       `Login SSH correcto (${a.method || "?"})` +
-        (priv ? " · la sesión obtuvo privilegios de administrador (4672)" : ""),
+        (priv ? " · con una cuenta que tiene privilegios de administrador (4672)" : ""),
       priv ? { privileged: true } : null
     );
   }
@@ -917,7 +923,9 @@ function buildEventList(result) {
     for (const [i, p] of ((win.privileged || [])).entries()) {
       if (corr.absorbedPriv.has(i)) continue;
       push(p.timestamp, "logon-privileged", p.user, p.ip,
-        p.remote ? "Sesión con privilegios de administrador — remota (4672)" : "Sesión con privilegios de administrador — local (4672)");
+        p.remote
+          ? "Acceso remoto con una cuenta que tiene privilegios de administrador (4672)"
+          : "Acceso local con una cuenta que tiene privilegios de administrador (4672)");
     }
   }
 
