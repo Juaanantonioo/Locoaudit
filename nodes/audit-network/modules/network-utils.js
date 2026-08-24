@@ -1,28 +1,10 @@
 "use strict";
 
-/**
- * network-utils.js — Utilidades de parsing y validación para audit-network.
- *
- * Exporta:
- *   parsePortsList(input)             → number[] | null
- *   parseTargets(input)               → string[]
- *   isLocalTarget(target)             → boolean
- *   toBaseUrl(protocol, host, port)   → string
- *   getFixForPort(port, platform)     → string|null
- */
-
-// La parada de un servicio systemd (con su .socket) tiene una única definición
-// compartida: si se duplica aquí, acaba divergiendo de la de los fixes de proceso.
+// Parar un servicio systemd con su .socket tiene una sola definición: duplicarla aquí acabaría
+// divergiendo de la de los fixes de proceso.
 const { systemdDisable, getFixForProcess } = require("../../../lib/process-fix");
 
-/**
- * Parsea una cadena de puertos con rangos ("80,443,8000-8080") a un array
- * ordenado de números de puerto válidos.
- * Devuelve null si la cadena está vacía.
- *
- * @param {string} input
- * @returns {number[]|null}
- */
+/** "80,443,8000-8080" a números ordenados; null si la cadena viene vacía. */
 function parsePortsList(input) {
   const s = (input || "").trim();
   if (!s) return null;
@@ -48,13 +30,7 @@ function parsePortsList(input) {
   return Array.from(ports).sort((x, y) => x - y);
 }
 
-/**
- * Parsea una cadena de targets separados por coma, punto y coma o nueva línea.
- * Elimina duplicados y cadenas vacías.
- *
- * @param {string} input
- * @returns {string[]}
- */
+/** Targets separados por coma, punto y coma o salto de línea, sin duplicados. */
 function parseTargets(input) {
   const raw = String(input || "")
     .split(/[\n,;]/)
@@ -63,39 +39,20 @@ function parseTargets(input) {
   return Array.from(new Set(raw));
 }
 
-/**
- * Comprueba si un target es localhost (127.0.0.1, localhost, ::1).
- * @param {string} target
- * @returns {boolean}
- */
+/** Decide si el objetivo es este equipo, y con eso si se ejecutan lsof y el descubrimiento. */
 function isLocalTarget(target) {
   const t = (target || "").trim().toLowerCase();
   return t === "127.0.0.1" || t === "localhost" || t === "::1";
 }
 
-/**
- * Construye una URL base a partir de protocolo, host y puerto,
- * omitiendo el puerto si coincide con el puerto por defecto del protocolo.
- *
- * @param {string} protocol   "http" | "https"
- * @param {string} host
- * @param {number} port
- * @returns {string}
- */
+/** URL base, con el puerto omitido si es el que corresponde al protocolo. */
 function toBaseUrl(protocol, host, port) {
   const defaultPort = protocol === "https" ? 443 : 80;
   const showPort = port !== defaultPort;
   return `${protocol}://${host}${showPort ? ":" + port : ""}`;
 }
 
-/**
- * Devuelve el fix concreto para un puerto conocido según la plataforma.
- * Para puertos no catalogados devuelve comandos genéricos de identificación.
- *
- * @param {number} port
- * @param {string} platform  process.platform: 'darwin' | 'linux' | 'win32'
- * @returns {string|null}
- */
+/** Fix por puerto conocido y plataforma; null si no hay uno específico. */
 function getFixForPort(port, platform) {
   const plat = platform || process.platform;
 
@@ -122,7 +79,7 @@ function getFixForPort(port, platform) {
         return "Desactiva el servicio FTP en Panel de control → Características de Windows → IIS → Servidor FTP.";
       }
       if (plat === "darwin") {
-        // Label real desconocido (macOS no trae servidor FTP): ver process-fix.js.
+        // macOS no trae servidor FTP, así que el label real se desconoce: ver process-fix.js.
         return getFixForProcess("vsftpd", "darwin");
       }
       return systemdDisable("vsftpd");
@@ -198,9 +155,8 @@ function getFixForPort(port, platform) {
       );
 
     default:
-      // Sin guía por-puerto: la construye buildPortFix() (lib/normalizer.js) con
-      // el bind real, el proceso detectado y el tipo de servicio. Duplicarla aquí
-      // producía dos versiones divergentes de los mismos pasos.
+      // La guía genérica la arma buildPortFix() en el normalizador, con el bind real y el
+      // proceso detectado. Repetirla aquí daba dos versiones divergentes de los mismos pasos.
       return null;
   }
 }

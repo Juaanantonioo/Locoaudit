@@ -1,24 +1,8 @@
 "use strict";
 
-/**
- * os-info.js — Información del sistema operativo usando el módulo nativo `os`.
- *
- * Recolecta: platform, arch, hostname, uptime (segundos y legible),
- *            release, type.
- *
- * Sin dependencias externas ni llamadas a child_process.
- *
- * Exporta:
- *   getOsInfo() → Object
- */
-
 const os = require("os");
 
-/**
- * Convierte segundos a una cadena legible "Xd Xh Xm".
- * @param {number} seconds
- * @returns {string}
- */
+/** Segundos a "Xd Xh Xm"; los días y las horas se omiten si son cero. */
 function formatUptime(seconds) {
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
@@ -30,28 +14,17 @@ function formatUptime(seconds) {
   return parts.join(" ");
 }
 
-/**
- * Recolecta información del sistema operativo.
- * @returns {{
- *   platform: string,
- *   arch: string,
- *   hostname: string,
- *   uptimeSec: number,
- *   uptimeHuman: string,
- *   release: string,
- *   type: string
- * }}
- */
+/** Identidad del equipo auditado, para la cabecera del informe. */
 function getOsInfo() {
   const uptimeSec = Math.floor(os.uptime());
   return {
-    platform: os.platform(),       // 'darwin' | 'linux' | 'win32'
-    arch: os.arch(),               // 'x64' | 'arm64' | ...
+    platform: os.platform(),
+    arch: os.arch(),
     hostname: os.hostname(),
     uptimeSec,
     uptimeHuman: formatUptime(uptimeSec),
-    release: os.release(),         // versión del kernel
-    type: os.type(),               // 'Darwin' | 'Linux' | 'Windows_NT'
+    release: os.release(),         // el kernel, no la versión del SO: en Windows 10 y 11 sale 10.0.x
+    type: os.type(),
   };
 }
 

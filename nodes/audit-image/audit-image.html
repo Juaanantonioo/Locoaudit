@@ -1,5 +1,3 @@
-<!-- audit-image — panel de configuración Node-RED -->
-<!-- TODO: implementar -->
 
 <script type="text/javascript">
     RED.nodes.registerType("audit-image", {
@@ -17,13 +15,11 @@
         icon: "audit-image.svg",
         label: function () { return "audit-image"; },
         oneditprepare: function () {
-            // typedInput para la referencia de imagen (texto fijo o tomado de msg)
             $("#node-input-imageRef").typedInput({
                 types: ['str', 'msg'],
                 typeField: $("#node-input-imageRefType")
             });
 
-            // Mostrar la fila de imageRef solo en modo "specific"
             function toggleImageRefRow() {
                 if ($("#node-input-scanMode").val() === "specific") {
                     $("#imageRef-row").show();
@@ -33,7 +29,6 @@
             }
 
             $("#node-input-scanMode").on("change", toggleImageRefRow);
-            // Reflejar el estado guardado al abrir el diálogo
             toggleImageRefRow();
         }
     });
@@ -41,7 +36,6 @@
 
 <script type="text/html" data-template-name="audit-image">
 
-    <!-- ── Modo de escaneo ── -->
     <div class="form-row">
         <label for="node-input-scanMode">
             <i class="fa fa-search"></i> Modo
@@ -52,7 +46,6 @@
         </select>
     </div>
 
-    <!-- ── Referencia de imagen (solo modo "specific") ── -->
     <div class="form-row" id="imageRef-row">
         <label for="node-input-imageRef">
             <i class="fa fa-cube"></i> Imagen
@@ -68,7 +61,6 @@
         o fallen se reportan como hallazgo informativo.
     </div>
 
-    <!-- ── Timeout por imagen ── -->
     <div class="form-row">
         <label for="node-input-imageTimeout">
             <i class="fa fa-clock-o"></i> Timeout (s)
@@ -81,7 +73,6 @@
         grandes (modelos de IA de varios GB): su descarga puede tardar minutos.
     </div>
 
-    <!-- ── Asistente IA (opcional) ── -->
     <div class="form-row">
         <label for="node-input-llmConfig">
             <i class="fa fa-comment"></i> Asistente IA

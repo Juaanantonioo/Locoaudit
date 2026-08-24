@@ -1,5 +1,3 @@
-<!-- audit-network — Panel de configuración Node-RED -->
-
 <script type="text/javascript">
     RED.nodes.registerType("audit-network", {
         category: "locoaudit",
@@ -53,7 +51,6 @@
 
 <script type="text/html" data-template-name="audit-network">
 
-    <!-- Nombre del nodo -->
     <div class="form-row">
         <label for="node-input-name">
             <i class="fa fa-tag"></i> Nombre
@@ -63,7 +60,6 @@
 
     <hr style="margin: 12px 0;">
 
-    <!-- ── SECCIÓN 1: Escáner ────────────────────────────────────────────── -->
     <div class="form-row">
         <label style="width: 100%; font-weight: 600; margin-bottom: 8px;">
             <i class="fa fa-search"></i> Escáner
@@ -71,7 +67,6 @@
 
         <div style="padding-left: 8px; display: flex; flex-direction: column; gap: 10px;">
 
-            <!-- Modo de escaneo -->
             <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
                 <label for="node-input-scanMode" style="font-weight: 600; margin-bottom: 6px; display: block;">
                     Modo de escaneo
@@ -84,7 +79,6 @@
                 </select>
             </div>
 
-            <!-- Puertos personalizados (solo visible en modo custom) -->
             <div id="custom-ports-row" style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
                 <label for="node-input-customPorts" style="font-weight: 600; margin-bottom: 6px; display: block;">
                     Puertos a escanear
@@ -103,7 +97,6 @@
 
     <hr style="margin: 12px 0;">
 
-    <!-- ── SECCIÓN 2: Objetivo ───────────────────────────────────────────── -->
     <div class="form-row">
         <label style="width: 100%; font-weight: 600; margin-bottom: 8px;">
             <i class="fa fa-desktop"></i> Objetivo
@@ -111,7 +104,6 @@
 
         <div style="padding-left: 8px; display: flex; flex-direction: column; gap: 10px;">
 
-            <!-- Qué equipo auditar -->
             <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
                 <label for="node-input-scanTarget" style="font-weight: 600; margin-bottom: 6px; display: block;">
                     Qué equipo auditar
@@ -122,7 +114,6 @@
                 </select>
             </div>
 
-            <!-- IP personalizada (solo visible cuando scanTarget === "custom") -->
             <div id="custom-target-row" style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
                 <label for="node-input-customTarget" style="font-weight: 600; margin-bottom: 6px; display: block;">
                     Dirección IP del equipo
@@ -135,7 +126,6 @@
                     Solo audita equipos de tu propiedad.
                 </div>
 
-                <!-- Escanear aunque no responda al descubrimiento -->
                 <div style="margin-top: 10px; border-top: 1px solid #e0e0e0; padding-top: 10px;">
                     <label for="node-input-forceScan" style="font-weight: 600; display: flex; align-items: center; gap: 6px; margin: 0;">
                         <input type="checkbox" id="node-input-forceScan" style="width: auto; margin: 0;">
@@ -158,7 +148,6 @@
 
     <hr style="margin: 12px 0;">
 
-    <!-- ── Dependencia requerida ─────────────────────────────────────────── -->
     <div class="form-row" style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px; color: #555; font-size: 0.85em; line-height: 1.5;">
         <i class="fa fa-exclamation-triangle" style="color: #e67e22;"></i>
         <strong>Nmap es necesario</strong> para este nodo: es el escáner que descubre
@@ -175,7 +164,6 @@
 
     <hr style="margin: 12px 0;">
 
-    <!-- ── Asistente IA (opcional) ── -->
     <div class="form-row">
         <label for="node-input-llmConfig">
             <i class="fa fa-comment"></i> Asistente IA

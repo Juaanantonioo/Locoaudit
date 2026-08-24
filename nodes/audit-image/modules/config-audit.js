@@ -1,39 +1,16 @@
 "use strict";
 
 /**
- * config-audit.js — Auditoría de configuración de seguridad de contenedores Docker.
+ * Configuraciones inseguras de los contenedores en marcha, todo con `docker inspect`.
  *
- * Analiza los contenedores activos buscando configuraciones inseguras frecuentes
- * usando exclusivamente comandos `docker inspect` (CLI, sin dependencias externas).
+ * En "high" va lo que da escalada de privilegios o expone credenciales: correr como root, porque
+ * un proceso comprometido tiene UID 0 y desde ahí se intenta el escape al host, y los secretos en
+ * variables de entorno, visibles para cualquier proceso del contenedor, para quien pueda hacer
+ * `docker inspect` y además grabados en el historial de capas de la imagen.
  *
- * ── Criterio de severidad aplicado ───────────────────────────────────────────
- *
- * "high"   — Configuraciones que suponen un riesgo directo de escalada de
- *            privilegios o exposición de credenciales:
- *
- *            · Contenedor ejecutándose como root: un proceso comprometido dentro
- *              del contenedor tiene UID 0, lo que facilita técnicas de escape
- *              de contenedor y acceso al host.
- *
- *            · Variables de entorno con datos sensibles: contraseñas, tokens y
- *              claves en variables de entorno son visibles para cualquier proceso
- *              dentro del contenedor y para quien tenga acceso a `docker inspect`.
- *              Además quedan registradas en el historial de capas de la imagen.
- *
- * "medium" — Configuraciones que amplían innecesariamente la superficie de ataque
- *            pero no implican compromiso inmediato:
- *
- *            · Puertos publicados en 0.0.0.0: el servicio es accesible desde
- *              cualquier interfaz de red, incluyendo las externas, cuando en la
- *              mayoría de casos bastaría con 127.0.0.1.
- *
- *            · Montaje del socket de Docker (/var/run/docker.sock): otorga al
- *              contenedor control total sobre el daemon Docker del host, lo que
- *              equivale en la práctica a privilegios de root en el host.  Solo
- *              justificado en herramientas de CI/CD muy controladas.
- *
- * Exporta:
- *   auditDockerConfig(dockerInfo) → Promise<Finding[]>
+ * En "medium", lo que amplía la superficie sin comprometer nada por sí solo: publicar en 0.0.0.0
+ * cuando casi siempre bastaría 127.0.0.1, y montar /var/run/docker.sock, que da control del
+ * daemon del host y equivale en la práctica a root fuera del contenedor.
  */
 
 const { execCommand }    = require("../../../lib/executor");
@@ -41,19 +18,10 @@ const { createFinding }  = require("../../../lib/finding-schema");
 
 const INSPECT_TIMEOUT_MS = 8000;
 
-// Palabras clave que indican variables de entorno con datos sensibles
+// Nombres de variable que delatan un secreto.
 const SENSITIVE_PATTERNS = ["PASSWORD", "SECRET", "KEY", "TOKEN", "PASS", "CREDENTIAL"];
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Ejecuta docker inspect sobre un contenedor y devuelve el valor del formato.
- * Si falla devuelve null silenciosamente.
- *
- * @param {string} id      ID o nombre del contenedor
- * @param {string} format  Plantilla Go para --format
- * @returns {Promise<string|null>}
- */
+/** null si el inspect falla: un contenedor que se para a mitad de auditoría no rompe el resto. */
 async function inspect(id, format) {
   try {
     const out = await execCommand(
@@ -66,13 +34,7 @@ async function inspect(id, format) {
   }
 }
 
-/**
- * Detecta variables de entorno con nombres sensibles en un JSON array de strings.
- * Formato esperado: ["VAR=value", "OTHER=val", ...]
- *
- * @param {string|null} envJson  Salida de docker inspect --format "{{json .Config.Env}}"
- * @returns {string[]}  Nombres de variables sensibles encontradas
- */
+/** Sobre el ["VAR=value", …] que devuelve `docker inspect --format "{{json .Config.Env}}"`. */
 function findSensitiveEnvVars(envJson) {
   if (!envJson) return [];
   let envList;
@@ -88,37 +50,23 @@ function findSensitiveEnvVars(envJson) {
     .filter((name) => SENSITIVE_PATTERNS.some((pat) => name.includes(pat)));
 }
 
-/**
- * Contador para IDs de finding con prefijo e índice correlativo por tipo.
- * @param {string} prefix  Ej: "IMG-CFG-001"
- * @param {number} n       Índice 0-based del contenedor
- * @returns {string}
- */
+/** IDs correlativos por tipo de hallazgo: IMG-CFG-001, IMG-CFG-002… */
 function findingId(base, n) {
   return `${base}-${String(n + 1).padStart(3, "0")}`;
 }
 
-// ── Auditoría de un contenedor ────────────────────────────────────────────────
-
-/**
- * Inspecciona un único contenedor y devuelve todos sus findings de configuración.
- *
- * @param {{ id, name, ports }} container
- * @param {number} idx  Posición en el array de contenedores (para IDs)
- * @returns {Promise<Finding[]>}
- */
+/** Los cuatro chequeos sobre un contenedor. El idx solo sirve para numerar los IDs. */
 async function auditContainer(container, idx) {
   const findings = [];
   const name = container.name || container.id;
 
-  // Inspecciones en paralelo para minimizar la latencia total
+  // En paralelo: son cuatro procesos `docker inspect` independientes.
   const [userOut, envOut, bindsOut] = await Promise.all([
     inspect(container.id, "{{.Config.User}}"),
     inspect(container.id, "{{json .Config.Env}}"),
     inspect(container.id, "{{json .HostConfig.Binds}}"),
   ]);
 
-  // ── HIGH: contenedor corriendo como root ──────────────────────────────────
   const user = userOut ?? "";
   if (user === "" || user === "root" || user === "0") {
     findings.push(createFinding({
@@ -132,7 +80,6 @@ async function auditContainer(container, idx) {
     }));
   }
 
-  // ── HIGH: variables de entorno con datos sensibles ────────────────────────
   const sensitiveVars = findSensitiveEnvVars(envOut);
   if (sensitiveVars.length > 0) {
     findings.push(createFinding({
@@ -146,10 +93,9 @@ async function auditContainer(container, idx) {
     }));
   }
 
-  // ── MEDIUM: puertos publicados en todas las interfaces ────────────────────
   if (container.ports && container.ports.includes("0.0.0.0:")) {
-    // El binding se corrige en el arranque del contenedor (docker run / Compose),
-    // no con comandos del host. Por eso no se anexa el fix de proceso del host.
+    // El binding se cambia al arrancar el contenedor, en `docker run` o en Compose, no con
+    // comandos del host: por eso aquí no se anexa el fix de proceso.
     const portsFix =
       "Limitar el binding a 127.0.0.1 si el servicio es solo local: " +
       "-p 127.0.0.1:<puerto>:<puerto> en docker run, o el mapeo de puertos equivalente en Docker Compose.";
@@ -164,7 +110,6 @@ async function auditContainer(container, idx) {
     }));
   }
 
-  // ── MEDIUM: montaje del socket de Docker ──────────────────────────────────
   let binds = [];
   try { binds = JSON.parse(bindsOut || "[]"); } catch (_) { /* ignorar */ }
   const hasSock = Array.isArray(binds) &&
@@ -185,15 +130,7 @@ async function auditContainer(container, idx) {
   return findings;
 }
 
-// ── API pública ───────────────────────────────────────────────────────────────
-
-/**
- * Audita la configuración de seguridad de todos los contenedores Docker.
- * Si dockerInfo indica que Docker no está disponible devuelve array vacío.
- *
- * @param {{ skipped?: boolean, containers?: Array }} dockerInfo
- * @returns {Promise<Finding[]>}
- */
+/** Sin Docker devuelve el array vacío: quien avisa de su ausencia es el nodo, con un finding. */
 async function auditDockerConfig(dockerInfo) {
   if (!dockerInfo || dockerInfo.skipped) return [];
 

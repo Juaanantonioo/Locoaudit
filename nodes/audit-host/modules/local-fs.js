@@ -1,30 +1,16 @@
 "use strict";
 
 /**
- * local-fs.js — ¿Un directorio vive en almacenamiento LOCAL del equipo?
- *
- * LoCoAudit audita el almacenamiento local: las unidades de red y el
- * almacenamiento en la nube quedan fuera de ámbito por definición, no por
- * limitación técnica. Su contenido no es software que este equipo ejecute, y
- * recorrerlo obliga a materializar ficheros remotos (lento, y con montajes que
- * no responden aborta el escaneo entero).
- *
- * La detección es NATIVA por plataforma —tipo de sistema de ficheros y marcas
- * del propio SO—, nunca una lista de nombres de carpeta: "Google Drive" puede
- * llamarse de cualquier forma, y una carpeta llamada "OneDrive" puede ser un
- * directorio normal.
- *
- * Exporta:
- *   classifyDir(dir) → { local: boolean, kind: 'local'|'network'|'cloud'|'unknown', detail: string }
+ * Red y nube quedan fuera de ámbito: no es software que este equipo ejecute, y recorrerlas
+ * obliga a materializar ficheros remotos, con lo que un montaje colgado tumba el escaneo entero.
+ * Se detecta por sistema de ficheros y marcas del SO, nunca por el nombre de la carpeta: una
+ * llamada "OneDrive" puede ser un directorio normal.
  */
 
 const { execSync } = require("child_process");
 
-/**
- * Tipos de sistema de ficheros REMOTOS en Linux (stat -f -c %T).
- * El prefijo "fuse." cubre sshfs, rclone, gdrive, s3fs… sin enumerarlos.
- * Nota: "fuseblk" NO entra — es ntfs-3g, un disco local.
- */
+/** Remotos en Linux (stat -f -c %T). El prefijo "fuse." cubre sshfs, rclone o s3fs sin listarlos;
+ *  "fuseblk" se queda fuera a propósito, es ntfs-3g y es disco local. */
 const LINUX_REMOTE = new Set([
   "nfs", "nfs4", "cifs", "smb", "smb2", "smbfs", "afs", "webdav", "davfs", "sshfs", "9p",
 ]);
@@ -48,15 +34,9 @@ function classifyLinux(dir) {
 }
 
 /**
- * macOS: dos señales distintas y ambas necesarias.
- *
- *   1. Montaje de red real (SMB/NFS/AFP/FUSE) → aparece en `mount`.
- *   2. Almacenamiento en la nube SINCRONIZADO (Google Drive, iCloud, OneDrive,
- *      Dropbox). MEDIDO: NO es un montaje — vive en el APFS local
- *      (/System/Volumes/Data) y `mount` no lo lista. Lo delata el atributo
- *      extendido `com.apple.file-provider-domain-id`, que macOS pone en la raíz
- *      de cada dominio de File Provider. Sin esta segunda comprobación, Google
- *      Drive se clasificaría como local y volvería a tumbar el escaneo.
+ * Dos sondas, las dos necesarias: los montajes de red salen en `mount`, la nube sincronizada no.
+ * Medido: Google Drive vive en el APFS local de /System/Volumes/Data y `mount` no lo lista. Lo
+ * delata el xattr com.apple.file-provider-domain-id, que macOS pone en la raíz de cada dominio.
  */
 function classifyDarwin(dir) {
   try {
@@ -69,7 +49,7 @@ function classifyDarwin(dir) {
   const mountPoint = sh(`df -P ${JSON.stringify(dir)}`).split("\n").pop().split(/\s+/).slice(5).join(" ");
   const mounts = sh("mount");
   for (const line of mounts.split("\n")) {
-    // Formato: "<origen> on <punto> (<tipo>, <opciones…>)"
+    // "<origen> on <punto> (<tipo>, <opciones…>)"
     const m = line.match(/^(.*) on (.*) \(([^,)]+)/);
     if (!m) continue;
     if (m[2] === mountPoint) {
@@ -96,15 +76,8 @@ function classifyWin32(dir) {
   return { local: true, kind: "local", detail: `DriveType ${out.trim() || "?"}` };
 }
 
-/**
- * Clasifica un directorio como almacenamiento local o no.
- * Nunca lanza: ante cualquier fallo devuelve 'unknown' con local:true, para no
- * excluir por error una carpeta legítima. Un directorio que no responda se
- * detecta igualmente al escanearlo, y ahí se aísla (ver trivy-fs.js).
- *
- * @param {string} dir  Ruta absoluta.
- * @returns {{ local: boolean, kind: 'local'|'network'|'cloud'|'unknown', detail: string }}
- */
+/** Nunca lanza: si la sonda falla devuelve 'unknown' con local:true. Excluir por error una
+ *  carpeta legítima deja software sin auditar; el directorio que no responde se aísla en trivy-fs. */
 function classifyDir(dir) {
   try {
     if (process.platform === "linux")  return classifyLinux(dir);

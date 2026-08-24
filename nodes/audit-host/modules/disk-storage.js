@@ -1,30 +1,10 @@
 "use strict";
 
 /**
- * disk-storage.js — Uso de disco por sistema de ficheros montado.
- *
- * macOS:   parsea "df -k"
- * Linux:   parsea "df -kPT" (con tipo de sistema de ficheros; degrada a "df -kP")
- * Windows: parsea "wmic logicaldisk get Caption,Size,FreeSpace"
- *
- * IMPORTANTE — una entrada por SISTEMA DE FICHEROS, no por punto de montaje.
- * En btrfs (CachyOS, Fedora, openSUSE) el layout por defecto monta varios
- * subvolúmenes —/, /home, /var/log, /var/cache, /root, /srv…— desde el MISMO
- * dispositivo, y `df` repite la misma fila con distinto "Mounted on". Sin
- * deduplicar, cada subvolumen generaba un finding HOST-DISK-*, inflando la
- * cabecera y el donut del dashboard con 6-8 copias del mismo disco.
- *
- * Exporta:
- *   getDiskInfo() → Promise<Array<{
- *     mount: string,          // punto de montaje representativo (el más corto)
- *     mounts: string[],       // todos los puntos de montaje de ese filesystem
- *     device: string,         // dispositivo / dataset según df
- *     fsType: string|null,    // tipo (solo Linux); null si df no lo reporta
- *     totalGB: number,
- *     usedGB: number,
- *     freeGB: number,
- *     usedPercent: number
- *   }>>
+ * Una entrada por sistema de ficheros, no por punto de montaje: el layout btrfs por defecto
+ * (CachyOS, Fedora, openSUSE) monta /, /home, /var/log y demás desde el mismo dispositivo, y `df`
+ * repite la fila cambiando solo "Mounted on". Sin deduplicar salían 6-8 copias del mismo disco,
+ * cada una con su finding HOST-DISK-*, inflando la cabecera y el donut del dashboard.
  */
 
 const { execCommand } = require("../../../lib/executor");
@@ -32,9 +12,8 @@ const { execCommand } = require("../../../lib/executor");
 const KB = 1024;
 const GB = KB * KB * KB;
 
-// Tipos que no son almacenamiento persistente: viven en RAM o son interfaces
-// del kernel. `df` los lista con tamaños de varios GB (tmpfs = media RAM), así
-// que sin filtrarlos aparecían como "discos" en el informe.
+// Ni almacenamiento persistente ni disco: RAM e interfaces del kernel. `df` los lista con
+// varios GB (tmpfs es media RAM), así que sin filtrar aparecían como discos en el informe.
 const PSEUDO_FS_TYPES = new Set([
   "tmpfs", "devtmpfs", "ramfs", "devfs", "overlay", "squashfs", "efivarfs",
   "autofs", "proc", "sysfs", "devpts", "cgroup", "cgroup2", "debugfs",
@@ -42,14 +21,11 @@ const PSEUDO_FS_TYPES = new Set([
   "hugetlbfs", "binfmt_misc", "fusectl", "nsfs", "selinuxfs", "none",
 ]);
 
-// Cuando df no reporta el tipo (macOS, busybox) solo queda el nombre del
-// dispositivo. Estos nombres son pseudo-filesystems en cualquier Unix.
+// Sin columna de tipo (macOS, busybox) solo queda el nombre: estos lo son en cualquier Unix.
 const PSEUDO_DEVICES = new Set([
   "tmpfs", "devtmpfs", "ramfs", "devfs", "udev", "dev", "run", "none",
   "overlay", "shm", "proc", "sysfs", "systemd-1", "map",
 ]);
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function toGB(kb) {
   return Math.round((kb * KB) / GB * 100) / 100;
@@ -57,35 +33,23 @@ function toGB(kb) {
 
 function isPseudo(device, fsType) {
   if (fsType && PSEUDO_FS_TYPES.has(fsType.toLowerCase())) return true;
-  if (fsType) return false;               // tipo conocido y real → no es pseudo
+  if (fsType) return false;               // hay tipo y no está en la lista: es real
   return PSEUDO_DEVICES.has(String(device).toLowerCase());
 }
 
 /**
- * Clave de agrupación: qué filas de `df` describen el MISMO almacenamiento.
- *
- * - Caso general (btrfs, ext4, xfs, apfs, bind mounts): el dispositivo. Varios
- *   montajes del mismo dispositivo son el mismo filesystem; df repite cifras
- *   idénticas.
- * - ZFS: cada dataset es un "dispositivo" distinto (`pool/ROOT/default`,
- *   `pool/home`) pero TODOS consumen el espacio libre del mismo pool — df
- *   reporta el mismo "Available" en todos. La unidad real de capacidad es el
- *   pool, así que la clave es el primer componente del dataset.
- *   Requiere conocer el tipo, o sea Linux: en macOS (OpenZFS) no se agrupa y
- *   cada dataset sigue dando su propia entrada.
+ * Qué filas de `df` son el mismo almacenamiento. En general basta el dispositivo. ZFS no: cada
+ * dataset (pool/ROOT/default, pool/home) es un dispositivo distinto pero todos gastan del mismo
+ * pool y df repite el "Available", así que la unidad de capacidad es el pool y la clave es el
+ * primer componente. Necesita la columna de tipo, o sea Linux: en macOS cada dataset va aparte.
  */
 function fsGroupKey(device, fsType) {
   if (fsType && fsType.toLowerCase() === "zfs") return "zfs:" + String(device).split("/")[0];
   return "dev:" + device;
 }
 
-/**
- * Colapsa las filas de un mismo filesystem en una sola entrada.
- *
- * btrfs y compañía: las filas son la misma cifra repetida → se toma una.
- * ZFS: los datasets son cifras DISTINTAS que comparten el espacio libre del
- * pool → el usado se suma y el libre (idéntico en todas) se toma una vez.
- */
+/** btrfs y compañía repiten la misma cifra y se toma una. En ZFS las cifras difieren y comparten
+ *  pool: el usado se suma y el libre, idéntico en todas las filas, se coge una sola vez. */
 function collapseRows(rows) {
   const first = rows[0];
   const mounts = rows.map((r) => r.mount).sort(function (a, b) {
@@ -104,8 +68,7 @@ function collapseRows(rows) {
     totalGB = toGB(first.totalKB);
     usedGB = toGB(first.usedKB);
     freeGB = toGB(first.freeKB);
-    // El porcentaje se calcula sobre los KB crudos, no sobre los GB ya
-    // redondeados: si no, un disco al 75,4 % podía saltar de banda de severidad.
+    // Sobre los KB crudos, no sobre los GB redondeados: un disco al 75,4 % cambiaba de banda.
     usedPercent = Math.round((first.usedKB / first.totalKB) * 100);
   }
 
@@ -130,23 +93,17 @@ function dedupeByFilesystem(rows) {
   }
   return Array.from(groups.values())
     .map(collapseRows)
-    // Ignorar volúmenes sin espacio real (< 1 GB: RAM disks, snapshots, /boot/efi).
+    // Menos de 1 GB no es un disco que auditar: RAM disks, snapshots, /boot/efi.
     .filter(function (d) { return d.totalGB >= 1; });
 }
 
-// ── Parsers ─────────────────────────────────────────────────────────────────
-
-/**
- * Parsea la salida de `df -k` (macOS) o `df -kPT` / `df -kP` (Linux).
- * @param {string} stdout
- * @param {boolean} hasType  true si la salida incluye la columna Type (df -T)
- */
+/** Salida de `df -k` (macOS) o `df -kPT` / `df -kP` (Linux); hasType dice si viene la columna Type. */
 function parseDfOutput(stdout, hasType) {
   const lines = String(stdout).trim().split("\n");
   const rows = [];
 
-  for (const line of lines.slice(1)) { // saltar cabecera
-    // df -k puede partir líneas largas en dos; ignoramos líneas sin cifras
+  for (const line of lines.slice(1)) {
+    // df parte en dos las líneas con nombres largos; las que quedan sin cifras se ignoran.
     const parts = line.trim().split(/\s+/);
     const min = hasType ? 7 : 6;
     if (parts.length < min) continue;
@@ -157,17 +114,15 @@ function parseDfOutput(stdout, hasType) {
     const totalKB = parseInt(parts[base], 10);
     const usedKB = parseInt(parts[base + 1], 10);
     const freeKB = parseInt(parts[base + 2], 10);
-    const mount = parts[parts.length - 1]; // último campo = punto de montaje
+    const mount = parts[parts.length - 1];
 
     if (isNaN(totalKB) || totalKB === 0) continue;
     if (!mount.startsWith("/")) continue;
     if (mount === "/dev") continue;
-    // Pseudo-filesystems: tmpfs en /run, /tmp, /dev/shm… no son almacenamiento.
+    // tmpfs en /run, /tmp o /dev/shm no es almacenamiento.
     if (isPseudo(device, fsType)) continue;
-    // /System/Volumes/Data es el volumen de datos del usuario en macOS APFS
-    // (contiene /Users, /Applications, etc.) — debe mostrarse aunque sea un
-    // subvolumen de /System/Volumes/. Los demás subvolúmenes APFS son internos
-    // del sistema y no aportan información útil al usuario.
+    // /System/Volumes/Data lleva /Users y /Applications: es el disco del usuario y se muestra
+    // aunque cuelgue de /System/Volumes/. El resto de subvolúmenes APFS son internos.
     if (mount.startsWith("/System/Volumes/") && mount !== "/System/Volumes/Data") continue;
 
     rows.push({ device, fsType, mount, totalKB, usedKB, freeKB });
@@ -176,20 +131,17 @@ function parseDfOutput(stdout, hasType) {
   return dedupeByFilesystem(rows);
 }
 
-/**
- * Parsea la salida de "wmic logicaldisk get Caption,FreeSpace,Size" (Windows).
- * Las columnas aparecen en orden alfabético: Caption, FreeSpace, Size.
- * Windows no tiene subvolúmenes: una letra de unidad = un filesystem.
- */
+/** wmic saca las columnas en orden alfabético (Caption, FreeSpace, Size), no en el que se piden.
+ *  No hace falta deduplicar: en Windows una letra de unidad es un filesystem. */
 function parseWmicOutput(stdout) {
   const lines = String(stdout).trim().split("\n");
   const results = [];
 
-  for (const line of lines.slice(1)) { // saltar cabecera
+  for (const line of lines.slice(1)) {
     const parts = line.trim().split(/\s+/);
     if (parts.length < 3) continue;
 
-    const caption = parts[0];   // e.g. "C:"
+    const caption = parts[0];
     const freeBytes = parseInt(parts[1], 10);
     const totalBytes = parseInt(parts[2], 10);
 
@@ -213,12 +165,6 @@ function parseWmicOutput(stdout) {
   return results;
 }
 
-// ── API pública ─────────────────────────────────────────────────────────────
-
-/**
- * Recolecta el uso de disco, una entrada por sistema de ficheros.
- * @returns {Promise<Array<{mount, mounts, device, fsType, totalGB, usedGB, freeGB, usedPercent}>>}
- */
 async function getDiskInfo() {
   if (process.platform === "win32") {
     const stdout = await execCommand(
@@ -229,20 +175,20 @@ async function getDiskInfo() {
   }
 
   if (process.platform === "linux") {
-    // -T añade la columna Type (necesaria para distinguir zfs y descartar
-    // tmpfs); -P fuerza salida POSIX en una línea por montaje.
+    // -T da la columna Type, que hace falta para separar zfs y descartar tmpfs; -P fuerza
+    // el formato POSIX de una línea por montaje.
     try {
       const stdout = await execCommand("df -kPT", 10000);
       return parseDfOutput(stdout, true);
     } catch (e) {
-      // busybox/toybox df no implementan -T: se pierde el tipo, pero el
-      // deduplicado por dispositivo (el caso btrfs) sigue funcionando.
+      // busybox y toybox no traen -T. Se pierde el tipo, pero el deduplicado por dispositivo,
+      // que es el caso btrfs, sigue en pie.
       const stdout = await execCommand("df -kP", 10000);
       return parseDfOutput(stdout, false);
     }
   }
 
-  // macOS: BSD df no imprime el tipo (-T selecciona tipos, no los muestra).
+  // El df de BSD no imprime el tipo: ahí -T sirve para filtrar tipos, no para mostrarlos.
   const stdout = await execCommand("df -k", 10000);
   return parseDfOutput(stdout, false);
 }

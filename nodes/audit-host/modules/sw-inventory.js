@@ -1,25 +1,11 @@
 "use strict";
 
-/**
- * sw-inventory.js — Inventario de software instalado, multiplataforma.
- *
- * macOS:   brew list --versions  (si Homebrew existe)
- *          + system_profiler SPApplicationsDataType -json
- * Linux:   dpkg-query (Debian/Ubuntu) o rpm (RHEL/Fedora/SUSE)
- * Windows: wmic product get name,version
- *
- * Exporta:
- *   getSwInventory() → Promise<Array<{ name: string, version: string, source: string }>>
- */
+/** Inventario de software instalado. Cada plataforma tiene su fuente y ninguna es obligatoria. */
 
 const { execCommand, commandExists } = require("../../../lib/executor");
 
-// ── macOS ────────────────────────────────────────────────────────────────────
-
-/**
- * Obtiene paquetes de Homebrew.
- * @returns {Promise<Array<{name, version, source}>>}
- */
+// Sin Homebrew el inventario se queda en las apps del sistema. No es un fallo: aquí una lista
+// vacía sí significa "no hay paquetes de brew", no "no se pudo mirar".
 async function fromBrew() {
   if (!(await commandExists("brew"))) return [];
   try {
@@ -41,10 +27,6 @@ async function fromBrew() {
   }
 }
 
-/**
- * Obtiene aplicaciones de macOS vía system_profiler.
- * @returns {Promise<Array<{name, version, source}>>}
- */
 async function fromSystemProfiler() {
   try {
     const stdout = await execCommand(
@@ -65,12 +47,6 @@ async function fromSystemProfiler() {
   }
 }
 
-// ── Linux ────────────────────────────────────────────────────────────────────
-
-/**
- * Obtiene paquetes vía dpkg (Debian/Ubuntu).
- * @returns {Promise<Array<{name, version, source}>>}
- */
 async function fromDpkg() {
   try {
     const stdout = await execCommand(
@@ -90,10 +66,6 @@ async function fromDpkg() {
   }
 }
 
-/**
- * Obtiene paquetes vía rpm (RHEL / Fedora / SUSE).
- * @returns {Promise<Array<{name, version, source}>>}
- */
 async function fromRpm() {
   try {
     const stdout = await execCommand(
@@ -113,27 +85,20 @@ async function fromRpm() {
   }
 }
 
-// ── Windows ──────────────────────────────────────────────────────────────────
-
-/**
- * Obtiene productos instalados vía wmic.
- * @returns {Promise<Array<{name, version, source}>>}
- */
 async function fromWmic() {
   try {
     const stdout = await execCommand(
       "wmic product get name,version /format:csv",
       30000
     );
-    // El CSV de wmic tiene una línea vacía al inicio y cabecera: Node,Name,Version
+    // El CSV de wmic abre con una línea vacía y la cabecera Node,Name,Version.
     return stdout
       .trim()
       .split("\n")
-      .slice(1)              // saltar cabecera
+      .slice(1)
       .filter(Boolean)
       .map((line) => {
         const parts = line.split(",");
-        // formato: Node,Name,Version
         const name = (parts[1] || "").trim();
         const version = (parts[2] || "unknown").trim();
         return name ? { name, version, source: "wmic" } : null;
@@ -144,18 +109,12 @@ async function fromWmic() {
   }
 }
 
-// ── API pública ─────────────────────────────────────────────────────────────
-
-/**
- * Recolecta el inventario de software instalado según la plataforma.
- * @returns {Promise<Array<{ name: string, version: string, source: string }>>}
- */
 async function getSwInventory() {
   const platform = process.platform;
 
   if (platform === "darwin") {
     const [brew, apps] = await Promise.all([fromBrew(), fromSystemProfiler()]);
-    // Deduplicar por nombre: brew tiene precedencia para versión
+    // brew va detrás en el spread para que su versión pise a la de system_profiler.
     const map = new Map();
     for (const pkg of [...apps, ...brew]) {
       map.set(pkg.name.toLowerCase(), pkg);
@@ -169,7 +128,6 @@ async function getSwInventory() {
     return fromWmic();
   }
 
-  // Linux: intentar dpkg primero, luego rpm
   const hasDpkg = await commandExists("dpkg-query");
   if (hasDpkg) return fromDpkg();
 

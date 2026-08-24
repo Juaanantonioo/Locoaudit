@@ -1,52 +1,16 @@
 "use strict";
 
 /**
- * docker-api.js — Recolección de información de Docker vía CLI.
- *
- * Obtiene el inventario de imágenes y contenedores del daemon Docker local
- * usando exclusivamente comandos CLI (`docker images`, `docker ps`), sin
- * conectarse directamente al socket Unix `/var/run/docker.sock`.
- *
- * ── Por qué CLI y no el socket directo ───────────────────────────────────────
- *
- * La alternativa natural sería llamar a la API REST de Docker a través de
- * /var/run/docker.sock (o el named pipe en Windows), que ofrece respuestas
- * JSON estructuradas sin parsear.  Sin embargo, ese enfoque requiere una
- * librería HTTP con soporte de Unix sockets (ej: 'dockerode') o llamadas
- * manuales a `http.request` con socketPath, lo que añade complejidad y una
- * dependencia externa.
- *
- * Usar la CLI de Docker:
- *   - No requiere ninguna dependencia npm adicional.
- *   - Es totalmente compatible con Docker Desktop en macOS y Windows, que
- *     expone la CLI pero puede tener el socket en rutas no estándar.
- *   - El formato --format con plantillas Go produce salida estructurada y
- *     delimitada que es trivial de parsear con split("|").
- *   - El comportamiento es idéntico en Linux, macOS y Windows (WSL2).
- *
- * Sigue el patrón obligatorio de CLAUDE.md para herramientas requeridas:
- *   si docker no está instalado o el daemon no responde → { skipped: true }
- *
- * Exporta:
- *   getDockerInfo() → Promise<DockerInfo>
- *
- * @typedef {{ id: string, repository: string, tag: string, sizeBytes: number, created: string }} DockerImage
- * @typedef {{ id: string, name: string, image: string, status: string, running: boolean, ports: string }} DockerContainer
- * @typedef {{ skipped: true, reason: string } | { skipped: false, images: DockerImage[], containers: DockerContainer[] }} DockerInfo
+ * Inventario de imágenes y contenedores por CLI, no por el socket. El socket daría JSON sin
+ * parsear, pero pide una librería con soporte de Unix sockets o un http.request con socketPath, y
+ * con Docker Desktop en macOS y Windows el socket puede estar en rutas no estándar. La CLI se
+ * comporta igual en los tres sistemas y con --format sale delimitada. Sin docker o sin daemon,
+ * { skipped: true }: dentro de este nodo Docker es requisito, no herramienta opcional.
  */
 
 const { execCommand, commandExists } = require("../../../lib/executor");
 
-// ── Parsers ───────────────────────────────────────────────────────────────────
-
-/**
- * Convierte el string de tamaño de imagen de Docker a bytes.
- * Docker usa sufijos como "45.2MB", "1.2GB", "512kB", "1.024 kB".
- * Si el formato no es reconocible devuelve 0.
- *
- * @param {string} sizeStr  Cadena de tamaño (ej: "45.2MB", "1.2GB")
- * @returns {number}
- */
+/** Docker escribe "45.2MB", "1.2GB", "512kB" o "1.024 kB"; lo que no se reconozca vale 0. */
 function parseSizeBytes(sizeStr) {
   if (!sizeStr) return 0;
   const s = sizeStr.trim().replace(/\s+/g, "");
@@ -59,13 +23,7 @@ function parseSizeBytes(sizeStr) {
   return Math.round(value * (multipliers[unit] ?? 0));
 }
 
-/**
- * Parsea la salida de:
- *   docker images --format "{{.ID}}|{{.Repository}}|{{.Tag}}|{{.Size}}|{{.CreatedAt}}"
- *
- * @param {string} stdout
- * @returns {DockerImage[]}
- */
+/** Salida de `docker images --format "{{.ID}}|{{.Repository}}|{{.Tag}}|{{.Size}}|{{.CreatedAt}}"`. */
 function parseImages(stdout) {
   const images = [];
   for (const line of stdout.trim().split("\n")) {
@@ -83,13 +41,7 @@ function parseImages(stdout) {
   return images;
 }
 
-/**
- * Parsea la salida de:
- *   docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}"
- *
- * @param {string} stdout
- * @returns {DockerContainer[]}
- */
+/** Salida de `docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}"`. */
 function parseContainers(stdout) {
   const containers = [];
   for (const line of stdout.trim().split("\n")) {
@@ -109,29 +61,19 @@ function parseContainers(stdout) {
   return containers;
 }
 
-// ── API pública ───────────────────────────────────────────────────────────────
-
-/**
- * Recolecta información del daemon Docker local.
- * Devuelve { skipped: true } si Docker no está instalado o el daemon no responde.
- *
- * @returns {Promise<DockerInfo>}
- */
+/** { skipped: true } si falta el CLI o el daemon no contesta: son dos fallos distintos. */
 async function getDockerInfo() {
-  // 1. Docker CLI disponible
   const available = await commandExists("docker");
   if (!available) {
     return { skipped: true, reason: "docker not installed" };
   }
 
-  // 2. Daemon activo
   try {
     await execCommand('docker info --format "{{.ServerVersion}}"', 10000);
   } catch (_) {
     return { skipped: true, reason: "docker daemon not running" };
   }
 
-  // 3. Imágenes
   let images = [];
   try {
     const imgOut = await execCommand(
@@ -141,7 +83,6 @@ async function getDockerInfo() {
     images = parseImages(imgOut);
   } catch (_) { /* devolver array vacío, no propagar */ }
 
-  // 4. Contenedores
   let containers = [];
   try {
     const psOut = await execCommand(

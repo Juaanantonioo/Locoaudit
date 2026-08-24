@@ -1,59 +1,21 @@
 "use strict";
 
 /**
- * host-discovery.js — Comprobación previa de alcanzabilidad del objetivo.
+ * Única fuente sobre si el objetivo existe, con un `nmap -sn` explícito antes del escaneo. Hace
+ * falta porque el escaneo va con -Pn y ahí nmap marca siempre up="1" y reason="user-set", que es
+ * su forma de decir que no comprobó nada: un host inexistente daba 0 puertos abiertos y el
+ * dashboard lo pintaba verde. Y sale a cuenta: medido contra una IP sin host detrás de WireGuard,
+ * 3,0 s de descubrimiento frente a 212,6 s del escaneo de 1-1024, a 28 s del timeout del modo.
  *
- * PROBLEMA QUE RESUELVE
- * ---------------------
- * El escaneo de puertos del nodo usa `-Pn` (omite el descubrimiento de host).
- * Con `-Pn`, nmap marca SIEMPRE `<hosts up="1" down="0">` y
- * `<status state="up" reason="user-set">`: "user-set" es nmap diciendo que no
- * ha comprobado nada, lo ha asumido porque se lo hemos pedido. Por eso un host
- * inexistente devolvía 0 puertos abiertos y el dashboard lo pintaba de verde
- * ("Sin puertos expuestos · SIN RIESGO"), que es información falsa: no es que
- * el equipo esté limpio, es que no hay equipo.
+ * Solo decide el bloque <hosts> del XML: up >= 1 es accesible, up=0 con <finished> es no
+ * accesible, y todo lo demás (exit="error", sin runstats, timeout, nmap ausente, XML ilegible)
+ * queda en null. Con null el llamante escanea igual y avisa: un falso "no alcanzable" que cancela
+ * la auditoría es peor que un escaneo de más.
  *
- * Este módulo es la ÚNICA fuente de verdad sobre si el objetivo existe. Lanza
- * un descubrimiento explícito (`nmap -sn`) ANTES del escaneo de puertos.
- *
- * Además ahorra tiempo: medido en macOS contra 10.0.0.5 (IP sin host, ruta por
- * WireGuard), este descubrimiento tardó 3,0 s mientras que el escaneo de puertos
- * del nodo con `-p 1-1024` tardó 212,6 s — a 28 s de morir por el timeout de
- * 240 s del modo estándar. Ese 3,0 s es una MEDIDA de aquel caso, no un límite
- * configurado: los techos reales son --host-timeout 8s (nmap) y
- * DISCOVERY_TIMEOUT_MS = 15000 (executor).
- *
- * DECISIÓN (una sola señal: runstats/hosts del XML de -sn)
- *   <hosts up="N" …>  con N >= 1                 → reachable: true
- *   <hosts up="0" down="1" …> y <finished …>     → reachable: false
- *   <finished … exit="error">                    → reachable: null  (AMBIGUO)
- *   cualquier otra cosa (sin runstats, timeout,
- *   excepción, nmap ausente, XML ilegible)       → reachable: null  (AMBIGUO)
- *
- * Ante la duda (null) el llamante ESCANEA IGUAL y avisa: un falso "no
- * alcanzable" que cancela la auditoría es peor que un escaneo de más.
- *
- * `reason` (echo-reply / syn-ack / host-unreach / no-response…) NO decide nada:
- * solo afina el mensaje al usuario. Medido en macOS con escaneo `connect` sin
- * privilegios, los tres escenarios de host inalcanzable (subred VPN sin host,
- * IP libre de la LAN, link-local sin ruta) devuelven el mismo `no-response`.
- * `host-unreach` / `net-unreach` aparecen cuando el SO informa de EHOSTUNREACH
- * o llega un ICMP unreachable (típico en Linux con "No existe ninguna ruta
- * hasta el host"), y ahí sí cambia el consejo que se le da al usuario.
- *
- * Exporta:
- *   checkHostReachable(options)  → Promise<Discovery>   (ejecuta nmap -sn)
- *   parseDiscoveryXml(xml)       → { reachable, reason, error } (puro, para tests)
- *   buildDiscoveryCmd(target)    → string                (comando exacto)
- *
- * @typedef {Object} Discovery
- * @property {boolean|null} reachable  true | false | null (ambiguo)
- * @property {"nmap-sn"|"local"|"error"} method
- * @property {string|null} reason      Motivo de nmap (informativo)
- * @property {string|null} error       errormsg de nmap si abortó (diagnóstico)
- * @property {string} detail           Texto listo para la evidencia del finding
- * @property {number} durationMs
- * @property {string|null} cmd         Comando exacto ejecutado
+ * `reason` no decide nada, solo afina el mensaje. Medido en macOS sin privilegios, los tres casos
+ * de host inalcanzable (subred VPN vacía, IP libre de la LAN, link-local sin ruta) dan el mismo
+ * `no-response`; `host-unreach` y `net-unreach` salen cuando el SO informa de EHOSTUNREACH o
+ * llega un ICMP unreachable, y ahí sí cambia el consejo.
  */
 
 const { execCommand, commandExists } = require("../../../lib/executor");
@@ -64,22 +26,9 @@ const { findInterfaceForTarget, parseNmapFatalError } = require("./nmap-wrapper"
 const DISCOVERY_TIMEOUT_MS = 15000;
 
 /**
- * Construye el comando de descubrimiento.
- *
- *   -sn                      solo descubrimiento, sin escaneo de puertos
- *   -n                       sin resolución DNS inversa (ahorra segundos)
- *   -PE                      ping ICMP echo
- *   -PS22,80,443,8080        sondas TCP SYN a puertos habituales: sin
- *                            privilegios nmap solo prueba 80 y 443, y un host
- *                            vivo que no sirva ninguno daría un falso "caído"
- *   --max-retries 1          un reintento basta para decidir vivo/no vivo
- *   --host-timeout 8s        techo por host
- *   -e <iface>               igual que el escaneo: en macOS con varias
- *                            interfaces en la misma subred, sin -e nmap falla.
- *                            En Windows NO se pasa: ver findInterfaceForTarget()
- *
- * @param {string} target
- * @returns {string}
+ * El -PS con cuatro puertos no es de adorno: sin privilegios nmap solo prueba 80 y 443, y un host
+ * vivo que no sirva ninguno de los dos saldría como caído. El -e sale de findInterfaceForTarget,
+ * el mismo que usa el escaneo, y en Windows no se pasa.
  */
 function buildDiscoveryCmd(target) {
   const iface     = findInterfaceForTarget(target);
@@ -89,40 +38,31 @@ function buildDiscoveryCmd(target) {
     .trim();
 }
 
-/**
- * Interpreta el XML de `nmap -sn`. Función PURA: no ejecuta nada, para poder
- * fijarla con fixtures en los tests.
- *
- * @param {string} xml  Salida de nmap -sn -oX -
- * @returns {{ reachable: boolean|null, reason: string|null, error: string|null }}
- */
+/** Pura, sin ejecutar nada, para poder fijarla con fixtures en los tests. */
 function parseDiscoveryXml(xml) {
   const text = xml || "";
 
-  // nmap abortado (exit="error"): emite <runstats> y <hosts up="0" down="0"
-  // total="0"/> igualmente. Esos ceros NO dicen que el host esté caído, dicen
-  // que nmap no llegó a preguntárselo — ocurre, por ejemplo, con un -e que
-  // apunta a una interfaz que no existe. Se comprueba ANTES que los <hosts>
-  // porque esa etiqueta también casa aquí y daría un "no alcanzable" falso.
+  // Un nmap abortado emite <runstats> y <hosts up="0" down="0" total="0"/> igual. Esos ceros no
+  // dicen que el host esté caído, dicen que no llegó a preguntárselo; pasa, por ejemplo, con un
+  // -e hacia una interfaz que no existe. Va antes que los <hosts>, que casarían y darían un
+  // "no alcanzable" falso.
   const fatalError = parseNmapFatalError(text);
   if (fatalError) {
     return { reachable: null, reason: null, error: fatalError };
   }
 
-  // Un descubrimiento VÁLIDO termina con <runstats><finished …><hosts …>.
-  // Sin esos dos elementos el resultado no es interpretable → ambiguo.
+  // Un descubrimiento válido termina en <runstats><finished><hosts>: sin los dos, ambiguo.
   const hostsMatch = text.match(/<hosts\s+up="(\d+)"\s+down="(\d+)"/);
   const finished   = text.includes("<finished");
   if (!hostsMatch || !finished) {
     return { reachable: null, reason: null, error: null };
   }
 
-  // reason del bloque <status state="…" reason="…">, solo informativo.
+  // Del bloque <status>, y solo informativo.
   const statusMatch = text.match(/<status\s+state="([^"]*)"\s+reason="([^"]*)"/);
   let reason = statusMatch ? statusMatch[2] : null;
 
-  // Si el host está caído nmap no emite <status>; el motivo, cuando existe,
-  // viaja en <extrareasons reason="…"> o directamente no hay ninguno.
+  // Con el host caído no hay <status>: el motivo, si lo hay, viene en <extrareasons>.
   if (!reason) {
     const extraMatch = text.match(/<extrareasons\s+reason="([^"]*)"/);
     reason = extraMatch ? extraMatch[1] : null;
@@ -132,16 +72,7 @@ function parseDiscoveryXml(xml) {
   return { reachable: up > 0, reason: reason || null, error: null };
 }
 
-/**
- * Traduce el resultado a un texto llano para la evidencia del finding.
- *
- * @param {string} target
- * @param {boolean|null} reachable
- * @param {string|null} reason
- * @param {number} durationMs
- * @param {string|null} [error]  errormsg de nmap cuando abortó
- * @returns {string}
- */
+/** El resultado en texto llano, listo para la evidencia del finding. */
 function describe(target, reachable, reason, durationMs, error) {
   const secs = (durationMs / 1000).toFixed(1);
   if (reachable === true) {
@@ -149,8 +80,7 @@ function describe(target, reachable, reason, durationMs, error) {
            (reason ? ` (${reason}).` : ".");
   }
   if (reachable === false) {
-    // host-unreach / net-unreach: el SO sabe que no hay ruta. El consejo al
-    // usuario es distinto que cuando el host simplemente no contesta.
+    // Con host-unreach o net-unreach el SO sabe que no hay ruta, y el consejo es otro.
     if (reason === "host-unreach" || reason === "net-unreach") {
       return `El sistema informó de que no hay ruta hasta ${target} ` +
              `(${reason}, ${secs} s): no es que el equipo no conteste, es que ` +
@@ -159,8 +89,7 @@ function describe(target, reachable, reason, durationMs, error) {
     return `${target} no respondió al descubrimiento de red (nmap -sn, ${secs} s).`;
   }
   if (error) {
-    // Fallo de la herramienta, no del objetivo. Se dice tal cual: el equipo
-    // puede estar perfectamente encendido.
+    // Fallo de la herramienta y no del objetivo: el equipo puede estar perfectamente encendido.
     return `No se ha podido comprobar si ${target} está accesible (${secs} s): ` +
            `nmap terminó con error (${error}). No es un dato sobre el equipo, ` +
            "es que la comprobación no se pudo hacer.";
@@ -169,15 +98,7 @@ function describe(target, reachable, reason, durationMs, error) {
          "el descubrimiento no dio un resultado interpretable.";
 }
 
-/**
- * Comprueba si el objetivo está accesible antes de escanear sus puertos.
- *
- * Para objetivos locales NO ejecuta nada: este equipo siempre está accesible
- * para sí mismo, y `nmap -sn 127.0.0.1` solo añadiría latencia.
- *
- * @param {{ target?: string, isLocal?: boolean, timeout?: number }} [options]
- * @returns {Promise<Discovery>}
- */
+/** Con un objetivo local no ejecuta nada: este equipo se alcanza siempre a sí mismo. */
 async function checkHostReachable(options = {}) {
   const target  = options.target || "127.0.0.1";
   const timeout = options.timeout || DISCOVERY_TIMEOUT_MS;
@@ -194,8 +115,8 @@ async function checkHostReachable(options = {}) {
     };
   }
 
-  // Sin nmap no hay descubrimiento posible. No es un fallo: es ambiguo, y el
-  // llamante ya emite el finding NET-DEP-NMAP con las instrucciones de instalación.
+  // Sin nmap no hay descubrimiento, pero tampoco es un fallo: es ambiguo, y del aviso ya se
+  // encarga el NET-DEP-NMAP del llamante.
   if (!(await commandExists("nmap"))) {
     return {
       reachable:  null,
@@ -212,8 +133,8 @@ async function checkHostReachable(options = {}) {
   try {
     stdout = await execCommand(cmd, timeout);
   } catch (err) {
-    // nmap puede salir con código != 0 y aun así haber emitido XML válido
-    // (avisos de permisos en macOS sin sudo). Se intenta interpretar igual.
+    // Puede salir con código distinto de cero y haber emitido XML válido, como con los avisos
+    // de permisos de macOS sin sudo: se intenta interpretar igual.
     stdout = err.stdout || "";
     if (!stdout.includes("<runstats")) {
       const durationMs = Date.now() - started;
@@ -245,15 +166,9 @@ async function checkHostReachable(options = {}) {
 }
 
 /**
- * Traduce el resultado del descubrimiento al estado del objetivo que viaja en
- * el payload y que el dashboard usa para decidir si puede pintar verde.
- *
- * Vive aquí, junto a su única fuente de datos, para que el nodo no pueda
- * derivarlo de ninguna otra señal (en particular del "host up" del escaneo con
- * -Pn, que siempre dice que sí) y para poder fijarlo con tests.
- *
- * @param {Discovery|null} discovery
- * @returns {"reachable"|"unreachable"|"unknown"}
+ * El estado que viaja en el payload y con el que el dashboard decide si puede pintar verde. Vive
+ * aquí, pegado a su única fuente, para que el nodo no pueda derivarlo de otra señal, en
+ * particular del "host up" del escaneo con -Pn.
  */
 function deriveTargetState(discovery) {
   if (!discovery) return "unknown";

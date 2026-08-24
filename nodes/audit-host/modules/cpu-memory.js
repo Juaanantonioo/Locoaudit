@@ -3,9 +3,7 @@
 const os = require("os");
 const { bytesToMiB, bytesToGiB } = require("../../../lib/utils");
 
-/**
- * Recoge información del sistema: CPU, memoria, OS.
- */
+/** CPU, memoria y plataforma, todo de os/process: nada externo que pueda faltar. */
 function runSystemModule() {
     const cpus = os.cpus() || [];
     const totalMem = os.totalmem();

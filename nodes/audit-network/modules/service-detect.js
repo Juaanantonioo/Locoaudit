@@ -1,58 +1,26 @@
 "use strict";
 
 /**
- * service-detect.js — Enriquecimiento de puertos abiertos con información de proceso.
- *
- * Este módulo es complementario a nmap-wrapper.js: donde el escáner determina
- * qué puertos TCP están abiertos, service-detect añade el contexto humano
- * necesario para que un usuario sin conocimientos técnicos pueda interpretar
- * cada hallazgo.  Saber que el puerto 3306 está abierto es una alerta; saber
- * que lo tiene abierto "mysqld" (o peor, "python3") convierte el dato en una
- * acción concreta: detener ese proceso o revisar por qué está ahí.
- *
- * La información se obtiene con herramientas nativas del SO (lsof, netstat,
- * tasklist) sin dependencias externas.  Si el comando falla o el SO no
- * devuelve resultado, el puerto se devuelve sin enriquecer: el módulo nunca
- * bloquea ni lanza errores al nodo que lo invoca.
- *
- * Exporta:
- *   enrichPorts(openPorts) → Promise<Array<EnrichedPort>>
- *   detectFirewall()       → Promise<{ name: string|null, active: boolean }>
- *
- * @typedef {{ port: number, protocol: string, state: string, service: string, severity: string, fix: string|null }} PortResult
- * @typedef {{ pid?: number, process?: string, extra?: string, bind?: string, localOnly?: boolean }} Enrichment
- * @typedef {PortResult & Enrichment} EnrichedPort
+ * Quién tiene abierto cada puerto, con lsof, netstat y tasklist. "El 3306 está abierto" es una
+ * alerta; "lo tiene abierto mysqld", o peor, "python3", ya es algo que se puede accionar. Si el
+ * comando falla, el puerto sale sin enriquecer: este módulo nunca tumba al nodo.
  */
 
 const { execCommand, commandExists } = require("../../../lib/executor");
 
 const ENRICH_TIMEOUT_MS = 5000;
 
-// ── Parsers por plataforma ────────────────────────────────────────────────────
-
-/**
- * Parsea la salida de:
- *   lsof -i TCP:<port> -n -P -sTCP:LISTEN
- *
- * La primera línea es la cabecera (COMMAND PID USER …).
- * La segunda línea (índice 1) contiene el primer proceso en escucha.
- *
- * @param {string} stdout
- * @returns {{ pid: number|null, process: string|null }}
- */
+/** Salida de `lsof -i TCP:<port> -n -P -sTCP:LISTEN`: cabecera y, debajo, los procesos. */
 function parseLsof(stdout) {
   const lines = stdout.trim().split("\n").filter(Boolean);
-  // lines[0] = cabecera, lines[1] = primer resultado
   if (lines.length < 2) return { pid: null, process: null, binds: [] };
 
   const parts = lines[1].trim().split(/\s+/);
   const processName = parts[0] || null;
   const pid = parts[1] ? parseInt(parts[1], 10) : null;
 
-  // Direcciones de bind: la columna NAME de CADA línea LISTEN tiene la forma
-  // "dirección:puerto (LISTEN)". La dirección distingue un servicio solo-local
-  // ("localhost", "127.0.0.1", "[::1]") de uno expuesto a la red ("*", "0.0.0.0",
-  // IP de la interfaz). Un mismo servicio puede escuchar en varias (IPv4+IPv6).
+  // La columna NAME de cada LISTEN es "dirección:puerto (LISTEN)", y esa dirección separa el
+  // servicio solo-local del expuesto. Un mismo servicio puede escuchar en varias, IPv4 e IPv6.
   const binds = [];
   for (const line of lines.slice(1)) {
     const m = line.match(/(\S+):(?:\d+|\w+)\s+\(LISTEN\)/);
@@ -66,27 +34,13 @@ function parseLsof(stdout) {
   };
 }
 
-/**
- * ¿Es una dirección de bind exclusiva de loopback (solo accesible desde el
- * propio equipo)? Acepta las formas que emiten lsof y netstat.
- * @param {string} addr  "localhost" | "127.0.0.1" | "[::1]" | "*" | "0.0.0.0" | IP
- * @returns {boolean}
- */
+/** Loopback, en todas las formas que escriben lsof y netstat: localhost, 127.0.0.1, [::1]. */
 function isLoopbackBind(addr) {
   const a = String(addr || "").replace(/^\[|\]$/g, "").toLowerCase();
   return a === "localhost" || a === "::1" || /^127\./.test(a);
 }
 
-/**
- * Parsea la salida de netstat -ano | findstr :<port> (Windows).
- * Devuelve el PID de la primera línea en estado LISTENING.
- *
- * Formato de línea: "  TCP  0.0.0.0:80  0.0.0.0:0  LISTENING  1234"
- *
- * @param {string} stdout
- * @param {number} port
- * @returns {number|null}  PID o null si no se encuentra
- */
+/** netstat -ano en Windows: "  TCP  0.0.0.0:80  0.0.0.0:0  LISTENING  1234". */
 function parseNetstatPid(stdout, port) {
   const portStr = `:${port}`;
   for (const line of stdout.split("\n")) {
@@ -99,14 +53,7 @@ function parseNetstatPid(stdout, port) {
   return null;
 }
 
-/**
- * Extrae las direcciones locales de bind de las líneas LISTENING de netstat.
- * Formato de dirección local (parts[1]): "0.0.0.0:80" | "127.0.0.1:631" | "[::1]:631"
- *
- * @param {string} stdout
- * @param {number} port
- * @returns {string[]}  Direcciones sin el sufijo :puerto
- */
+/** Las direcciones de las líneas LISTENING, sin el sufijo :puerto. */
 function parseNetstatBinds(stdout, port) {
   const portStr = `:${port}`;
   const binds = [];
@@ -122,29 +69,15 @@ function parseNetstatBinds(stdout, port) {
   return binds;
 }
 
-/**
- * Parsea la salida de tasklist /FI "PID eq <pid>" /FO CSV (Windows).
- * La segunda línea (índice 1) es la primera fila de datos en formato CSV.
- * El primer campo es el nombre del proceso (entre comillas).
- *
- * @param {string} stdout
- * @returns {string|null}
- */
+/** tasklist en CSV: la fila de datos va debajo de la cabecera y abre con el nombre del proceso. */
 function parseTasklist(stdout) {
   const lines = stdout.trim().split("\n").filter(Boolean);
   if (lines.length < 2) return null;
-  // CSV: "Image Name","PID","Session Name",...
   const firstField = lines[1].split(",")[0];
   return firstField ? firstField.replace(/"/g, "").trim() || null : null;
 }
 
-// ── Enriquecedores por plataforma ─────────────────────────────────────────────
-
-/**
- * Obtiene PID y nombre de proceso en macOS / Linux mediante lsof.
- * @param {number} port
- * @returns {Promise<Enrichment>}
- */
+/** macOS y Linux, con lsof. */
 async function enrichUnix(port) {
   try {
     const stdout = await execCommand(
@@ -156,8 +89,8 @@ async function enrichUnix(port) {
     return {
       pid:       pid      ?? undefined,
       process:   procName ?? undefined,
-      // localOnly solo se afirma si TODAS las direcciones de bind son loopback.
-      // Sin datos de bind se deja undefined: no sabemos, no afirmamos.
+      // localOnly solo si todas las direcciones son loopback. Sin datos de bind queda
+      // undefined: no se sabe, no se afirma.
       bind:      binds.length > 0 ? binds.join(", ") : undefined,
       localOnly: binds.length > 0 ? binds.every(isLoopbackBind) : undefined,
     };
@@ -166,11 +99,7 @@ async function enrichUnix(port) {
   }
 }
 
-/**
- * Obtiene PID y nombre de proceso en Windows mediante netstat + tasklist.
- * @param {number} port
- * @returns {Promise<Enrichment>}
- */
+/** Windows, con netstat para el PID y tasklist para el nombre. */
 async function enrichWindows(port) {
   try {
     const netstatOut = await execCommand(
@@ -199,21 +128,10 @@ async function enrichWindows(port) {
   }
 }
 
-// ── Detección del cortafuegos del sistema ─────────────────────────────────────
-
 /**
- * Detecta qué cortafuegos hay en el sistema y si está ACTIVO, sin sudo.
- * Nunca lanza: ante cualquier fallo devuelve { name: null, active: false }.
- *
- * Métodos por plataforma (todos sin privilegios):
- *   linux  → ufw:       /etc/ufw/ufw.conf contiene "ENABLED=yes|no"
- *            firewalld: firewall-cmd --state → "running"
- *            nftables:  systemctl is-active nftables
- *   darwin → socketfilterfw --getglobalstate → "enabled"
- *   win32  → netsh advfirewall show currentprofile state → "ON"
- *
- * @param {string} [platform]  process.platform por defecto
- * @returns {Promise<{ name: string|null, active: boolean }>}
+ * Qué cortafuegos hay y si está activo, todo sin sudo: ufw se lee de su fichero de configuración,
+ * firewalld y nftables preguntando por su estado, y macOS y Windows con su comando propio. Nunca
+ * lanza: ante cualquier fallo, { name: null, active: false }.
  */
 async function detectFirewall(platform) {
   const plat = platform || process.platform;
