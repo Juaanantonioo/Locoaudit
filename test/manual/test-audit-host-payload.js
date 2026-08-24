@@ -105,7 +105,10 @@ const CONFIG_BASE = {
       ok(sp && sp.reason === reason,
          `[${reason}] el motivo real viaja hasta el dashboard`);
       ok(Array.isArray(r.msg.payload.findings),
-         `[${reason}] findings es un array (vacío, no roto)`);
+         `[${reason}] findings es un array`);
+      ok(r.msg.payload.findings.some((f) => f.id === "HOST-CVE-SKIP"),
+         `[${reason}] el análisis omitido queda declarado como finding informativo`,
+         JSON.stringify(r.msg.payload.findings.map((f) => f.id)));
     }
     ok(r.warns.some((w) => w.includes("omitido")),
        `[${reason}] queda anotado en el log del nodo`);

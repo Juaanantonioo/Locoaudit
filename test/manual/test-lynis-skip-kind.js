@@ -71,13 +71,29 @@ runLynis()
     ok(/WSL/i.test(res.reason || ""),
        "el motivo nombra WSL, que es la salida real del usuario", res.reason);
 
-    console.log("\n── 3 · Un skipped no produce findings, sea cual sea el kind ──────\n");
+    console.log("\n── 3 · Un skipped se declara, no desaparece ──────────────────────\n");
 
+    // Antes devolvía []: un Lynis omitido era indistinguible de un sistema sin
+    // hallazgos para todo el que solo lea findings[] (el chat, el informe).
     for (const forma of FORMAS) {
       const res2 = Object.assign({ skipped: true }, forma);
-      ok(fromLynisRaw(res2, "win32", null).length === 0,
-         `kind ${forma.kind} → 0 findings`);
+      const fs2 = fromLynisRaw(res2, "win32", null);
+
+      ok(fs2.length === 1, `kind ${forma.kind} → 1 finding informativo`,
+         `devolvió ${fs2.length}`);
+      ok(fs2[0] && fs2[0].id === "HOST-LYN-SKIP",
+         `kind ${forma.kind} → id HOST-LYN-SKIP`, fs2[0] && fs2[0].id);
+      ok(fs2[0] && fs2[0].severity === "info",
+         `kind ${forma.kind} → severidad info, no eleva el riesgo global`,
+         fs2[0] && fs2[0].severity);
+      ok(fs2[0] && String(fs2[0].evidence).includes(forma.reason),
+         `kind ${forma.kind} → el motivo real llega a la evidencia`);
+      ok(fs2[0] && fs2[0].isCommand === false && fs2[0].command === null,
+         `kind ${forma.kind} → sin línea copiable`);
     }
+
+    ok(/no se ha comprobado/.test(fromLynisRaw({ skipped: true, kind: "unsupported", reason: "x" }, "win32", null)[0].evidence),
+       "la evidencia dice que no se comprobó, no que esté todo bien");
 
     console.log(`\n${"─".repeat(66)}`);
     console.log(`  ${passed} pasados · ${failed} fallidos`);

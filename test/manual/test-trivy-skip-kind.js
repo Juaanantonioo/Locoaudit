@@ -17,7 +17,7 @@
  *   node test/manual/test-trivy-skip-kind.js
  */
 
-const { normalizeHost } = require("../../lib/normalizer");
+const { normalizeHost, normalizeImage } = require("../../lib/normalizer");
 const { systemPackagesSupport } = require("../../nodes/audit-host/modules/trivy-fs");
 
 let failed = 0;
@@ -62,17 +62,44 @@ ok(macos.kind === arch.kind, "misma naturaleza pese a textos distintos");
 ok(macos.reason !== arch.reason, "el texto se conserva para poder mostrarlo al usuario");
 ok(!esFatal(macos) && !esFatal(arch), "ninguno aborta la auditoría");
 
-console.log("\n── 3 · Un skipped no rompe el normalizador ───────────────────────\n");
+console.log("\n── 3 · Un skipped no rompe el normalizador y queda declarado ─────\n");
 
+// Antes devolvía []: cero CVE por no haber mirado se leía igual que cero CVE
+// tras analizar. Ahora sale un finding informativo que lo dice.
 for (const forma of FORMAS) {
   const res = Object.assign({ skipped: true }, forma);
   let findings, error = null;
   try { findings = normalizeHost({ trivy: res }, { platform: "linux", pkgManager: "pacman" }); }
   catch (e) { error = e; }
-  ok(!error && Array.isArray(findings) && findings.length === 0,
-     `normalizeHost({trivy: ${forma.kind}}) → [] sin lanzar`,
+
+  ok(!error && Array.isArray(findings) && findings.length === 1,
+     `normalizeHost({trivy: ${forma.kind}}) → 1 finding informativo, sin lanzar`,
      error ? `lanzó: ${error.message}` : `devolvió ${JSON.stringify(findings)}`);
+  ok(!error && findings[0].id === "HOST-CVE-SKIP" && findings[0].severity === "info",
+     `${forma.kind} → HOST-CVE-SKIP con severidad info`,
+     !error && `${findings[0].id} / ${findings[0].severity}`);
+  ok(!error && String(findings[0].evidence).includes(forma.reason),
+     `${forma.kind} → el motivo real llega a la evidencia`);
 }
+
+console.log("\n── 3b · En imagen, el aviso general no duplica los errores por imagen ─\n");
+
+// audit-image.js ya emite un IMG-SCAN-ERR-nnn por imagen fallida: el aviso
+// general solo aparece cuando el fallo no trae ese detalle.
+const conFallos = normalizeImage(
+  { skipped: true, reason: "all image scans failed", failed: [{ ref: "nginx:latest", error: "TIMEOUT" }] },
+  "trivy"
+);
+ok(conFallos.length === 0,
+   "IMG-CVE con failed[] → sin aviso general (ya hay uno por imagen)",
+   `devolvió ${JSON.stringify(conFallos.map((f) => f.id))}`);
+
+const sinFallos = normalizeImage({ skipped: true, kind: "not-installed", reason: "trivy not installed" }, "trivy");
+ok(sinFallos.length === 1 && sinFallos[0].id === "IMG-CVE-SKIP",
+   "IMG-CVE sin failed[] → IMG-CVE-SKIP",
+   `devolvió ${JSON.stringify(sinFallos.map((f) => f.id))}`);
+ok(sinFallos.length === 1 && sinFallos[0].severity === "info",
+   "IMG-CVE-SKIP con severidad info");
 
 console.log("\n── 4 · El caso pacman llega hasta el estado de alcance ───────────\n");
 
