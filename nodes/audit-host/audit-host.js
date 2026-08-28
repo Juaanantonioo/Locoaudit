@@ -150,9 +150,34 @@ module.exports = function (RED) {
           node.warn(`[audit-host] security-events falló: ${secResult.reason}`);
         }
 
+        // Un throw vale lo mismo que un skipped kind 'error', igual que en Lynis: si no, un rechazo
+        // dejaría swInventory a null y el módulo saldría como ejecutado sin haber inventariado nada.
+        const swResolved = swInventory || (
+          swResult.status === "rejected" && enableSw
+            ? {
+                skipped: true,
+                kind: "error",
+                reason: `El inventario de software falló: ${String(swResult.reason)}`,
+              }
+            : null
+        );
+
+        // Un solo punto decide si el módulo cuenta como ejecutado y qué estado viaja en scanMeta.
+        // Derivarlo dos veces del mismo valor es lo que ya se corrigió en isCommand y en
+        // targetIsLocal: aquí sale una vez y lo leen los dos sitios.
+        const swSkipped = !!(swResolved && swResolved.skipped);
+        const swPartial = !!(swResolved && swResolved.partial);
+        const swStatus = !enableSw
+          ? "disabled"
+          : swSkipped
+          ? "skip"
+          : swPartial
+          ? "partial"
+          : "ok";
+
         // Un security-events omitido no es error del nodo, al contrario que Lynis o Trivy:
         // el normalizador lo saca como finding informativo.
-        const raw = { cpuMemory, disk, swInventory, lynis, trivy, securityEvents };
+        const raw = { cpuMemory, disk, swInventory: swResolved, lynis, trivy, securityEvents };
 
         const findings = normalizeHost(raw, { platform: process.platform, pkgManager });
         const summary = summarize(findings);
@@ -176,7 +201,8 @@ module.exports = function (RED) {
             modulesRun: [
               enableCpu && "cpu-memory",
               enableDisk && "disk-storage",
-              enableSw && "sw-inventory",
+              // Un inventario parcial sí se ejecutó; solo el skip total lo saca de la lista.
+              enableSw && !swSkipped && "sw-inventory",
               enableLynis && !lynis?.skipped && "lynis",
               enableTrivy && !trivy?.skipped && "trivy-fs",
               enableSecEvents && !securityEvents?.skipped && "security-events",
@@ -203,6 +229,17 @@ module.exports = function (RED) {
                 results: (systemScan && systemScan.results) || 0,
               };
             })(),
+            // Espejo de scanMeta.lynis: el estado del módulo, aparte de sus datos. Sale del mismo
+            // swResolved que decide modulesRun, no de una segunda derivación.
+            swInventory: {
+              status: swStatus,
+              reason: swSkipped
+                ? swResolved.reason
+                : swPartial
+                ? swResolved.partialReason
+                : null,
+              kind: swSkipped ? (swResolved.kind || null) : null,
+            },
             // El índice de hardening es métrica de cabecera, no hallazgo: viajaba como
             // HOST-LYN-IDX y el gauge lo rescataba buscando ese id en el array. La escala va
             // aquí para que las etiquetas no sigan escritas a mano en el HTML.
