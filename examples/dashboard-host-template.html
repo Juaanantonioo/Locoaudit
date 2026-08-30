@@ -473,8 +473,10 @@
                   <span class="finding-expand-icon">{{ openFindings[g.key + '-' + fi] ? '▲' : '▼' }}</span>
                 </div>
                 <div class="finding-detail" :class="{open: openFindings[g.key + '-' + fi]}">
-                  <div class="detail-stack" v-if="f.fix">
-                    <div class="detail-col">
+                  <div class="detail-stack" v-if="f.evidence || f.fix">
+                    <!-- La evidencia no depende del fix: un hallazgo informativo sin pasos que dar
+                         sigue teniendo algo que contar, y colgarla del mismo v-if la escondía. -->
+                    <div class="detail-col" v-if="f.evidence">
                       <div class="detail-col-title">Impacto (Evidencia)</div>
                       <pre class="detail-evidence">{{ fmtEvidence(f.evidence) }}</pre>
 
@@ -548,7 +550,7 @@
                         </div>
                       </div>
                     </div>
-                    <div class="detail-col">
+                    <div class="detail-col" v-if="f.fix">
                       <div class="detail-col-title">Pasos de Resolución</div>
                       <div class="fix-steps" v-if="!f.isCommand">
                         <div class="fix-step" v-for="(st, si) in parseFixStepsRich(f.fix)" :key="si">
@@ -977,7 +979,9 @@ export default {
     },
 
     lynisColor() {
-      if (this.lynisIdx === null) return '#22C55E';
+      // Sin índice no hay dato, y "no hay dato" no se pinta de verde: neutro, el mismo
+      // --text-secondary del resto del gauge. Literal y no var(): es un atributo SVG.
+      if (this.lynisIdx === null) return '#64748B';
       if (this.lynisIdx < 30) return '#EF4444';
       if (this.lynisIdx < 55) return '#F97316';
       return '#22C55E';

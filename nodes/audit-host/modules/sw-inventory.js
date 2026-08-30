@@ -264,8 +264,8 @@ async function getSwInventory() {
     skipped: true,
     kind: "unsupported",
     reason:
-      "No se ha encontrado un gestor de paquetes reconocido en este sistema (se han buscado " +
-      "dpkg-query y rpm), así que no se ha podido inventariar el software instalado.",
+      "LoCoAudit solo sabe leer dpkg y rpm, y no ha encontrado ninguno de los dos. Este sistema " +
+      "usa otro gestor de paquetes, así que no se ha podido inventariar el software instalado.",
   };
 }
 

@@ -190,12 +190,14 @@
                 </svg>
               </div>
               <div class="finding-body" :class="{ open: openFindings['f-' + fi] }">
-                <div class="detail-grid" v-if="f.fix">
-                  <div class="detail-col">
+                <div class="detail-grid" v-if="f.evidence || f.fix">
+                  <!-- La evidencia no depende del fix: un hallazgo informativo sin pasos que dar
+                       sigue teniendo algo que contar, y colgarla del mismo v-if la escondía. -->
+                  <div class="detail-col" v-if="f.evidence">
                     <div class="detail-col-title">Impacto (Evidencia)</div>
                     <pre class="detail-evidence">{{ f.evidence }}</pre>
                   </div>
-                  <div class="detail-col">
+                  <div class="detail-col" v-if="f.fix">
                     <div class="detail-col-title">Pasos de Resolución</div>
                     <div class="fix-steps" v-if="!f.isCommand">
                       <div class="fix-step" v-for="(st, si) in parseFixStepsRich(f.fix)" :key="si">

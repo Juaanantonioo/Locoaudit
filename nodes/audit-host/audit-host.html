@@ -9,6 +9,7 @@
             enableSw:     { value: true },
             enableLynis:  { value: true },
             enableTrivy:  { value: true },
+            enableUpdates: { value: true },
             trivyTarget:  { value: "" },
             trivySystemPkgs: { value: false },
             securityEvents:       { value: false },
@@ -106,6 +107,19 @@
                     </label>
                     <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
                         Realiza más de 300 comprobaciones de seguridad: configuración de SSH, firewall, permisos de ficheros, cuentas de usuario, etc. Genera un índice de endurecimiento del 0 al 100. Requiere tener <strong>Lynis</strong> instalado; si lo activas y no está disponible, el nodo fallará con un error.
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; align-items: flex-start; gap: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <input type="checkbox" id="node-input-enableUpdates" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                <div>
+                    <label for="node-input-enableUpdates" style="width: auto; font-weight: 600; margin: 0; cursor: pointer;">
+                        <i class="fa fa-refresh"></i> Actualizaciones pendientes del sistema
+                        <span style="color: #e67e22; font-size: 0.8em; font-weight: normal; margin-left: 4px;">◌ opcional · ~10 s</span>
+                    </label>
+                    <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
+                        Lista las actualizaciones que el sistema tiene pendientes de aplicar, y marca cuáles son de seguridad <strong>solo en los sistemas que lo indican</strong> (Windows Update, dnf y zypper); macOS, apt, pacman y apk no lo distinguen y ahí se avisa de que hay que revisarlas todas. <strong>Nunca instala nada</strong>: solo consulta. Si no se puede consultar, el nodo no falla: lo dice en un hallazgo informativo.
                     </div>
                 </div>
             </div>

@@ -9,6 +9,7 @@ const { getOsInfo } = require("./modules/os-info");
 const { runLynis } = require("./modules/lynis");
 const { runTrivyFs, systemPackagesSupport } = require("./modules/trivy-fs");
 const { runSecurityEvents, buildEventList } = require("./modules/security-events");
+const { getPendingUpdates } = require("./modules/pending-updates");
 const { normalizeHost } = require("../../lib/normalizer");
 const { detectPackageManager, managerLabel } = require("../../lib/pkg-manager");
 const { summarize } = require("../../lib/severity-map");
@@ -30,6 +31,7 @@ module.exports = function (RED) {
       const enableLynis = config.enableLynis !== false;
       const enableTrivy = config.enableTrivy !== false;
       const enableSecEvents = config.securityEvents === true;
+      const enableUpdates = config.enableUpdates !== false;
       const secWindow = Math.min(168, Math.max(1, parseInt(config.securityEventsWindow, 10) || 24));
       const enableSysPkgs = config.trivySystemPkgs === true;
 
@@ -44,7 +46,7 @@ module.exports = function (RED) {
           pkgManager = await detectPackageManager(process.platform);
         } catch (_) { /* la detección no puede tumbar la auditoría */ }
 
-        const [cpuResult, diskResult, swResult, lynisResult, trivyResult, secResult] =
+        const [cpuResult, diskResult, swResult, lynisResult, trivyResult, secResult, updResult] =
           await Promise.allSettled([
             enableCpu ? Promise.resolve(runSystemModule()) : Promise.resolve(null),
             enableDisk ? getDiskInfo() : Promise.resolve(null),
@@ -61,6 +63,8 @@ module.exports = function (RED) {
                 })
               : Promise.resolve({ skipped: true, reason: "disabled" }),
             enableSecEvents ? runSecurityEvents(secWindow) : Promise.resolve(null),
+            // pkgManager por parámetro: audit-host ya lo resolvió arriba y es la fuente única.
+            enableUpdates ? getPendingUpdates({ pkgManager }) : Promise.resolve(null),
           ]);
 
         const cpuMemory = cpuResult.status === "fulfilled" ? cpuResult.value : null;
@@ -69,6 +73,7 @@ module.exports = function (RED) {
         const lynis = lynisResult.status === "fulfilled" ? lynisResult.value : null;
         const trivy = trivyResult.status === "fulfilled" ? trivyResult.value : null;
         const securityEvents = secResult.status === "fulfilled" ? secResult.value : null;
+        const pendingUpdates = updResult.status === "fulfilled" ? updResult.value : null;
 
         // Un throw vale lo mismo que un skipped kind 'error'. Antes iba al revés: el throw dejaba
         // lynis a null y la auditoría seguía, y el skipped limpio la abortaba.
@@ -149,6 +154,9 @@ module.exports = function (RED) {
         if (secResult.status === "rejected") {
           node.warn(`[audit-host] security-events falló: ${secResult.reason}`);
         }
+        if (updResult.status === "rejected") {
+          node.warn(`[audit-host] pending-updates falló: ${updResult.reason}`);
+        }
 
         // Un throw vale lo mismo que un skipped kind 'error', igual que en Lynis: si no, un rechazo
         // dejaría swInventory a null y el módulo saldría como ejecutado sin haber inventariado nada.
@@ -161,6 +169,24 @@ module.exports = function (RED) {
               }
             : null
         );
+
+        // Igual que en Lynis y en sw-inventory: un throw vale lo mismo que un skipped kind
+        // 'error'. A diferencia de Lynis, aquí NO se aborta el nodo: no saber si hay
+        // actualizaciones pendientes no invalida el resto de la auditoría.
+        const updResolved = pendingUpdates || (
+          updResult.status === "rejected" && enableUpdates
+            ? {
+                skipped: true,
+                kind: "error",
+                reason: `LoCoAudit no ha podido consultar las actualizaciones pendientes: ${String(updResult.reason)}.`,
+              }
+            : null
+        );
+        const updSkipped = !!(updResolved && updResolved.skipped);
+        const updStatus = !enableUpdates ? "disabled" : updSkipped ? "skip" : "ok";
+        if (enableUpdates && updSkipped) {
+          node.warn(`[audit-host] pending-updates omitido: ${updResolved.reason}`);
+        }
 
         // Un solo punto decide si el módulo cuenta como ejecutado y qué estado viaja en scanMeta.
         // Derivarlo dos veces del mismo valor es lo que ya se corrigió en isCommand y en
@@ -177,7 +203,7 @@ module.exports = function (RED) {
 
         // Un security-events omitido no es error del nodo, al contrario que Lynis o Trivy:
         // el normalizador lo saca como finding informativo.
-        const raw = { cpuMemory, disk, swInventory: swResolved, lynis, trivy, securityEvents };
+        const raw = { cpuMemory, disk, swInventory: swResolved, lynis, trivy, securityEvents, pendingUpdates: updResolved };
 
         const findings = normalizeHost(raw, { platform: process.platform, pkgManager });
         const summary = summarize(findings);
@@ -206,6 +232,7 @@ module.exports = function (RED) {
               enableLynis && !lynis?.skipped && "lynis",
               enableTrivy && !trivy?.skipped && "trivy-fs",
               enableSecEvents && !securityEvents?.skipped && "security-events",
+              enableUpdates && !updSkipped && "pending-updates",
             ].filter(Boolean),
             durationMs,
             // Se emite siempre, también con el interruptor apagado: "no analizados" no es "limpios"
@@ -239,6 +266,15 @@ module.exports = function (RED) {
                 ? swResolved.partialReason
                 : null,
               kind: swSkipped ? (swResolved.kind || null) : null,
+            },
+            // Espejo de scanMeta.lynis. Sale del mismo updResolved que decide modulesRun.
+            pendingUpdates: {
+              status: updStatus,
+              reason: updSkipped ? updResolved.reason : null,
+              kind: updSkipped ? (updResolved.kind || null) : null,
+              total: !updSkipped && updResolved ? updResolved.total : null,
+              securityCount: !updSkipped && updResolved ? updResolved.securityCount : null,
+              securityDetection: !updSkipped && updResolved ? updResolved.securityDetection : null,
             },
             // El índice de hardening es métrica de cabecera, no hallazgo: viajaba como
             // HOST-LYN-IDX y el gauge lo rescataba buscando ese id en el array. La escala va
