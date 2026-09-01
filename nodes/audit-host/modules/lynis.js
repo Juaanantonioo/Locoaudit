@@ -107,14 +107,16 @@ async function runLynis() {
     };
   }
 
-  const available = await commandExists("lynis");
-  if (!available) {
+  // La RUTA, no un booleano: en Debian lynis vive en /usr/sbin, que no está en el PATH de un
+  // usuario normal, así que lanzar "lynis" a secas fallaría justo después de haberlo encontrado.
+  const lynisPath = await commandExists("lynis");
+  if (!lynisPath) {
     return { skipped: true, kind: "not-installed", reason: "lynis not installed" };
   }
 
   try {
     await execCommand(
-      `lynis audit system --quick --quiet --no-colors --log-file ${LOG_FILE} --report-file ${REPORT_FILE}`,
+      `"${lynisPath}" audit system --quick --quiet --no-colors --log-file ${LOG_FILE} --report-file ${REPORT_FILE}`,
       TIMEOUT_MS
     );
   } catch (err) {

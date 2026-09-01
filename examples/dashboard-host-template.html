@@ -82,22 +82,37 @@
       </div>
 
       <!-- ══ NADA QUE ARREGLAR ══ -->
-      <!-- Cuando TODOS los hallazgos son informativos, "Todo en orden" a secas
-           se lee como "la herramienta no ha hecho nada". Hay que decir qué son
-           esos hallazgos y remitir al alcance: "nada que arreglar" solo es
-           honesto si va acompañado de "esto es lo que se ha mirado". -->
-      <div class="nothing-card" v-if="nothingToFix">
+      <!-- Tres estados excluyentes, no dos. "No hay nada que arreglar" sobre una
+           auditoría con comprobaciones caídas es un falso verde: el usuario lee
+           una conclusión sobre partes que nadie llegó a mirar.
+           El cuerpo se COMPONE de las frases de los buckets que existan de
+           verdad (nothingBuckets). El texto anterior afirmaba que todos los
+           hallazgos eran vulnerabilidades declaradas de ficheros de dependencias
+           sin comprobarlo en ningún sitio: la condición solo miraba severidad, y
+           en Windows salía sobre 9 informativos de los que 4 eran fallos de
+           comprobación y ninguno venía de un lockfile. -->
+      <div class="nothing-card" v-if="nothingState === 'clean'">
         <div class="nothing-title">✓ No hay nada que tengas que arreglar en tu equipo</div>
-        <div class="nothing-body">
-          Los <strong>{{ totalFindings }} hallazgos</strong> de abajo son vulnerabilidades
-          <strong>declaradas</strong>: versiones anotadas en ficheros de dependencias
-          (<code>yarn.lock</code>, <code>bun.lock</code>, <code>pom.xml</code>…) de programas de
-          terceros que tienes instalados. Describen lo que dicen esos ficheros, no software que se
-          esté ejecutando en tu equipo — no hay ningún paquete que puedas actualizar tú.
+        <div class="nothing-body" v-for="(frase, i) in nothingBuckets" :key="i" v-html="frase"></div>
+      </div>
+
+      <div class="nothing-card nothing-card-warn" v-if="nothingState === 'partial'">
+        <div class="nothing-title">
+          ⚠️ No hay nada que arreglar <u>entre lo que sí se ha podido comprobar</u>
         </div>
         <div class="nothing-body">
-          Se listan para que sepas qué hay en tu equipo, no como tareas pendientes.
-          <strong>Revisa el alcance del análisis</strong> aquí debajo: hay partes que no se han comprobado.
+          <strong>{{ skippedFindings.length }}</strong>
+          {{ skippedFindings.length === 1 ? 'comprobación no ha llegado a ejecutarse' : 'comprobaciones no han llegado a ejecutarse' }},
+          así que esta conclusión no cubre todo tu equipo.
+        </div>
+        <ul class="nothing-skipped">
+          <li v-for="f in skippedFindings" :key="f.id">{{ f.title }}</li>
+        </ul>
+        <div class="nothing-body" v-for="(frase, i) in nothingBuckets" :key="'b' + i" v-html="frase"></div>
+        <div class="nothing-body">
+          <strong>Revisa el alcance del análisis</strong> aquí debajo: dice exactamente qué se ha
+          mirado y qué no. Cero hallazgos en una comprobación que no se ejecutó no significa que
+          esa parte esté limpia, significa que nadie la ha mirado.
         </div>
       </div>
 
@@ -131,14 +146,31 @@
           <span class="pill" v-if="trivyScan.durationMs">
             <!-- "Duración carpeta" y no "Duración" a secas: desde que el escaneo
                  de paquetes del sistema se suma, hay dos y tardan cosas distintas. -->
-            <span class="pill-label">{{ sysScan ? 'Duración carpeta' : 'Duración' }}</span> {{ fmtDuration(trivyScan.durationMs) }}
+            <span class="pill-label">{{ sysPkgs && sysPkgs.durationMs ? 'Duración carpeta' : 'Duración' }}</span> {{ fmtDuration(trivyScan.durationMs) }}
           </span>
-          <span class="pill" v-if="sysScan" :class="sysScan.status === 'scanned' ? '' : 'pill-warn'">
+          <!-- Paquetes del sistema, con la CIFRA y su FUENTE. Antes decía solo
+               "analizados" / "no analizados", que no permite distinguir un
+               análisis que cubrió 2056 paquetes de uno que cubrió tres. La
+               fuente va escrita porque justo al lado hay otra cuenta de
+               paquetes, la de sw-inventory, que sale de dpkg/rpm y da otro
+               número: son dos medidas distintas y no se intentan cuadrar. -->
+          <span class="pill" v-if="sysPkgs" :class="sysPkgs.status === 'scanned' ? '' : 'pill-warn'">
             <span class="pill-label">Paquetes del sistema</span>
-            {{ sysScan.status === 'scanned' ? 'analizados' : 'no analizados' }}
+            <template v-if="sysPkgs.status === 'scanned'">
+              {{ sysPkgs.packages != null ? sysPkgs.packages + ' analizados' : 'analizados' }}
+              <template v-if="sysPkgs.osFamily"> · {{ sysPkgs.osFamily }}{{ sysPkgs.osName ? ' ' + sysPkgs.osName : '' }}</template>
+              <template v-if="sysPkgs.trivyVersion"> · Trivy {{ sysPkgs.trivyVersion }}</template>
+            </template>
+            <template v-else>no analizados</template>
           </span>
-          <span class="pill" v-if="sysScan && sysScan.durationMs">
-            <span class="pill-label">Duración sistema</span> {{ fmtDuration(sysScan.durationMs) }}
+          <!-- El inventario de sw-inventory, con SU fuente. Misma pregunta,
+               otra herramienta, otro número. -->
+          <span class="pill" v-if="swPkgs && swPkgs.packages != null">
+            <span class="pill-label">Inventario de software</span>
+            {{ swPkgs.packages }} paquetes<template v-if="swPkgs.source"> · según {{ swPkgs.source }}</template>
+          </span>
+          <span class="pill" v-if="sysPkgs && sysPkgs.durationMs">
+            <span class="pill-label">Duración sistema</span> {{ fmtDuration(sysPkgs.durationMs) }}
           </span>
           <span class="pill" v-if="trivyScan.trivyVersion">
             <span class="pill-label">Trivy</span> {{ trivyScan.trivyVersion }}
@@ -789,11 +821,91 @@ export default {
       return this.groups.filter(function(g) { return g.items.length > 0; }).length;
     },
 
-    // Todos los hallazgos son informativos: no hay NADA que el usuario pueda
-    // arreglar. Requiere explicación explícita, o "Todo en orden" se lee como
-    // "la herramienta no ha hecho nada".
-    nothingToFix() {
-      return this.totalFindings > 0 && this.act.total === 0;
+    // ── Partición por ORIGEN REAL del hallazgo ────────────────────────────────
+    // Cuatro buckets, cada uno comprobado en el propio dato y no supuesto por el
+    // contexto. Es lo que permite que el texto de la tarjeta afirme solo lo que
+    // se ha verificado: si no hay ningún hallazgo `declared`, la frase sobre
+    // ficheros de dependencias NO se renderiza.
+    allFindings() {
+      return (this.auditData && this.auditData.findings) || [];
+    },
+
+    // Comprobaciones que NO llegaron a ejecutarse. Sale de `f.skipped`, que sella
+    // createFinding() en lib/finding-schema.js, nunca del sufijo '-SKIP' del id:
+    // el id es una etiqueta y esto es un hecho.
+    skippedFindings() {
+      return this.allFindings.filter(function(f) { return f.skipped === true; });
+    },
+
+    // Vulnerabilidades DECLARADAS: versiones anotadas en ficheros de dependencias.
+    // `origin` lo pone originOf() en lib/normalizer.js a partir del JSON de Trivy.
+    declaredFindings() {
+      return this.allFindings.filter(function(f) {
+        return !f.skipped && f.origin === 'declared';
+      });
+    },
+
+    // Informativos normales: CPU, RAM, disco, inventario. Ni fallos de
+    // comprobación ni anotaciones de lockfile: datos del equipo.
+    inventoryFindings() {
+      return this.allFindings.filter(function(f) {
+        return !f.skipped && f.origin !== 'declared' &&
+               (f.severity || 'info').toLowerCase() === 'info';
+      });
+    },
+
+    // Cuántos hallazgos le piden algo al usuario. Lo calcula el BACKEND
+    // (summarize() en lib/severity-map.js) y aquí solo se lee, por lo mismo que
+    // act() e inf(): el predicado que decide qué es accionable es el mismo que
+    // decide el riesgo de la cabecera, y replicarlo aquí crearía dos
+    // definiciones que acaban divergiendo. Un hallazgo `declared` de severidad
+    // alta cuenta como NO accionable, y por eso esta cifra no es "severidad
+    // distinta de info".
+    actionableCount() {
+      return this.act.total;
+    },
+
+    // Tres estados excluyentes:
+    //   'clean'   — nada que arreglar y nada sin comprobar. Verde de verdad.
+    //   'partial' — nada que arreglar ENTRE LO COMPROBADO, con huecos. Ámbar.
+    //   null      — hay trabajo pendiente: manda la lista, no una tarjeta.
+    nothingState() {
+      if (this.totalFindings === 0) return null;
+      if (this.actionableCount > 0) return null;
+      return this.skippedFindings.length > 0 ? 'partial' : 'clean';
+    },
+
+    // El cuerpo se COMPONE: una frase por bucket que exista. Nunca se afirma un
+    // origen que no se haya comprobado en el hallazgo.
+    nothingBuckets() {
+      var out = [];
+      var nDec = this.declaredFindings.length;
+      var nInv = this.inventoryFindings.length;
+
+      if (nDec > 0) {
+        out.push(
+          (nDec === 1 ? 'Hay <strong>1 hallazgo</strong> que es una vulnerabilidad <strong>declarada</strong>'
+                      : 'Hay <strong>' + nDec + ' hallazgos</strong> que son vulnerabilidades <strong>declaradas</strong>') +
+          ': versiones anotadas en ficheros de dependencias (<code>yarn.lock</code>, ' +
+          '<code>bun.lock</code>, <code>pom.xml</code>…) de programas de terceros que tienes ' +
+          'instalados. Describen lo que dicen esos ficheros, no software que se esté ejecutando ' +
+          'en tu equipo: no hay ningún paquete que puedas actualizar tú.'
+        );
+      }
+
+      if (nInv > 0) {
+        out.push(
+          (nInv === 1 ? 'Hay <strong>1 hallazgo informativo</strong>'
+                      : 'Hay <strong>' + nInv + ' hallazgos informativos</strong>') +
+          ' sobre el estado de tu equipo (procesador, memoria, almacenamiento, software ' +
+          'instalado). Son datos, no problemas.'
+        );
+      }
+
+      if (out.length) {
+        out.push('Se listan para que sepas qué hay en tu equipo, no como tareas pendientes.');
+      }
+      return out;
     },
 
     // ── Alcance del escaneo ───────────────────────────────────────────────────
@@ -830,10 +942,13 @@ export default {
       return (m && m.systemPackages) || null;
     },
 
-    // Sub-bloque del escaneo de paquetes del sistema, presente solo si se pidió.
-    // Su ausencia significa "nadie lo pidió", así que no hay nada que contar.
-    sysScan() {
-      return (this.trivyScan && this.trivyScan.system) || null;
+    // Inventario de software (sw-inventory), con su propia fuente. Está aquí y no
+    // mezclado con sysPkgs a propósito: cuenta la misma población con otra
+    // herramienta y da otra cifra, y fundirlas inventaría un número que ninguna
+    // de las dos respalda.
+    swPkgs() {
+      var m = this.auditData && this.auditData.scanMeta;
+      return (m && m.swInventory) || null;
     },
 
     // Texto por ESTADO y por gestor, no un caso especial más un genérico: cada
@@ -853,7 +968,8 @@ export default {
           // "lo pediste y no se pudo". Antes el segundo caso abortaba el nodo
           // entero; ahora la auditoría continúa y hay que decirlo.
           lead: sp.requested ? 'Lo has activado en la configuración del nodo, pero no ha podido hacerse.' : null,
-          body: 'Tu distribución usa ' + mgr + ', y Trivy no sabe leer su base de datos de paquetes. ' +
+          body: 'Trivy ha analizado este equipo y no ha reconocido su base de datos de paquetes' +
+                (sp.manager ? ' (tu distribución usa ' + mgr + ')' : '') + '. ' +
                 'Tu carpeta personal sí se ha analizado y los hallazgos de abajo la cubren, pero todo el ' +
                 'software instalado por el sistema ha quedado fuera.',
           warning: 'Esto no quiere decir que esos paquetes estén libres de vulnerabilidades: quiere decir que no se han podido comprobar.',
@@ -865,27 +981,36 @@ export default {
           tone: 'info', ico: 'ℹ️',
           title: 'Solo se ha analizado tu carpeta personal',
           lead: null,
-          body: 'Tu sistema usa ' + mgr + ', que Trivy sí sabe analizar, pero la opción está desactivada en el nodo. ' +
-                'El software instalado por el sistema no está incluido en este informe.',
+          body: 'La opción está desactivada en el nodo, así que el software instalado por el sistema ' +
+                'no está incluido en este informe. Si Trivy sabe leer los paquetes de este equipo ' +
+                'es algo que solo se puede saber ejecutándolo: el informe de Trivy es quien lo dice, ' +
+                'y aquí no se ha llegado a pedir.',
           warning: 'No se ha comprobado: no es lo mismo que estar limpio.',
-          hint: 'Para incluirlo, marca «Analizar paquetes del sistema» en la configuración del nodo audit-host. ' +
-                'Tarda varios minutos y requiere permisos de administrador.'
+          hint: 'Para incluirlo, vuelve a marcar «Auditar también los paquetes del sistema» en la ' +
+                'configuración del nodo audit-host. Va activado por defecto y tarda varios minutos.'
         };
       }
       if (sp.status === 'scanned') {
-        // Los dos escaneos se SUMAN, así que aquí sí se puede decir "y". Antes
-        // el interruptor sustituía el escaneo de la carpeta y este texto era
-        // literalmente falso: prometía cobertura de las dos cosas habiendo
-        // analizado solo una.
-        var carpeta = (this.trivyScan && this.trivyScan.target) || 'tu carpeta personal';
+        // Cada mitad del texto sale de su propia fuente: la carpeta, del escaneo
+        // de trivy-fs; los paquetes, del informe de trivy-rootfs. Solo se afirma
+        // lo que hay dato para afirmar. Si trivy-fs no llegó a correr, la frase
+        // de la carpeta no se escribe.
+        var carpeta = this.trivyScan && this.trivyScan.target;
         var nSub = this.scannedChildren.length;
+        var sistema = sp.packages != null
+          ? sp.packages + ' paquetes del sistema (' + (sp.osFamily || 'el sistema') +
+            (sp.osName ? ' ' + sp.osName : '') + ', según Trivy)'
+          : 'el software instalado por el sistema operativo';
         return {
           tone: 'ok', ico: '✓',
-          title: 'Se ha analizado tu carpeta personal y los paquetes del sistema',
+          title: carpeta
+            ? 'Se ha analizado tu carpeta personal y los paquetes del sistema'
+            : 'Se han analizado los paquetes del sistema',
           lead: null,
-          body: 'Gestor: ' + mgr + '. El informe cubre ' + carpeta +
-                (nSub ? ' (' + nSub + ' subcarpetas)' : '') +
-                ' y el software instalado por el sistema operativo. ' +
+          body: (carpeta
+                  ? 'El informe cubre ' + carpeta + (nSub ? ' (' + nSub + ' subcarpetas)' : '') + ' y '
+                  : 'El informe cubre ') +
+                sistema + '. ' +
                 'Es la cobertura más completa que LoCoAudit puede ofrecer en este equipo.',
           warning: null, hint: null
         };
@@ -2190,7 +2315,20 @@ export default {
     padding: 16px 20px;
     margin-bottom: 20px;
   }
+  /* Ámbar, no verde: hay huecos en la auditoría y el color es lo primero que se
+     lee. Un verde aquí es el falso positivo que esta tarjeta existe para evitar. */
+  .nothing-card-warn {
+    background: var(--medium-bg);
+    border-color: var(--medium-border);
+    border-left-color: var(--medium);
+  }
+  .nothing-card-warn .nothing-title { color: #92400E; }
   .nothing-title { font-size: 15px; font-weight: 700; color: #3F6212; margin-bottom: 8px; }
+  .nothing-skipped {
+    margin: 8px 0 4px; padding-left: 20px;
+    font-size: 12.5px; color: var(--text); line-height: 1.7;
+  }
+  .nothing-skipped li { margin-bottom: 2px; }
   .nothing-body  { font-size: 12.5px; color: var(--text); line-height: 1.6; margin-top: 6px; }
   .nothing-body code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

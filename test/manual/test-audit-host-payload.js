@@ -41,6 +41,47 @@ require.cache[TRIVY_PATH].exports = Object.assign({}, trivyReal, {
   runTrivyFs: async (opts) => { trivyStubOpts = opts; return trivyStubResult; },
 });
 
+// ── Sustitución de trivy-rootfs ──────────────────────────────────────────────
+// Módulo aparte desde que los paquetes del sistema dejaron de viajar dentro del
+// resultado de trivy-fs. systemPackagesSupport() se mantiene el REAL: es la
+// función bajo prueba cuando se mira scanMeta.systemPackages.
+const ROOTFS_PATH = require.resolve("../../lib/trivy-rootfs");
+const rootfsReal = require(ROOTFS_PATH);
+
+let rootfsStubResult = null;
+let rootfsLlamado = false;
+require.cache[ROOTFS_PATH].exports = Object.assign({}, rootfsReal, {
+  runTrivyRootfs: async () => { rootfsLlamado = true; return rootfsStubResult; },
+});
+
+// commandExists: el despacho lo consulta antes de lanzar el rootfs, y en la
+// máquina que corre el test Trivy puede no estar. Se fuerza a "sí está" para que
+// lo que decida sea el stub y no el equipo de quien ejecuta la batería.
+const EXEC_PATH = require.resolve("../../lib/executor");
+const execReal = require(EXEC_PATH);
+require.cache[EXEC_PATH].exports = Object.assign({}, execReal, {
+  commandExists: async (cmd) => (cmd === "trivy" ? "/usr/bin/trivy" : execReal.commandExists(cmd)),
+});
+
+/** Rootfs con éxito, con la forma que devuelve lib/trivy-rootfs.js. */
+function rootfsOk(extra) {
+  return Object.assign({
+    os: { family: "debian", name: "13.6", eosl: false },
+    pkgNum: 2056,
+    trivyVersion: "0.74.0",
+    total: 3,
+    fixable: [{
+      pkg: "openssl", installedVersion: "3.0.1", fixedVersion: "3.0.2",
+      maxSeverity: "HIGH",
+      cves: [{ id: "CVE-OS-1", severity: "HIGH", title: null }],
+    }],
+    fixableVulnCount: 1,
+    unfixed: { total: 2, bySeverity: { MEDIUM: 1, LOW: 1 } },
+    scan: { mode: "rootfs", target: "/", skipDirs: [], durationMs: 240000 },
+    durationMs: 240000,
+  }, extra || {});
+}
+
 // ── RED falso: lo mínimo que usa el nodo ─────────────────────────────────────
 function cargarNodo() {
   const nodePath = require.resolve("../../nodes/audit-host/audit-host");
@@ -85,6 +126,9 @@ async function ejecutar(config) {
 const CONFIG_BASE = {
   enableCpu: false, enableDisk: false, enableSw: false,
   enableLynis: false, enableTrivy: true, securityEvents: false,
+  // Explícito y no heredado: desde que el módulo va activo por defecto, omitirlo
+  // haría que cada bloque arrastrase el rootfs sin decirlo.
+  trivySystemPkgs: false,
 };
 
 (async () => {
@@ -102,8 +146,13 @@ const CONFIG_BASE = {
       const sp = r.msg.payload.scanMeta.systemPackages;
       ok(sp && typeof sp.status === "string",
          `[${reason}] scanMeta.systemPackages presente (status="${sp && sp.status}")`);
-      ok(sp && sp.reason === reason,
-         `[${reason}] el motivo real viaja hasta el dashboard`);
+      // El motivo de scanMeta.systemPackages sale del módulo de paquetes del
+      // sistema, NO del de la carpeta personal: son dos comprobaciones distintas
+      // y mezclar sus motivos fue justo lo que se acaba de separar. Aquí el
+      // rootfs está apagado, así que el que se ve es el suyo.
+      ok(sp && typeof sp.reason === "string" && sp.reason.includes("desactivado"),
+         `[${reason}] scanMeta.systemPackages lleva SU motivo, no el de trivy-fs`,
+         `obtenido ${JSON.stringify(sp && sp.reason)}`);
       ok(Array.isArray(r.msg.payload.findings),
          `[${reason}] findings es un array`);
       ok(r.msg.payload.findings.some((f) => f.id === "HOST-CVE-SKIP"),
@@ -159,7 +208,7 @@ const CONFIG_BASE = {
        Object.values(s.counts).reduce((a, b) => a + b, 0),
      "actionable + informative == total de counts");
 
-  console.log("\n── 5 · systemPackages SUMA: no se pierden los findings del home ──\n");
+  console.log("\n── 5 · Los dos módulos aportan, cada uno con su fuente ───────────\n");
 
   // El interruptor sustituía el escaneo del home en vez de añadirse. Aquí se
   // comprueba de punta a punta que el payload trae AMBAS procedencias.
@@ -178,16 +227,17 @@ const CONFIG_BASE = {
     }],
   };
 
+  // Los dos módulos, cada uno con su resultado. El del sistema YA NO viaja dentro
+  // del de la carpeta: son dos entradas independientes del despacho.
   trivyStubResult = {
-    Results: [HOME_RESULT, OS_RESULT],
+    Results: [HOME_RESULT],
     scan: {
       mode: "fs-by-children", target: "/home/ana", durationMs: 31671,
       resolvedFrom: "env", trivyVersion: "0.72.0",
       children: { scanned: [{ name: "proyectos", results: 1 }], skipped: [] },
-      system: { attempted: true, status: "scanned", reason: null, mode: "rootfs",
-                target: "/", durationMs: 240000, results: 1 },
     },
   };
+  rootfsStubResult = rootfsOk();
   r = await ejecutar(Object.assign({}, CONFIG_BASE, { trivySystemPkgs: true }));
 
   const porOrigen = (r.msg ? r.msg.payload.findings : []).reduce((a, f) => {
@@ -195,44 +245,77 @@ const CONFIG_BASE = {
   }, {});
   console.log("  findings por origin:", JSON.stringify(porOrigen));
 
+  const sp5 = r.msg && r.msg.payload.scanMeta.systemPackages;
+
   ok(r.err === null && r.msg !== null, "payload emitido");
   ok(porOrigen.declared >= 1, "los findings del HOME siguen ahí (origin 'declared')", JSON.stringify(porOrigen));
-  ok(porOrigen.installed >= 1, "los findings del SISTEMA se han sumado (origin 'installed')", JSON.stringify(porOrigen));
-  ok(r.msg && r.msg.payload.scanMeta.systemPackages.results === 1,
-     "scanMeta.systemPackages.results refleja lo aportado por el rootfs");
-  ok(r.msg && r.msg.payload.scanMeta.systemPackages.requested === true,
+  ok(porOrigen.installed >= 1, "los findings del SISTEMA están presentes (origin 'installed')", JSON.stringify(porOrigen));
+  // Las cifras del bloque de alcance salen del informe de Trivy y de ningún otro
+  // sitio: es la fuente única, y por eso se comprueban una a una.
+  ok(sp5 && sp5.status === "scanned", "status 'scanned'", sp5 && sp5.status);
+  ok(sp5 && sp5.packages === 2056, "packages = 2056, del informe de Trivy", sp5 && String(sp5.packages));
+  ok(sp5 && sp5.osFamily === "debian" && sp5.osName === "13.6",
+     "la familia y la versión del SO vienen del informe", JSON.stringify(sp5 && [sp5.osFamily, sp5.osName]));
+  ok(sp5 && sp5.trivyVersion === "0.74.0", "la versión de Trivy viaja con el resultado");
+  ok(sp5 && sp5.durationMs === 240000, "la duración REAL del rootfs llega al dashboard",
+     sp5 && String(sp5.durationMs));
+  ok(sp5 && sp5.unfixedVulns === 2, "el recuento sin corrección viaja aparte del corregible");
+  ok(sp5 && sp5.requested === true,
      "scanMeta.systemPackages.requested = true (lo pidió el usuario)");
 
-  console.log("\n── 6 · \"Carpeta a auditar\" se respeta con systemPackages activo ──\n");
+  // El hallazgo agregado de lo no corregible: uno solo, informativo, y con el
+  // total dentro. Ni 4078 tarjetas ni cero.
+  const unfixed = (r.msg ? r.msg.payload.findings : []).filter((f) => f.id === "HOST-OS-CVE-UNFIXED");
+  ok(unfixed.length === 1, "un ÚNICO finding HOST-OS-CVE-UNFIXED", `encontrados ${unfixed.length}`);
+  ok(unfixed[0] && unfixed[0].severity === "info",
+     "severidad info: no hay acción posible, y la severidad mide urgencia de acción");
+  ok(unfixed[0] && unfixed[0].fix === null, "sin campo fix: no hay nada que ofrecer");
+  ok(unfixed[0] && unfixed[0].title.startsWith("2 vulnerabilidades"),
+     "el título lleva el total real, no un número escrito a mano", unfixed[0] && unfixed[0].title);
 
-  // Antes, `if (opts.systemPackages) return runTrivyRootfs()` iba ANTES de
-  // resolver el objetivo: el campo del nodo quedaba anulado en silencio.
+  // Y el corregible, agrupado POR PAQUETE.
+  const porPaquete = (r.msg ? r.msg.payload.findings : []).filter((f) => f.id.startsWith("HOST-OS-PKG-"));
+  ok(porPaquete.length === 1 && porPaquete[0].id === "HOST-OS-PKG-openssl",
+     "un finding por PAQUETE, con el nombre en el id", JSON.stringify(porPaquete.map((f) => f.id)));
+
+  console.log("\n── 6 · Los dos escaneos son independientes ───────────────────────\n");
+
+  // Antes iban en el mismo módulo y `if (opts.systemPackages) return
+  // runTrivyRootfs()` anulaba en silencio el campo "Carpeta a auditar". Ahora son
+  // dos entradas del despacho y el acoplamiento ya no existe: se comprueba que a
+  // trivy-fs no se le pasa NADA del rootfs.
   trivyStubOpts = null;
+  rootfsLlamado = false;
   r = await ejecutar(Object.assign({}, CONFIG_BASE, {
     trivySystemPkgs: true, trivyTarget: "~/proyectos",
   }));
 
   ok(trivyStubOpts && trivyStubOpts.target === "~/proyectos",
-     "el target configurado llega al módulo aunque systemPackages esté activo",
+     "el target configurado llega al módulo de la carpeta",
      JSON.stringify(trivyStubOpts));
-  ok(trivyStubOpts && trivyStubOpts.systemPackages === true,
-     "y systemPackages también: las dos opciones conviven, no se anulan");
+  ok(trivyStubOpts && trivyStubOpts.systemPackages === undefined,
+     "a trivy-fs ya NO se le pasa systemPackages: no es asunto suyo",
+     JSON.stringify(trivyStubOpts));
+  ok(rootfsLlamado === true, "y el rootfs se lanza por su cuenta, desde el despacho");
   ok(trivyStubOpts && trivyStubOpts.pkgManager !== undefined,
      "el gestor ya detectado se le pasa al módulo (no lo detecta dos veces)");
 
-  console.log("\n── 7 · systemPackages en macOS: el home queda intacto ────────────\n");
+  console.log("\n── 7 · macOS: 'no se pudo comprobar', nunca 'cero' ───────────────\n");
 
-  // unsupported: el rootfs no aplica, pero el escaneo de la carpeta sí se hizo.
+  // Trivy no reconoce la familia del SO. El escaneo de la carpeta sí se hizo, y
+  // los paquetes del sistema tienen que salir como comprobación NO REALIZADA.
   trivyStubResult = {
     Results: [HOME_RESULT],
     scan: {
       mode: "fs-by-children", target: "/Users/ana", durationMs: 31671,
       resolvedFrom: "env", trivyVersion: "0.72.0",
       children: { scanned: [{ name: "Proyectos", results: 1 }], skipped: [] },
-      system: { attempted: true, status: "unsupported",
-                reason: "rootfs solo aplica en Linux", mode: "rootfs",
-                target: "/", durationMs: null, results: 0 },
     },
+  };
+  rootfsStubResult = {
+    skipped: true, kind: "os-unsupported",
+    reason: "Trivy no ha detectado la familia del sistema operativo",
+    durationMs: 1200,
   };
   r = await ejecutar(Object.assign({}, CONFIG_BASE, { trivySystemPkgs: true }));
 
@@ -241,10 +324,23 @@ const CONFIG_BASE = {
 
   ok(r.err === null && r.msg !== null, "payload emitido pese al rootfs no aplicable");
   ok(r.msg && r.msg.payload.findings.length >= 1, "los findings del home siguen ahí");
-  ok(sp7 && sp7.status === "not-applicable",
-     "status 'not-applicable' en macOS (la plataforma manda sobre el resultado)", sp7 && sp7.status);
-  ok(sp7 && sp7.reason === "rootfs solo aplica en Linux",
+  ok(sp7 && sp7.kind === "os-unsupported", "el kind del módulo llega al dashboard", sp7 && sp7.kind);
+  ok(sp7 && sp7.reason === "Trivy no ha detectado la familia del sistema operativo",
      "el motivo real viaja hasta el dashboard");
+  // Lo importante: NINGUNA cifra de paquetes. Un 0 aquí se leería como "ningún
+  // paquete vulnerable" cuando lo que pasó es que nadie los miró.
+  ok(sp7 && sp7.packages === null && sp7 && sp7.unfixedVulns === null,
+     "sin cifras: null, no cero. Cero sería un dato y aquí no hay dato",
+     JSON.stringify(sp7 && [sp7.packages, sp7.unfixedVulns]));
+
+  // Y la mitad legible: un finding marcado como comprobación no realizada.
+  const skip7 = (r.msg ? r.msg.payload.findings : []).filter((f) => f.skipped === true);
+  ok(skip7.some((f) => f.id === "HOST-OS-CVE-SKIP"),
+     "sale un finding HOST-OS-CVE-SKIP con skipped:true",
+     JSON.stringify(skip7.map((f) => f.id)));
+  ok(!(r.msg ? r.msg.payload.findings : []).some((f) => f.id === "HOST-OS-CVE-UNFIXED"),
+     "y NO sale el agregado de 'sin corrección': eso afirmaría un cero no medido");
+
   ok(r.msg && r.msg.payload.raw.trivy.scan.children.scanned.length === 1,
      "scan.children del home intacto (lo usan las pills del bloque de alcance)");
 

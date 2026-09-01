@@ -5,8 +5,13 @@
  * plataformas. Antes se escaneaba territorio del gestor de paquetes (C:\Program Files, el Cellar
  * de Homebrew, /usr/lib) y en Arch no salía un solo hallazgo accionable; lo que sí aparecían eran
  * lockfiles empaquetados dentro de otros paquetes, o sea dependencias declaradas de terceros y no
- * software del usuario (campo `origin` en lib/finding-schema.js). El software del sistema se
- * audita con el interruptor `systemPackages`, nunca por defecto.
+ * software del usuario (campo `origin` en lib/finding-schema.js).
+ *
+ * SOLO el HOME. Los paquetes del sistema operativo son otra pregunta y viven en su propio módulo,
+ * lib/trivy-rootfs.js, con su propia entrada en el despacho de audit-host. Hasta esta versión los
+ * dos escaneos compartían este fichero y se concatenaban en el mismo array `Results`, lo que hacía
+ * que el bloque de Alcance tuviera que reconstruir a posteriori de cuál de los dos venía cada
+ * cifra. Aquí ya no hay ni `systemPackages`, ni `mergeScans`, ni lista de gestores soportados.
  *
  * Cuando no se puede escanear devuelve { skipped, kind, reason } y quien llama decide por `kind`,
  * no por el texto: 'unsupported' no es un error y la auditoría continúa; 'not-installed' y
@@ -17,16 +22,12 @@ const os = require("os");
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
-const { execCommand, commandExists } = require("../../../lib/executor");
-const { detectPackageManager } = require("../../../lib/pkg-manager");
+const { execToFile, execCommand, commandExists } = require("../../../lib/executor");
 const { classifyDir } = require("./local-fs");
 
 const TIMEOUT_MS = 120000;
 // Por hijo: así una carpeta que no responde se lleva su tiempo, no el del escaneo entero.
 const CHILD_TIMEOUT_MS = 90000;
-// rootfs recorre el sistema entero: con el timeout de `fs` se cortaba y el JSON parcial
-// se leía como un escaneo limpio.
-const ROOTFS_TIMEOUT_MS = 600000;
 
 /**
  * Exclusiones por defecto, relativas al objetivo. Comprobado en trivy 0.72.0: relativas y
@@ -48,26 +49,6 @@ const WALK_ERROR_RE = /walk dir error|fdopendir|operation timed out|permission d
 
 /** Prefijos de home por plataforma, para el fallback de homeForUser(). */
 const HOME_BASE = { darwin: "/Users", linux: "/home" };
-
-/** Gestores cuya base de datos sabe leer Trivy. Fuera pacman y emerge, que no tienen analizador.
- *  Por gestor y no por nombre de distro: una lista de distros envejece y duplica la verdad. */
-const TRIVY_OS_MANAGERS = ["apt", "dnf", "yum", "zypper", "apk"];
-
-/**
- * Estado del análisis de paquetes del sistema. Pura, con plataforma y gestor por parámetro, para
- * que los tests cubran las tres plataformas desde una máquina. Devuelve un hecho y no prosa: la
- * frase la escribe el dashboard, que es quien sabe a quién se la cuenta. `systemScan` es el
- * sub-bloque de mergeScans, no el resultado entero: que falle el del sistema no anula el del home.
- */
-function systemPackagesSupport(platform, pkgManager, opts = {}) {
-  // rootfs quiere un árbol de paquetes de SO. macOS no lo tiene (Homebrew instala software del
-  // usuario) y Windows tampoco, al menos no uno que Trivy entienda.
-  if (platform !== "linux") return "not-applicable";
-  if (!TRIVY_OS_MANAGERS.includes(pkgManager)) return "unsupported-manager";
-  if (!opts.enabled) return "supported-not-run";
-  if (!opts.systemScan || opts.systemScan.status !== "scanned") return "failed";
-  return "scanned";
-}
 
 /** Home de un usuario según la base de datos real del sistema; null si no existe el directorio. */
 function homeForUser(user) {
@@ -134,120 +115,70 @@ function trivyVersion() {
   }
 }
 
-/** Ejecuta un comando de Trivy y devuelve su JSON parseado, o { skipped, reason }. */
-async function runTrivyCommand(cmd, timeoutMs) {
-  let stdout;
-  try {
-    stdout = await execCommand(cmd, timeoutMs);
-  } catch (err) {
-    // Con CVEs encontrados el código de salida no es cero, pero el JSON de stdout sigue valiendo.
-    stdout = err.stdout || "";
-    if (!stdout.trim()) {
-      const stderr = (err.stderr || err.message || "unknown error").trim();
-      // Una carpeta que no responde mata el escaneo entero, y la salida para el usuario no es
-      // la de "trivy no está instalado": aquí lo que toca es acotar la carpeta a auditar.
-      if (WALK_ERROR_RE.test(stderr)) {
-        // El primer path absoluto del mensaje. Un "with (\S+)" genérico capturaba "traversal",
-        // de "analyze with traversal:", que no dice nada.
-        const m = stderr.match(/(\/[^\s:]+)/);
-        return {
-          skipped: true,
-          kind: "error",
-          walkError: true,
-          path: m ? m[1] : null,
-          reason:
-            `Trivy no pudo recorrer ${m ? m[1] : "una carpeta del ámbito"}: la carpeta no responde ` +
-            "(unidad de red o almacenamiento en la nube montado) o no hay permisos. El escaneo se " +
-            "aborta por completo y --skip-dirs no lo evita. Indica una carpeta concreta en el campo " +
-            `"Carpeta a auditar" del nodo, o desmonta esa unidad. Detalle: ${stderr}`,
-        };
-      }
-      return { skipped: true, kind: "error", reason: `trivy failed: ${stderr}` };
-    }
-  }
-
-  try {
-    return JSON.parse(stdout);
-  } catch (_) {
-    return { skipped: true, kind: "error", reason: "trivy output is not valid JSON" };
-  }
-}
-
-/** Paquetes del SO con el subcomando `rootfs`. Solo con el interruptor puesto: pide privilegios
- *  y tarda minutos. */
-async function runTrivyRootfs(pkgManager) {
-  if (process.platform !== "linux") {
-    return { skipped: true, kind: "unsupported", reason: "rootfs solo aplica en Linux" };
-  }
-
-  // "Hay pacman" cubre Arch y todas sus derivadas, presentes y futuras. El nodo ya detectó el
-  // gestor para el bloque de alcance, así que llega por parámetro y no se repite la ronda.
-  const mgr = pkgManager || (await detectPackageManager());
-  if (mgr === "pacman") {
-    return { skipped: true, kind: "unsupported", reason: "Trivy no soporta pacman" };
-  }
-
-  const started = Date.now();
-  const parsed = await runTrivyCommand(
-    "trivy rootfs --format json --quiet --scanners vuln /",
-    ROOTFS_TIMEOUT_MS
-  );
-  if (parsed.skipped) return parsed;
-
-  parsed.scan = {
-    mode: "rootfs",
-    target: "/",
-    skipDirs: [],
-    durationMs: Date.now() - started,
-    resolvedFrom: "systemPackages",
-    trivyVersion: trivyVersion(),
-  };
-  return parsed;
-}
-
 /**
- * Concatenar `Results` basta: los dos lados producen elementos con la misma forma y en la ruta de
- * host nadie lee el envoltorio (ArtifactName, ArtifactType y SchemaVersion solo los usa audit-image).
+ * Ejecuta un comando de Trivy y devuelve su JSON parseado, o { skipped, kind, reason }.
+ *
+ * `buildCmd` recibe la ruta de un temporal y devuelve la línea a ejecutar con su `-o`: la salida
+ * va a fichero, nunca a stdout. El motivo está en execToFile(), y en corto es que exec() mata el
+ * proceso al pasarse de maxBuffer y entrega un JSON cortado a mitad que parece bueno.
  */
-function mergeScans(home, system) {
-  // Si el home falló, la auditoría aborta igual y el resultado del sistema no cambia nada.
-  if (home.skipped) return home;
+async function runTrivyCommand(buildCmd, timeoutMs) {
+  const parsed = await execToFile(buildCmd, timeoutMs, { prefix: "lcaudit-trivy-fs-" });
+  if (!parsed.skipped) return parsed;
 
-  if (system.skipped) {
-    // Los Results del home quedan intactos y del sistema solo se anota el motivo: un límite de
-    // la herramienta no puede tirar el trabajo que sí se hizo.
-    home.scan.system = {
-      attempted: true,
-      status: system.kind === "unsupported" ? "unsupported" : "error",
-      reason: system.reason || null,
-      mode: "rootfs",
-      target: "/",
-      durationMs: null,
-      results: 0,
+  // Un buffer rebasado NO es un JSON corrupto: el fichero está bien y lo que falló es nuestro
+  // límite de captura. Confundirlos manda a diagnosticar Trivy, que no tiene nada que ver.
+  if (parsed.kind === "output-too-large") {
+    return {
+      skipped: true,
+      kind: "output-too-large",
+      reason:
+        "La salida de Trivy no cupo en el búfer de captura y el proceso se cortó a mitad. " +
+        `El resultado parcial se descarta: no se usa como si fuera un escaneo completo. ${parsed.reason}`,
     };
-    return home;
   }
 
-  const results = system.Results || [];
-  home.Results.push(...results);
-  home.scan.system = {
-    attempted: true,
-    status: "scanned",
-    reason: null,
-    mode: "rootfs",
-    target: "/",
-    durationMs: (system.scan && system.scan.durationMs) || null,
-    results: results.length,
+  if (parsed.kind === "invalid-json") {
+    // Trivy escribe sus errores en texto plano en el mismo sitio: el principio del fichero suele
+    // ser el mensaje real, y por eso execToFile lo conserva en `reason`.
+    const detail = parsed.reason || "";
+    if (WALK_ERROR_RE.test(detail)) return walkErrorResult(detail);
+    return { skipped: true, kind: "invalid-json", reason: detail };
+  }
+
+  // 'error', 'timeout' y 'empty-output' llegan con el motivo real de execToFile. Una carpeta que
+  // no responde mata el escaneo entero, y su salida para el usuario no es la de "trivy no está
+  // instalado": aquí lo que toca es acotar la carpeta a auditar.
+  const detail = parsed.reason || "unknown error";
+  if (WALK_ERROR_RE.test(detail)) return walkErrorResult(detail);
+  return { skipped: true, kind: parsed.kind || "error", reason: `trivy failed: ${detail}` };
+}
+
+/** Carpeta que no responde: mensaje propio, porque la acción del usuario es distinta. */
+function walkErrorResult(stderr) {
+  // El primer path absoluto del mensaje. Un "with (\S+)" genérico capturaba "traversal", de
+  // "analyze with traversal:", que no dice nada.
+  const m = stderr.match(/(\/[^\s:]+)/);
+  return {
+    skipped: true,
+    kind: "error",
+    walkError: true,
+    path: m ? m[1] : null,
+    reason:
+      `Trivy no pudo recorrer ${m ? m[1] : "una carpeta del ámbito"}: la carpeta no responde ` +
+      "(unidad de red o almacenamiento en la nube montado) o no hay permisos. El escaneo se " +
+      "aborta por completo y --skip-dirs no lo evita. Indica una carpeta concreta en el campo " +
+      `"Carpeta a auditar" del nodo, o desmonta esa unidad. Detalle: ${stderr}`,
   };
-  return home;
 }
 
 /**
- * Los dos escaneos se suman. Antes `systemPackages` hacía return antes de resolver el objetivo y
- * sustituía el del home: quien marcaba la casilla en Debian dejaba de auditar su carpeta personal
- * y el campo "Carpeta a auditar" quedaba anulado en silencio, con la casilla diciendo "también".
- * El home va primero porque el rootfs puede gastarse sus diez minutos de timeout. Secuencial y no
- * en paralelo: dos procesos de Trivy se pelean por la misma base de datos de vulnerabilidades.
+ * Escaneo del HOME, y solo del HOME. Los paquetes del sistema son otro módulo (lib/trivy-rootfs.js)
+ * con su propia entrada en el despacho de audit-host: aquí ya no se suman ni se sustituyen.
+ *
+ * El commandExists sigue aquí y no en el despacho por una razón concreta: audit-image también
+ * llama a Trivy y comprueba por su cuenta, así que este módulo no puede dar por hecho quién le
+ * llama. El despacho comprueba lo suyo para trivy-rootfs; esta es la comprobación de este camino.
  */
 async function runTrivyFs(opts = {}) {
   const available = await commandExists("trivy");
@@ -262,15 +193,9 @@ async function runTrivyFs(opts = {}) {
 
   // Si la carpeta la eligió el usuario va de una pasada: el ámbito lo acotó él y no hay que
   // protegerlo de sus propias unidades de red.
-  const home = resolvedFrom === "config"
+  return resolvedFrom === "config"
     ? await scanSingle(target, skipDirs, resolvedFrom)
     : await scanHomeByChildren(target, skipDirs, resolvedFrom);
-
-  // Los paquetes del sistema solo a petición; el gate de plataforma y gestor vive en runTrivyRootfs.
-  if (!opts.systemPackages) return home;
-
-  const system = await runTrivyRootfs(opts.pkgManager);
-  return mergeScans(home, system);
 }
 
 /** Una sola invocación de Trivy sobre `target`. */
@@ -278,7 +203,7 @@ async function scanSingle(target, skipDirs, resolvedFrom) {
   const skipFlag = skipDirs.length ? ` --skip-dirs "${absSkipDirs(target, skipDirs).join(",")}"` : "";
   const started = Date.now();
   const parsed = await runTrivyCommand(
-    `trivy fs --format json --quiet --scanners vuln${skipFlag} "${target}"`,
+    (file) => `trivy fs --format json --quiet --scanners vuln${skipFlag} -o "${file}" "${target}"`,
     TIMEOUT_MS
   );
   if (parsed.skipped) return parsed;
@@ -343,7 +268,7 @@ async function scanHomeByChildren(home, skipDirs, resolvedFrom) {
 
     const t0 = Date.now();
     const res = await runTrivyCommand(
-      `trivy fs --format json --quiet --scanners vuln${skipFlag} "${child}"`,
+      (file) => `trivy fs --format json --quiet --scanners vuln${skipFlag} -o "${file}" "${child}"`,
       CHILD_TIMEOUT_MS
     );
     const ms = Date.now() - t0;
@@ -372,10 +297,7 @@ async function scanHomeByChildren(home, skipDirs, resolvedFrom) {
 
 module.exports = {
   runTrivyFs,
-  mergeScans,
   resolveUserHome,
   resolveScanTarget,
-  systemPackagesSupport,
   DEFAULT_SKIP_DIRS,
-  TRIVY_OS_MANAGERS,
 };

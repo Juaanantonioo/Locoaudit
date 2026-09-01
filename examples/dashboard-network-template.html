@@ -37,9 +37,13 @@
             </div>
             <div class="port-count-block">
               <!-- Si el objetivo no responde no hay dato que enseñar: un 0 grande
-                   se lee como "todo correcto" y eso es justo lo que NO ocurrió. -->
-              <div class="port-count-num" :class="{ 'all-info': allInfo && !notAudited, 'no-data': notAudited }">{{ portCountLabel }}</div>
-              <div class="port-count-label">{{ notAudited ? 'sin datos' : 'puertos abiertos' }}</div>
+                   se lee como "todo correcto" y eso es justo lo que NO ocurrió.
+                   Un escaneo NO CONCLUYENTE es el mismo caso: nmap no llegó a
+                   terminar, así que su 0 tampoco es un dato. Antes solo se
+                   neutralizaba 'unreachable' y el 0 salía en verde justo encima
+                   del banner que decía que el escaneo no había terminado. -->
+              <div class="port-count-num" :class="{ 'all-info': allInfo && !noPortData, 'no-data': noPortData }">{{ portCountLabel }}</div>
+              <div class="port-count-label">{{ noPortData ? 'sin datos' : 'puertos abiertos' }}</div>
             </div>
           </div>
         </div>
@@ -363,6 +367,17 @@ export default {
       return this.targetState === 'unreachable';
     },
 
+    // ¿Hay un recuento de puertos que enseñar? Dos formas de que no lo haya, y
+    // las dos acaban en la misma cifra: el objetivo no respondió, o el escaneo
+    // no llegó a terminar. Cero puertos por no haber mirado y cero puertos por
+    // no haber ninguno abierto NO pueden renderizarse igual.
+    // `notAudited` se queda para lo que ya decidía (la insignia y los textos de
+    // "No auditado"); esto es solo la pregunta del contador.
+    noPortData() {
+      var meta = this.auditData && this.auditData.scanMeta;
+      return this.notAudited || (meta && meta.scanStatus === 'inconclusive');
+    },
+
     riskClass() {
       return this.notAudited ? 'not-audited' : this.maxSev;
     },
@@ -377,7 +392,7 @@ export default {
     },
 
     portCountLabel() {
-      return this.notAudited ? '—' : this.donutTotal;
+      return this.noPortData ? '—' : this.donutTotal;
     },
 
     scanWarn() {

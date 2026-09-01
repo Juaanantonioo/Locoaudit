@@ -316,7 +316,7 @@ TOOL_DESC = {
 
 # Avisos que se muestran junto a la pregunta de instalación, por herramienta.
 _INSTALL_NOTES = {
-    "docker": "Descarga considerable y requiere reiniciar Windows al terminar.",
+    "docker": "Descarga considerable y requiere reiniciar el sistema al terminar.",
 }
 
 # Margen de tiempo por herramienta. Docker Desktop descarga bastante más que el

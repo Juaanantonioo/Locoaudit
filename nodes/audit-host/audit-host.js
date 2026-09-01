@@ -7,12 +7,29 @@ const { getDiskInfo } = require("./modules/disk-storage");
 const { getSwInventory } = require("./modules/sw-inventory");
 const { getOsInfo } = require("./modules/os-info");
 const { runLynis } = require("./modules/lynis");
-const { runTrivyFs, systemPackagesSupport } = require("./modules/trivy-fs");
+const { runTrivyFs } = require("./modules/trivy-fs");
+const { runTrivyRootfs, systemPackagesSupport } = require("../../lib/trivy-rootfs");
 const { runSecurityEvents, buildEventList } = require("./modules/security-events");
 const { getPendingUpdates } = require("./modules/pending-updates");
 const { normalizeHost } = require("../../lib/normalizer");
 const { detectPackageManager, managerLabel } = require("../../lib/pkg-manager");
+const { commandExists } = require("../../lib/executor");
 const { summarize } = require("../../lib/severity-map");
+
+/** Cuántos paquetes inventarió sw-inventory. El módulo devuelve un array plano, o un objeto con
+ *  `packages` cuando el inventario salió parcial (macOS con brew caído). */
+function swPackageCount(sw) {
+  if (Array.isArray(sw)) return sw.length;
+  if (sw && Array.isArray(sw.packages)) return sw.packages.length;
+  return null;
+}
+
+/** Con qué herramienta los contó ('dpkg', 'rpm', 'brew'…). Cada entrada trae la suya; se toma la
+ *  de la primera porque todas las de un inventario vienen del mismo sitio. */
+function swPackageSource(sw) {
+  const list = Array.isArray(sw) ? sw : (sw && sw.packages) || [];
+  return (list[0] && list[0].source) || null;
+}
 
 module.exports = function (RED) {
   function AuditHostNode(config) {
@@ -33,7 +50,10 @@ module.exports = function (RED) {
       const enableSecEvents = config.securityEvents === true;
       const enableUpdates = config.enableUpdates !== false;
       const secWindow = Math.min(168, Math.max(1, parseInt(config.securityEventsWindow, 10) || 24));
-      const enableSysPkgs = config.trivySystemPkgs === true;
+      // Activo POR DEFECTO, al revés que antes: los paquetes del sistema son la parte del
+      // equipo que el usuario no puede auditar por su cuenta, y dejarlos fuera por omisión
+      // producía informes que parecían completos y no lo eran. La casilla ahora DESACTIVA.
+      const enableSysPkgs = config.trivySystemPkgs !== false;
 
       const startTime = Date.now();
 
@@ -46,22 +66,27 @@ module.exports = function (RED) {
           pkgManager = await detectPackageManager(process.platform);
         } catch (_) { /* la detección no puede tumbar la auditoría */ }
 
-        const [cpuResult, diskResult, swResult, lynisResult, trivyResult, secResult, updResult] =
+        // trivy-rootfs comprueba aquí que Trivy está, y no dentro del módulo: la regla es que el
+        // commandExists vive en el despacho. trivy-fs conserva el suyo porque audit-image también
+        // le llama y ese camino no pasa por aquí.
+        const trivyPath = enableSysPkgs ? await commandExists("trivy") : null;
+
+        const [cpuResult, diskResult, swResult, lynisResult, trivyResult, rootfsResult, secResult, updResult] =
           await Promise.allSettled([
             enableCpu ? Promise.resolve(runSystemModule()) : Promise.resolve(null),
             enableDisk ? getDiskInfo() : Promise.resolve(null),
             enableSw ? getSwInventory() : Promise.resolve(null),
             enableLynis ? runLynis() : Promise.resolve({ skipped: true, reason: "disabled" }),
             enableTrivy
-              ? runTrivyFs({
-                  // Vacío ⇒ el HOME de quien audita. Se lee también con systemPackages activo:
-                  // el interruptor hacía return antes de llegar aquí.
-                  target: config.trivyTarget,
-                  // trivy rootfs: opt-in, pide privilegios. Se suma al escaneo de la carpeta, no lo sustituye.
-                  systemPackages: enableSysPkgs,
-                  pkgManager,
-                })
+              // Vacío ⇒ el HOME de quien audita. Solo el HOME: los paquetes del sistema son ahora
+              // el módulo de al lado y ya no viajan dentro de este resultado.
+              ? runTrivyFs({ target: config.trivyTarget, pkgManager })
               : Promise.resolve({ skipped: true, reason: "disabled" }),
+            !enableSysPkgs
+              ? Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de los paquetes del sistema está desactivado en las opciones del nodo." })
+              : !trivyPath
+              ? Promise.resolve({ skipped: true, kind: "not-installed", reason: "Trivy no está instalado, y es lo que lee la base de datos de paquetes del sistema." })
+              : runTrivyRootfs(),
             enableSecEvents ? runSecurityEvents(secWindow) : Promise.resolve(null),
             // pkgManager por parámetro: audit-host ya lo resolvió arriba y es la fuente única.
             enableUpdates ? getPendingUpdates({ pkgManager }) : Promise.resolve(null),
@@ -72,6 +97,7 @@ module.exports = function (RED) {
         const swInventory = swResult.status === "fulfilled" ? swResult.value : null;
         const lynis = lynisResult.status === "fulfilled" ? lynisResult.value : null;
         const trivy = trivyResult.status === "fulfilled" ? trivyResult.value : null;
+        const trivyRootfs = rootfsResult.status === "fulfilled" ? rootfsResult.value : null;
         const securityEvents = secResult.status === "fulfilled" ? secResult.value : null;
         const pendingUpdates = updResult.status === "fulfilled" ? updResult.value : null;
 
@@ -123,8 +149,20 @@ module.exports = function (RED) {
             ));
             return;
           }
-          if (trivy.kind === "error") {
-            node.status({ fill: "red", shape: "ring", text: trivy.walkError ? "Carpeta inaccesible" : "Trivy falló" });
+          // 'error' y los tres kinds que puede devolver el ejecutor cuando la salida no sirve.
+          // Los cuatro significan lo mismo para el usuario: el escaneo NO se hizo. Que caigan
+          // aquí y no en el warn de abajo es lo que evita el falso verde: 'unsupported' es un
+          // límite conocido y sigue, pero una salida cortada o ilegible es un escaneo fallido.
+          const TRIVY_FATAL = ["error", "timeout", "output-too-large", "invalid-json", "empty-output"];
+          if (TRIVY_FATAL.includes(trivy.kind)) {
+            const label = trivy.walkError
+              ? "Carpeta inaccesible"
+              : trivy.kind === "output-too-large"
+              ? "Salida de Trivy cortada"
+              : trivy.kind === "timeout"
+              ? "Trivy agotó el tiempo"
+              : "Trivy falló";
+            node.status({ fill: "red", shape: "ring", text: label });
             done(new Error(`Trivy no pudo completar el escaneo. ${trivy.reason}`));
             return;
           }
@@ -150,6 +188,9 @@ module.exports = function (RED) {
         }
         if (trivyResult.status === "rejected") {
           node.warn(`[audit-host] trivy-fs falló: ${trivyResult.reason}`);
+        }
+        if (rootfsResult.status === "rejected") {
+          node.warn(`[audit-host] trivy-rootfs falló: ${rootfsResult.reason}`);
         }
         if (secResult.status === "rejected") {
           node.warn(`[audit-host] security-events falló: ${secResult.reason}`);
@@ -182,6 +223,23 @@ module.exports = function (RED) {
               }
             : null
         );
+        // Mismo criterio que en Lynis, sw-inventory y pending-updates: un throw vale lo mismo que
+        // un skipped kind 'error'. Sin esto un rechazo dejaría trivyRootfs a null y el bloque de
+        // alcance diría 'failed' sin poder decir por qué.
+        const rootfsResolved = trivyRootfs || (
+          rootfsResult.status === "rejected"
+            ? {
+                skipped: true,
+                kind: "error",
+                reason: `El análisis de los paquetes del sistema falló: ${String(rootfsResult.reason)}.`,
+              }
+            : null
+        );
+        const rootfsSkipped = !!(rootfsResolved && rootfsResolved.skipped);
+        if (enableSysPkgs && rootfsSkipped) {
+          node.warn(`[audit-host] trivy-rootfs omitido: ${rootfsResolved.reason}`);
+        }
+
         const updSkipped = !!(updResolved && updResolved.skipped);
         const updStatus = !enableUpdates ? "disabled" : updSkipped ? "skip" : "ok";
         if (enableUpdates && updSkipped) {
@@ -203,7 +261,7 @@ module.exports = function (RED) {
 
         // Un security-events omitido no es error del nodo, al contrario que Lynis o Trivy:
         // el normalizador lo saca como finding informativo.
-        const raw = { cpuMemory, disk, swInventory: swResolved, lynis, trivy, securityEvents, pendingUpdates: updResolved };
+        const raw = { cpuMemory, disk, swInventory: swResolved, lynis, trivy, trivyRootfs: rootfsResolved, securityEvents, pendingUpdates: updResolved };
 
         const findings = normalizeHost(raw, { platform: process.platform, pkgManager });
         const summary = summarize(findings);
@@ -231,31 +289,43 @@ module.exports = function (RED) {
               enableSw && !swSkipped && "sw-inventory",
               enableLynis && !lynis?.skipped && "lynis",
               enableTrivy && !trivy?.skipped && "trivy-fs",
+              enableSysPkgs && !rootfsSkipped && "trivy-rootfs",
               enableSecEvents && !securityEvents?.skipped && "security-events",
               enableUpdates && !updSkipped && "pending-updates",
             ].filter(Boolean),
             durationMs,
             // Se emite siempre, también con el interruptor apagado: "no analizados" no es "limpios"
             // y de una lista de hallazgos vacía nadie puede distinguirlo.
-            systemPackages: (() => {
-              // El veredicto sale de scan.system, no del resultado entero: desde que los dos
-              // escaneos se suman, que falle el del sistema no anula el del home.
-              const systemScan = (trivy && trivy.scan && trivy.scan.system) || null;
-              return {
-                status: systemPackagesSupport(process.platform, pkgManager, {
-                  enabled: enableTrivy && enableSysPkgs,
-                  systemScan,
-                }),
-                // Separa "nadie lo pidió" de "lo pediste y no se pudo"; el dashboard lo redacta.
-                requested: enableTrivy && enableSysPkgs,
-                manager: pkgManager,
-                managerLabel: pkgManager ? managerLabel(pkgManager) : null,
-                reason: (systemScan && systemScan.reason) ||
-                        (trivy && trivy.skipped ? trivy.reason : null),
-                durationMs: (systemScan && systemScan.durationMs) || null,
-                results: (systemScan && systemScan.results) || 0,
-              };
-            })(),
+            // El veredicto sale del informe de trivy-rootfs, que es la fuente única. Ya no se
+            // reconstruye de un sub-bloque de trivy-fs ni de una lista de gestores nuestra.
+            systemPackages: {
+              status: systemPackagesSupport(process.platform, rootfsResolved, {
+                enabled: enableSysPkgs,
+              }),
+              // Separa "nadie lo pidió" de "lo pediste y no se pudo"; el dashboard lo redacta.
+              requested: enableSysPkgs,
+              kind: rootfsSkipped ? (rootfsResolved.kind || null) : null,
+              // El gestor lo sigue detectando pkg-manager.js y solo se usa para redactar: la
+              // decisión de si se pudo analizar ya NO depende de él.
+              manager: pkgManager,
+              managerLabel: pkgManager ? managerLabel(pkgManager) : null,
+              reason: rootfsSkipped ? rootfsResolved.reason : null,
+              // Duración real del rootfs, también cuando se omitió: saber que se tiró diez
+              // minutos antes de rendirse es parte del diagnóstico.
+              durationMs: (rootfsResolved && rootfsResolved.durationMs) || null,
+              // Todo lo de abajo sale del informe de Trivy y de ningún otro sitio. Con el módulo
+              // omitido son null, que es distinto de cero: cero paquetes sería un dato, y aquí
+              // no hay dato.
+              osFamily: !rootfsSkipped && rootfsResolved ? rootfsResolved.os.family : null,
+              osName: !rootfsSkipped && rootfsResolved ? rootfsResolved.os.name : null,
+              packages: !rootfsSkipped && rootfsResolved ? rootfsResolved.pkgNum : null,
+              trivyVersion: !rootfsSkipped && rootfsResolved ? rootfsResolved.trivyVersion : null,
+              vulnTotal: !rootfsSkipped && rootfsResolved ? rootfsResolved.total : null,
+              fixablePackages: !rootfsSkipped && rootfsResolved ? rootfsResolved.fixable.length : null,
+              fixableVulns: !rootfsSkipped && rootfsResolved ? rootfsResolved.fixableVulnCount : null,
+              unfixedVulns: !rootfsSkipped && rootfsResolved ? rootfsResolved.unfixed.total : null,
+              unfixedBySeverity: !rootfsSkipped && rootfsResolved ? rootfsResolved.unfixed.bySeverity : null,
+            },
             // Espejo de scanMeta.lynis: el estado del módulo, aparte de sus datos. Sale del mismo
             // swResolved que decide modulesRun, no de una segunda derivación.
             swInventory: {
@@ -266,6 +336,12 @@ module.exports = function (RED) {
                 ? swResolved.partialReason
                 : null,
               kind: swSkipped ? (swResolved.kind || null) : null,
+              // Cuántos paquetes vio ESTE módulo, y con qué herramienta los vio. La cifra viaja
+              // con su fuente porque hay otra al lado, la de trivy-rootfs, que cuenta lo mismo
+              // por otro camino y da otro número. No se intentan cuadrar: son dos medidas de dos
+              // herramientas distintas, y presentarlas como una sola sería inventar una tercera.
+              packages: swSkipped ? null : swPackageCount(swResolved),
+              source: swSkipped ? null : swPackageSource(swResolved),
             },
             // Espejo de scanMeta.lynis. Sale del mismo updResolved que decide modulesRun.
             pendingUpdates: {

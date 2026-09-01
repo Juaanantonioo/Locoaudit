@@ -18,7 +18,7 @@
  */
 
 const { normalizeHost, normalizeImage } = require("../../lib/normalizer");
-const { systemPackagesSupport } = require("../../nodes/audit-host/modules/trivy-fs");
+const { systemPackagesSupport } = require("../../lib/trivy-rootfs");
 
 let failed = 0;
 let passed = 0;
@@ -103,12 +103,23 @@ ok(sinFallos.length === 1 && sinFallos[0].severity === "info",
 
 console.log("\n── 4 · El caso pacman llega hasta el estado de alcance ───────────\n");
 
-// El escenario real de CachyOS: el gate devuelve 'unsupported' y el estado que
-// verá el dashboard es 'unsupported-manager', no un error.
-const estado = systemPackagesSupport("linux", "pacman", { enabled: true, result: arch });
+// El escenario real de CachyOS. Ya no lo decide una lista nuestra de gestores:
+// se ejecuta Trivy, Trivy no reconoce la base de datos de paquetes y devuelve
+// kind 'os-unsupported'. El estado que verá el dashboard es 'unsupported-manager',
+// no un error, y la auditoría no se aborta.
+const rootfsArch = {
+  skipped: true, kind: "os-unsupported",
+  reason: "Trivy no ha detectado la familia del sistema operativo",
+};
+const estado = systemPackagesSupport("linux", rootfsArch, { enabled: true });
 ok(estado === "unsupported-manager",
-   `linux + pacman + interruptor activo → "${estado}"`,
+   `linux + informe sin OS.Family + interruptor activo → "${estado}"`,
    "esperado 'unsupported-manager'");
+
+// Y lo que NO puede pasar: que un informe sin familia de SO acabe contando como
+// análisis conseguido. Cero vulnerabilidades del sistema sobre un sistema que
+// Trivy no supo leer es el falso verde que todo esto existe para evitar.
+ok(estado !== "scanned", "un informe sin OS.Family jamás sale como 'scanned'");
 
 console.log(`\n${passed} pasados · ${failed} fallidos\n`);
 process.exit(failed > 0 ? 1 : 0);
