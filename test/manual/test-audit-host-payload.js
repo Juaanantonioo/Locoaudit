@@ -395,14 +395,29 @@ const CONFIG_BASE = {
   // Esto es lo que hace que la línea al pie cubra los módulos que NO dejan
   // finding al apagarse (cpu, disco, inventario, eventos, actualizaciones):
   // derivarla de los findings cubriría dos de ocho.
-  ok(mods.every((m) => ["ok", "failed", "not-requested"].includes(m.status)),
-     "tres estados, ninguno fuera de la lista");
+  ok(mods.every((m) => ["ok", "failed", "not-applicable", "not-requested"].includes(m.status)),
+     "cuatro estados, ninguno fuera de la lista",
+     JSON.stringify([...new Set(mods.map((m) => m.status))]));
   ok(mods.every((m) => typeof m.label === "string" && m.label.length),
      "cada uno trae su etiqueta legible, para no escribirla en el HTML");
   ok(mods.find((m) => m.id === "lynis").status === "not-requested",
      "lynis apagado → 'not-requested', NO 'failed'");
-  ok(mods.find((m) => m.id === "trivy-rootfs").status === "failed",
-     "trivy-rootfs pedido y caído → 'failed'");
+  // 'os-unsupported' es un límite de la plataforma, no un fallo: Trivy no cubre los paquetes de
+  // sistema de macOS ni de Windows y no los va a cubrir. Contarlo como 'failed' ponía un aviso
+  // ámbar sobre algo que nadie puede arreglar.
+  ok(mods.find((m) => m.id === "trivy-rootfs").status === "not-applicable",
+     "trivy-rootfs con os-unsupported → 'not-applicable', NO 'failed'",
+     mods.find((m) => m.id === "trivy-rootfs").status);
+  // Y un fallo de verdad SÍ sale 'failed': la distinción tiene que funcionar en los dos sentidos.
+  rootfsStubResult = { skipped: true, kind: "error", reason: "trivy reventó", durationMs: 10 };
+  const rFallo = await ejecutar(Object.assign({}, CONFIG_BASE, {
+    enableLynis: false, enableTrivy: false, trivySystemPkgs: true,
+  }));
+  const modsFallo = rFallo.msg.payload.scanMeta.modules;
+  ok(modsFallo.find((m) => m.id === "trivy-rootfs").status === "failed",
+     "trivy-rootfs con kind 'error' → 'failed'",
+     modsFallo.find((m) => m.id === "trivy-rootfs").status);
+
   // pending-updates queda activo en CONFIG_BASE (enableUpdates no se apaga), así
   // que es el que cubre el caso "se ejecutó".
   ok(mods.find((m) => m.id === "pending-updates").status === "ok",

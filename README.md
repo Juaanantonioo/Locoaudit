@@ -193,9 +193,9 @@ Una vez en marcha, cuando falta una herramienta el nodo correspondiente lo seña
 
 1. **Arrastra un nodo de auditoría** al lienzo, por ejemplo `audit-host`.
 2. **Conecta un nodo `inject`** a su entrada, para poder disparar la auditoría manualmente. También puedes configurarlo con un intervalo si prefieres ejecuciones periódicas.
-3. **Conecta la salida** al nodo `ui_template` correspondiente, ya presente en el flujo de ejemplo.
+3. **Conecta la salida** al nodo `ui_template` correspondiente, ya presente en el flujo de ejemplo. Si creas uno nuevo, pega en su campo «Template» el fichero `examples/dashboard-<tipo>-template.html` completo y asigna al nodo un grupo de **ancho 6 o más**, de tipo «Widget»: con menos ancho las tarjetas de hallazgos se rompen.
 4. **Despliega** y pulsa el botón del `inject`.
-5. **Abre el panel** en `/dashboard` y consulta los resultados.
+5. **Abre el panel** en `http://127.0.0.1:1880/dashboard` y consulta los resultados.
 
 La primera ejecución de `audit-host` puede tardar varios minutos: Lynis recorre más de doscientos controles y Trivy descarga su base de datos de vulnerabilidades. Las siguientes son considerablemente más rápidas gracias a la caché.
 

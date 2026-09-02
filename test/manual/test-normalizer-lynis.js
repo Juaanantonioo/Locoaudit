@@ -71,9 +71,10 @@ if (!macRaw) {
   // 18 entradas − 2 fusiones (NETW-2704 y NETW-2705 traen aviso Y sugerencia).
   ok(mac.length === 16, `18 entradas → 16 findings (2 fusiones)`, `salieron ${mac.length}`);
 
-  // Ninguna entrada se pierde: la descripción de cada una tiene que aparecer en
-  // el título o en el remedio de algún finding (las fusionadas van en el fix).
-  const textos = mac.map((f) => `${f.title}\n${f.fix || ""}`).join("\n");
+  // Ninguna entrada se pierde. Desde que el título se traduce (lib/lynis-i18n.js), el texto
+  // ORIGINAL de Lynis vive en la evidencia —"Texto original de Lynis: …"—, así que la búsqueda
+  // mira los tres campos. La garantía es la misma: ninguna entrada del .dat desaparece.
+  const textos = mac.map((f) => `${f.title}\n${f.evidence || ""}\n${f.fix || ""}`).join("\n");
   const perdidas = [...macRaw.warnings, ...macRaw.suggestions]
     .filter((e) => !textos.includes(e.description));
   ok(perdidas.length === 0,
@@ -115,8 +116,13 @@ if (!macRaw) {
   // El título es legible, no el código.
   ok(mac.every((f) => !/^Lynis:/.test(f.title)),
      "ningún título empieza por el código del control");
-  ok(auth && auth.title === "Install a PAM module for password strength testing like pam_cracklib or pam_passwdqc or libpam-passwdqc",
-     "el título es la descripción del control");
+  // El título viene ahora del diccionario de lib/lynis-i18n.js, indexado por ID de control. El
+  // original en inglés no se pierde: sigue en la evidencia, y `translated` dice cuál es cuál.
+  ok(auth && auth.title === "No hay ningún módulo PAM de robustez de contraseñas instalado: nada impide poner una contraseña trivial",
+     "el título es la descripción del control, traducida", auth && auth.title);
+  ok(auth && auth.translated === true, "y marcado como traducido");
+  ok(auth && auth.evidence.includes("Install a PAM module for password strength testing"),
+     "el texto original de Lynis se conserva en la evidencia");
 
   // Campo 4 con prosa libre → se ignora (no hay actionType).
   const file7524 = byControl(mac, "FILE-7524")[0];
@@ -154,8 +160,11 @@ if (!archRaw) {
   const auth9286 = byControl(arch, "AUTH-9286");
   ok(auth9286.length >= 2,
      "AUTH-9286 aparece más de una vez y no colapsa", `salieron ${auth9286.length}`);
+  // La traducción se indexa por ID, así que dos instancias del MISMO control comparten texto.
+  // Lo que las distingue —el detalle, o la descripción original— se añade entre paréntesis, y
+  // solo cuando el control se repite: si no, cada tarjeta parecía un duplicado de la otra.
   ok(new Set(auth9286.map((f) => f.title)).size === auth9286.length,
-     "cada AUTH-9286 conserva su descripción propia",
+     "cada AUTH-9286 sigue siendo distinguible por su título",
      auth9286.map((f) => f.title).join(" | "));
 
   const netw3200 = byControl(arch, "NETW-3200");

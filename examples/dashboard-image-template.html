@@ -278,6 +278,29 @@
           </div>
         </div>
 
+        <!-- ══ COMPROBACIONES NO REALIZADAS ══ -->
+        <!-- Un solo bloque para todas, delante de los hallazgos y fuera de su lista: son
+             alcance del análisis, no problemas de las imágenes. Mismo patrón y mismo helper
+             que en el dashboard de host. -->
+        <div class="checks-card" v-if="checksSkipped" :class="{ 'checks-card-warn': checksSkipped.failed > 0 }">
+          <div class="checks-header">
+            <span class="checks-ico">{{ checksSkipped.failed > 0 ? '⚠️' : 'ℹ️' }}</span>
+            <span class="checks-title">{{ checksSkipped.title }}</span>
+          </div>
+          <div class="checks-body" v-for="(frase, i) in checksSkipped.evidence.split('\n\n')" :key="i">
+            {{ frase }}
+          </div>
+          <ul class="checks-list">
+            <li v-for="it in checksSkipped.items" :key="it.id" :class="'chk-' + it.estado">
+              <span class="checks-state">{{
+                it.estado === 'failed' ? 'no se pudo'
+                : it.estado === 'not-applicable' ? 'no aplica'
+                : 'desactivada' }}</span>
+              <span class="checks-name">{{ it.title }}</span>
+            </li>
+          </ul>
+        </div>
+
         <!-- ══ HALLAZGOS ══ -->
         <section>
           <div class="ia-findings-header">
@@ -529,10 +552,21 @@ export default {
       return Array.isArray(scanned) ? scanned : [];
     },
 
+    // Resumen que produce buildSkippedChecksSummary() en lib/normalizer.js, el MISMO helper que
+    // usa audit-host, a partir de los mismos findings `skipped`. Aquí no se recompone nada.
+    checksSkipped() {
+      var m = this.auditData && this.auditData.scanMeta;
+      return (m && m.checksSkipped) || null;
+    },
+
     filteredFindings() {
       var findings = (this.auditData && this.auditData.findings) || [];
       var self = this;
       return findings.filter(function(f) {
+        // Las comprobaciones no realizadas no son hallazgos sobre las imágenes: son alcance del
+        // análisis, y se enseñan agregadas en su propio bloque. Siguen en auditData.findings y
+        // en la exportación JSON con su detalle íntegro.
+        if (f.skipped === true) return false;
         if (self.filterSev !== 'all' && f.severity !== self.filterSev) return false;
         if (self.filterType === 'cve' && !self.findingIsCVE(f)) return false;
         if (self.filterType === 'config' && !self.findingIsConfig(f)) return false;
@@ -1152,6 +1186,40 @@ export default {
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track  { background: var(--accent-border); }
   ::-webkit-scrollbar-thumb  { background: var(--accent); border-radius: 3px; }
+
+  /* ── Comprobaciones no realizadas ── */
+  .checks-card {
+    background: var(--card, #fff);
+    border: 1px solid var(--border, #E5E7EB);
+    border-left: 4px solid var(--text-secondary, #6B7280);
+    border-radius: var(--radius, 10px);
+    padding: 14px 18px;
+    margin-bottom: 20px;
+  }
+  /* Ámbar SOLO si alguna falló de verdad: un módulo apagado o un límite de la plataforma no
+     son un aviso. */
+  .checks-card-warn {
+    background: var(--medium-bg, #FFFBEB);
+    border-color: var(--medium-border, #FDE68A);
+    border-left-color: var(--medium, #D97706);
+  }
+  .checks-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .checks-ico { font-size: 14px; }
+  .checks-title { font-size: 14px; font-weight: 700; color: var(--text, #111827); }
+  .checks-body { font-size: 12.5px; color: var(--text, #111827); line-height: 1.6; margin-top: 5px; }
+  .checks-list { list-style: none; margin: 10px 0 0; padding: 0; }
+  .checks-list li {
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 12px; padding: 3px 0;
+    border-top: 1px solid var(--border, #E5E7EB);
+  }
+  .checks-state {
+    flex: 0 0 auto; min-width: 78px;
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .3px; color: var(--text-secondary, #6B7280);
+  }
+  .checks-list li.chk-failed .checks-state { color: var(--medium, #D97706); }
+  .checks-name { color: var(--text, #111827); }
 
   /* ── STATES ───────────────────────────────────────────────── */
   .ia-state-center {

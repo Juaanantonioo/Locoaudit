@@ -10,7 +10,7 @@ const os = require("os");
 const { getDockerInfo }      = require("./modules/docker-api");
 const { auditDockerConfig }  = require("./modules/config-audit");
 const { runTrivyImage }      = require("./modules/cve-checker");
-const { normalizeImage }     = require("../../lib/normalizer");
+const { normalizeImage, buildSkippedChecksSummary } = require("../../lib/normalizer");
 const { summarize }          = require("../../lib/severity-map");
 const { createFinding }      = require("../../lib/finding-schema");
 const { commandExists }      = require("../../lib/executor");
@@ -326,6 +326,10 @@ module.exports = function (RED) {
           auditType: "image",
           host: { hostname: os.hostname(), platform: process.platform },
           scanMeta: {
+            // Mismo resumen que en audit-host, del mismo helper y derivado de los mismos
+            // findings: el dashboard de imagen saca las comprobaciones no realizadas de la
+            // lista de hallazgos y las enseña agregadas.
+            checksSkipped: buildSkippedChecksSummary(findings),
             modulesRun,
             imagesFound:       docker.images.length,
             containersFound:   docker.containers.length,

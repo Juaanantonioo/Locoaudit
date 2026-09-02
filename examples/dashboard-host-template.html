@@ -129,6 +129,32 @@
         </div>
       </div>
 
+      <!-- ══ COMPROBACIONES NO REALIZADAS ══ -->
+      <!-- Junto al Alcance y no en la lista de hallazgos: es la otra mitad de la misma
+           pregunta ("qué se ha mirado"), no un problema del equipo. Un solo bloque para
+           todas, igual que HOST-CVE-DECLARED agrupa las declaradas: cuatro tarjetas
+           informativas sueltas se leían como cuatro cosas que arreglar. -->
+      <div class="checks-card" v-if="checksSkipped" :class="{ 'checks-card-warn': checksSkipped.failed > 0 }">
+        <div class="checks-header">
+          <span class="checks-ico">{{ checksSkipped.failed > 0 ? '⚠️' : 'ℹ️' }}</span>
+          <span class="checks-title">{{ checksSkipped.title }}</span>
+        </div>
+        <div class="checks-body" v-for="(frase, i) in checksSkipped.evidence.split('\n\n')" :key="i">
+          {{ frase }}
+        </div>
+        <!-- Una línea por módulo. El estado va delante porque es lo que decide si el
+             usuario tiene algo que hacer con esa línea o no. -->
+        <ul class="checks-list">
+          <li v-for="it in checksSkipped.items" :key="it.id" :class="'chk-' + it.estado">
+            <span class="checks-state">{{
+              it.estado === 'failed' ? 'no se pudo'
+              : it.estado === 'not-applicable' ? 'no aplica'
+              : 'desactivada' }}</span>
+            <span class="checks-name">{{ it.title }}</span>
+          </li>
+        </ul>
+      </div>
+
       <!-- ══ ALCANCE DEL ESCANEO ══ -->
       <!-- Qué se ha mirado, antes de qué se ha encontrado. Sin esto el usuario ve
            "37 hallazgos" y concluye que su equipo está cubierto: es ausencia de
@@ -518,9 +544,10 @@
                         title="Versión anotada en un fichero de dependencias. No hay software instalado con esa versión en tu equipo.">Declarado</span>
                   <template v-else>
                     <span class="sev-badge" :class="sevClass(f.severity)">{{ sevLabel(f.severity) }}</span>
-                    <span v-if="f.origin === 'installed'" class="origin-badge installed"
-                          :class="sevClass(f.severity)"
-                          title="Paquete instalado en disco: la actualización sí te corresponde a ti.">Instalado</span>
+                    <!-- Sin píldora "Instalado": es el caso POR DEFECTO y etiquetarlo era ruido.
+                         En un informe donde casi todo está instalado, la marca aparecía en casi
+                         todas las tarjetas y dejaba de informar. "Declarado" se queda porque
+                         marca la excepción, y va con la nota que evita la confusión. -->
                   </template>
                   <!-- La etiqueta del grupo de control (AUTH → "Autenticación y
                        contraseñas") gana a la de categoría cuando existe: dentro
@@ -875,12 +902,28 @@ export default {
       return this.skippedFindings.filter(function(f) { return f.kind === 'disabled'; });
     },
 
-    // Lo que SÍ es un agujero en el informe: se pidió y no se pudo. Definido por
-    // EXCLUSIÓN del anterior, no con un segundo predicado: así las dos mitades
-    // suman siempre el total y no pueden divergir si mañana aparece otro kind.
+    // Límites del sistema: Trivy no lee los paquetes de macOS ni de Windows, Lynis no existe
+    // para Windows nativo. No se arreglan reintentando, así que no son un agujero del informe:
+    // son su alcance real. El flag lo sella createFinding() desde la lista única
+    // SKIP_KINDS_NO_APLICA de lib/normalizer.js; aquí no se repite ninguna lista de kinds.
+    notApplicableFindings() {
+      return this.skippedFindings.filter(function(f) { return f.notApplicable === true; });
+    },
+
+    // Lo que SÍ es un agujero en el informe: se pidió, se podía, y no salió. Definido por
+    // EXCLUSIÓN de los otros dos, no con un tercer predicado: así las tres partes suman
+    // siempre el total y no pueden divergir si mañana aparece otro kind.
     failedCheckFindings() {
-      var apagados = this.disabledFindings;
-      return this.skippedFindings.filter(function(f) { return apagados.indexOf(f) === -1; });
+      var fuera = this.disabledFindings.concat(this.notApplicableFindings);
+      return this.skippedFindings.filter(function(f) { return fuera.indexOf(f) === -1; });
+    },
+
+    // El resumen agregado que produce buildSkippedChecksSummary() en lib/normalizer.js, a
+    // partir de ESTOS MISMOS findings. No se recompone aquí: dos recuentos de comprobaciones
+    // no realizadas acabarían divergiendo.
+    checksSkipped() {
+      var m = this.auditData && this.auditData.scanMeta;
+      return (m && m.checksSkipped) || null;
     },
 
     // ── Módulos, desde scanMeta ───────────────────────────────────────────────
@@ -1263,6 +1306,12 @@ export default {
       var SEV_ORDER = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
       var catMap = {};
       findings.forEach(function(f) {
+        // Las comprobaciones no realizadas NO son hallazgos sobre el equipo: son alcance del
+        // análisis, y su sitio es el bloque de al lado del panel de Alcance. Sueltas aquí,
+        // aparecían como cuatro problemas más dentro de "Sistema & Actualizaciones", mezcladas
+        // con hallazgos reales. Siguen en `auditData.findings` y en la exportación JSON con su
+        // detalle íntegro: lo que cambia es dónde se pintan.
+        if (f.skipped === true) return;
         if (fsev !== 'all' && (f.severity || '').toLowerCase() !== fsev) return;
         var c = (f.category || 'other').toLowerCase();
         var key = CATS[c] ? c : 'other';
@@ -2357,12 +2406,6 @@ export default {
   }
   /* 'installed' sí acompaña a la severidad: hereda su color componiendo con
      .sev-badge.<sev>, que ya define fondo, texto y borde. */
-  .origin-badge.installed { border: 1px dashed currentColor; background: transparent; }
-  .origin-badge.installed.critical { color: var(--critical); }
-  .origin-badge.installed.high     { color: var(--high); }
-  .origin-badge.installed.medium   { color: var(--medium); }
-  .origin-badge.installed.low      { color: var(--low); }
-  .origin-badge.installed.info     { color: var(--info); }
 
   .finding-note {
     font-size: 11px;
@@ -2442,6 +2485,40 @@ export default {
     font-size: 11.5px; background: rgba(255,255,255,.7);
     padding: 1px 5px; border-radius: 4px;
   }
+
+  /* ── Comprobaciones no realizadas ── */
+  .checks-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--text-secondary);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 20px;
+  }
+  /* Ámbar SOLO si alguna falló de verdad. Un módulo apagado o un límite de la plataforma no
+     son un aviso: pintarlos de amarillo era el falso positivo que se está corrigiendo. */
+  .checks-card-warn {
+    background: var(--medium-bg);
+    border-color: var(--medium-border);
+    border-left-color: var(--medium);
+  }
+  .checks-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .checks-ico { font-size: 14px; }
+  .checks-title { font-size: 14px; font-weight: 700; color: var(--text); }
+  .checks-body { font-size: 12.5px; color: var(--text); line-height: 1.6; margin-top: 5px; }
+  .checks-list { list-style: none; margin: 10px 0 0; padding: 0; }
+  .checks-list li {
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 12px; padding: 3px 0;
+    border-top: 1px solid var(--border);
+  }
+  .checks-state {
+    flex: 0 0 auto; min-width: 78px;
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .3px; color: var(--text-secondary);
+  }
+  .checks-list li.chk-failed .checks-state { color: var(--medium); }
+  .checks-name { color: var(--text); }
 
   /* ── Alcance del análisis ── */
   .scope-card {

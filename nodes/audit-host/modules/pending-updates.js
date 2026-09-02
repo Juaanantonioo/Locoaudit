@@ -21,7 +21,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execCommand, commandExists } = require("../../../lib/executor");
+const { execCommand, commandExists, runPowerShell } = require("../../../lib/executor");
 
 const MACOS_TIMEOUT_MS   = 90000;    // --no-scan no va a la red, pero softwareupdate arranca lento
 const LINUX_TIMEOUT_MS   = 60000;
@@ -76,10 +76,27 @@ function execSkip(err, cmd, what, timeoutMs) {
   return {
     skipped: true,
     kind: "error",
-    reason:
-      `LoCoAudit no ha podido consultar ${what}: el comando \`${cmd}\` falló ` +
-      `(${((err && (err.stderr || err.message)) || "error desconocido").trim()}).`,
+    // Motivo LEGIBLE, sin el volcado. La evidencia que lee el usuario llegó a mostrar
+    // "ParserError: ParentContainsErrorRecordException" y ocho líneas de traza de PowerShell:
+    // eso no le dice nada a quien audita su portátil, y tapa la única frase que sí le sirve.
+    reason: `LoCoAudit no ha podido consultar ${what}: el comando \`${cmd}\` falló.`,
+    // El volcado íntegro viaja aparte y llega a la exportación JSON por raw.pendingUpdates.
+    // Sin él, el siguiente diagnóstico empieza de cero; dentro de `reason`, es ruido.
+    detail: firstLines(err && (err.stderr || err.message), RAW_DETAIL_LINES),
   };
+}
+
+/** Cuántas líneas del volcado se guardan: suficientes para diagnosticar, no un log entero. */
+const RAW_DETAIL_LINES = 40;
+
+/** Primeras N líneas no vacías de una salida, o null si no hay nada. */
+function firstLines(texto, n) {
+  const t = String(texto || "").trim();
+  if (!t) return null;
+  const lineas = t.split("\n").map((l) => l.trimEnd()).filter((l) => l.length);
+  const cortado = lineas.slice(0, n);
+  if (lineas.length > n) cortado.push(`… (${lineas.length - n} líneas más omitidas)`);
+  return cortado.join("\n");
 }
 
 /** Una actualización, con la misma forma en las tres plataformas. */
@@ -102,6 +119,10 @@ function update(name, fields = {}) {
     // apt: el sufijo del repositorio, guardado como evidencia aunque no se use para marcar.
     suite:          fields.suite || null,
     label:          fields.label || null,
+    // Solo Windows: las señales con las que se clasificó, para que la exportación JSON permita
+    // auditar por qué una entrada quedó como `security: null` sin repetir la consulta.
+    categories:     Array.isArray(fields.categories) ? fields.categories : null,
+    msrcSeverity:   fields.msrcSeverity || null,
   };
 }
 
@@ -558,12 +579,22 @@ async function fromApk() {
 const HRESULT_NOT_ELEVATED = "0x80240044";   // WU_E_NOT_ELEVATED
 
 /**
- * Solo comillas simples dentro del script: el comando entero va entre comillas dobles para
- * cmd.exe, que es el shell que usa executor.js en Windows.
+ * Se une con SALTOS DE LÍNEA, no con espacios.
+ *
+ * Unido con " " producía `$ErrorActionPreference='Stop' try {`, que PowerShell rechaza con
+ * "Token 'try' inesperado": el script no llegaba a compilar y el módulo salía por el camino de
+ * error en todas las ejecuciones de Windows. Añadir un `;` habría arreglado ese caso concreto y
+ * dejado la trampa puesta para la siguiente línea que alguien añadiera. El salto de línea es
+ * separador de sentencias en PowerShell y elimina la clase entera de bug.
+ *
+ * Para que esos saltos lleguen intactos, el script va por fichero temporal y `-File`
+ * (runPowerShell en lib/executor.js): con `-Command` el script viaja dentro del argumento de
+ * `cmd.exe /c` y un salto de línea ahí corta el comando. Es el mismo camino que ya usaba
+ * security-events.js.
  *
  * El script no deja escapar la excepción: la convierte en un JSON con el HRESULT, igual que
- * security-events.js hace con `denied` para el canal Security (:454). Así el mapeo en Node es
- * sobre un campo estructurado y no sobre el stderr, que viene traducido.
+ * security-events.js hace con `denied` para el canal Security. Así el mapeo en Node es sobre un
+ * campo estructurado y no sobre el stderr, que viene traducido al idioma del equipo.
  */
 const WINDOWS_PS_SCRIPT = [
   "$ErrorActionPreference='Stop'",
@@ -576,7 +607,7 @@ const WINDOWS_PS_SCRIPT = [
   "} catch {",
   "ConvertTo-Json -Compress @{ ok=$false; hresult=('0x{0:X8}' -f $_.Exception.HResult) }",
   "}",
-].join(" ");
+].join("\n");
 
 async function fromWindowsUpdate() {
   let shell = null;
@@ -593,15 +624,17 @@ async function fromWindowsUpdate() {
     };
   }
 
-  const cmd = `${shell} -NoProfile -NonInteractive -Command "${WINDOWS_PS_SCRIPT}"`;
+  // Etiqueta para los mensajes: la ruta del temporal cambia en cada ejecución y no le dice nada
+  // al usuario. El comando real, con su script, va en el volcado de `detail`.
+  const cmdLabel = `${shell} -File <consulta a Windows Update>`;
   let stdout;
   try {
-    stdout = await execCommand(cmd, WINDOWS_TIMEOUT_MS);
+    stdout = await runPowerShell(shell, WINDOWS_PS_SCRIPT, WINDOWS_TIMEOUT_MS,
+      { prefix: "lcaudit-winupdate-" });
   } catch (err) {
     stdout = err.stdout || "";
     if (!stdout.trim()) {
-      return execSkip(err, `${shell} -Command <consulta a Windows Update>`,
-        "las actualizaciones pendientes", WINDOWS_TIMEOUT_MS);
+      return execSkip(err, cmdLabel, "las actualizaciones pendientes", WINDOWS_TIMEOUT_MS);
     }
   }
 
@@ -614,7 +647,10 @@ async function fromWindowsUpdate() {
       kind: "error",
       reason:
         "LoCoAudit no ha podido interpretar la respuesta de Windows Update: la salida de " +
-        `PowerShell no es JSON válido (${parseErr.message}).`,
+        "PowerShell no tiene el formato esperado.",
+      // La salida real, recortada, para el JSON exportado. Es lo que permite ver si fue un error
+      // de sintaxis del script, un mensaje de la política de ejecución, o basura del perfil.
+      detail: firstLines(`${parseErr.message}\n---\n${stdout}`, RAW_DETAIL_LINES),
     };
   }
 
@@ -644,14 +680,22 @@ async function fromWindowsUpdate() {
 
   const raw = Array.isArray(parsed.updates) ? parsed.updates : [];
   const updates = raw.map((u) => {
-    const cats = Array.isArray(u.Categories) ? u.Categories : [];
+    const cats = (Array.isArray(u.Categories) ? u.Categories : [])
+      .map((c) => String(c || "").trim())
+      .filter(Boolean);
+    const clas = classifyWindowsUpdate(cats, u.Severity);
     return update(u.Title || "actualización sin título", {
-      // La categoría es la señal, no MsrcSeverity: una actualización de seguridad sin severidad
-      // asignada sigue siendo de seguridad.
-      security: cats.some((c) => /security updates/i.test(String(c || ""))),
+      security: clas.security,
       label: u.Severity || null,
+      // Se guardan para que el JSON exportado permita rehacer la clasificación sin volver a
+      // consultar Windows Update, y para poder auditar por qué una entrada quedó sin clasificar.
+      categories: cats,
+      msrcSeverity: u.Severity || null,
     });
   });
+
+  const seguras = updates.filter((u) => u.security === true).length;
+  const sinClasificar = updates.filter((u) => u.security === null).length;
 
   // Una lista vacía es un dato legítimo, no un fallo: un equipo gestionado por WSUS o Intune puede
   // no tener nada pendiente aprobado. Se devuelve como cero, igual que en macOS.
@@ -662,8 +706,44 @@ async function fromWindowsUpdate() {
     updates,
     total: updates.length,
     securityDetection: "full",
-    securityCount: updates.filter((u) => u.security).length,
+    securityCount: seguras,
+    // Tercer estado, visible y contado aparte. Sin él, una actualización que llega sin categorías
+    // caía en `security: false` y se contaba como "no es de seguridad", que es exactamente la
+    // asunción que no se puede hacer: no saberlo no es saber que no.
+    unclassifiedCount: sinClasificar,
   };
+}
+
+/**
+ * ¿Es de seguridad esta actualización de Windows? Tres respuestas, no dos.
+ *
+ *   true  → consta que sí (categoría de seguridad, o severidad MSRC asignada).
+ *   false → consta que no (hay categorías legibles y ninguna es de seguridad).
+ *   null  → NO SE SABE: la entrada no trae categorías ni severidad.
+ *
+ * El tercer caso existe porque el booleano mentía. Windows Update no siempre devuelve
+ * `Categories` —una entrada de driver, una actualización retirada, o una respuesta recortada por
+ * la política del equipo pueden venir sin ellas—, y con dos estados esas caían en `false`, o sea
+ * "no es de seguridad". Contar como segura de menos es el error peligroso de los dos.
+ *
+ * La CATEGORÍA es la señal principal: una actualización de seguridad sin severidad MSRC asignada
+ * sigue siendo de seguridad. La severidad MSRC es la segunda señal, no un requisito: si Microsoft
+ * le ha puesto Critical/Important/Moderate/Low, es que la ha evaluado como problema de seguridad.
+ */
+function classifyWindowsUpdate(categories, msrcSeverity) {
+  // El nombre de la categoría llega TRADUCIDO al idioma del equipo: "Security Updates" en un
+  // Windows en inglés, "Actualizaciones de seguridad" en uno en español. Por eso se buscan las
+  // dos raíces y no una cadena exacta.
+  const ES_SEGURIDAD = /security\s+updates?|actualizaciones?\s+de\s+seguridad|definition\s+updates?|actualizaciones?\s+de\s+definiciones/i;
+  const sev = String(msrcSeverity || "").trim();
+
+  if (categories.some((c) => ES_SEGURIDAD.test(c))) return { security: true, por: "categoria" };
+  if (sev && /^(critical|important|moderate|low)$/i.test(sev)) {
+    return { security: true, por: "msrc" };
+  }
+  // Sin categorías legibles no hay nada sobre lo que decidir. Decir `false` aquí sería inventar.
+  if (!categories.length && !sev) return { security: null, por: "sin-datos" };
+  return { security: false, por: "categoria" };
 }
 
 // ── Despacho ─────────────────────────────────────────────────────────────────

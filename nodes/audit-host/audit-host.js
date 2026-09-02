@@ -11,7 +11,7 @@ const { runTrivyFs } = require("./modules/trivy-fs");
 const { runTrivyRootfs, systemPackagesSupport } = require("../../lib/trivy-rootfs");
 const { runSecurityEvents, buildEventList } = require("./modules/security-events");
 const { getPendingUpdates } = require("./modules/pending-updates");
-const { normalizeHost } = require("../../lib/normalizer");
+const { normalizeHost, esNoAplica, buildSkippedChecksSummary, lynisCoverage } = require("../../lib/normalizer");
 const { detectPackageManager, managerLabel } = require("../../lib/pkg-manager");
 const { commandExists } = require("../../lib/executor");
 const { summarize } = require("../../lib/severity-map");
@@ -287,6 +287,10 @@ module.exports = function (RED) {
             type: osInfo.type,
           },
           scanMeta: {
+            // Resumen de lo que NO se comprobó, derivado de los propios findings `skipped`. El
+            // dashboard lo enseña junto al Alcance y saca esos hallazgos de la lista: son una
+            // sola cosa —"esto es lo que no se ha mirado"— y no cuatro problemas del equipo.
+            checksSkipped: buildSkippedChecksSummary(findings),
             /**
              * Los siete módulos y qué pasó con cada uno. Antes solo viajaba `modulesRun`, la lista
              * de los que se ejecutaron, y de ahí no se puede deducir la diferencia que importa:
@@ -299,20 +303,35 @@ module.exports = function (RED) {
             modules: [
               { id: "cpu-memory",      label: "Procesador y memoria",        requested: enableCpu,       ran: enableCpu },
               { id: "disk-storage",    label: "Almacenamiento",              requested: enableDisk,      ran: enableDisk },
-              { id: "sw-inventory",    label: "Inventario de software",      requested: enableSw,        ran: enableSw && !swSkipped },
-              { id: "lynis",           label: "Hardening del sistema",       requested: enableLynis,     ran: enableLynis && !lynis?.skipped },
-              { id: "trivy-fs",        label: "Vulnerabilidades del home",   requested: enableTrivy,     ran: enableTrivy && !trivy?.skipped },
-              { id: "trivy-rootfs",    label: "Paquetes del sistema",        requested: enableSysPkgs,   ran: enableSysPkgs && !rootfsSkipped },
-              { id: "security-events", label: "Eventos de seguridad",        requested: enableSecEvents, ran: enableSecEvents && !securityEvents?.skipped },
-              { id: "pending-updates", label: "Actualizaciones pendientes",  requested: enableUpdates,   ran: enableUpdates && !updSkipped },
+              { id: "sw-inventory",    label: "Inventario de software",      requested: enableSw,        ran: enableSw && !swSkipped,                              kind: swResolved?.kind },
+              { id: "lynis",           label: "Hardening del sistema",       requested: enableLynis,     ran: enableLynis && !lynis?.skipped,                      kind: lynisResolved?.kind },
+              { id: "trivy-fs",        label: "Vulnerabilidades del home",   requested: enableTrivy,     ran: enableTrivy && !trivy?.skipped,                      kind: trivy?.kind },
+              { id: "trivy-rootfs",    label: "Paquetes del sistema",        requested: enableSysPkgs,   ran: enableSysPkgs && !rootfsSkipped,                     kind: rootfsResolved?.kind },
+              { id: "security-events", label: "Eventos de seguridad",        requested: enableSecEvents, ran: enableSecEvents && !securityEvents?.skipped,         kind: securityEvents?.kind },
+              { id: "pending-updates", label: "Actualizaciones pendientes",  requested: enableUpdates,   ran: enableUpdates && !updSkipped,                        kind: updResolved?.kind },
             ].map((m) => ({
-              ...m,
+              id: m.id,
+              label: m.label,
               requested: !!m.requested,
               ran: !!m.ran,
-              // Tres estados, no dos. 'not-requested' es una decisión del usuario y 'failed' un
-              // agujero en el informe: mezclarlos es lo que ponía la tarjeta en ámbar por un
-              // módulo que alguien apagó a propósito.
-              status: !m.requested ? "not-requested" : m.ran ? "ok" : "failed",
+              // El kind del módulo, para poder separar el límite estructural del fallo real sin
+              // volver a mirar el resultado entero.
+              kind: m.kind || null,
+              // CUATRO estados, no dos ni tres:
+              //   'not-requested'  lo apagó el usuario. Decisión suya, no un agujero.
+              //   'not-applicable' no tiene sentido en este sistema y no se va a poder. Tampoco
+              //                    es un agujero: es el alcance real de la herramienta.
+              //   'failed'         se pidió, se intentó y no salió. Esto SÍ es un agujero.
+              //   'ok'             se ejecutó.
+              // Fundir los dos primeros con 'failed' es lo que ponía avisos ámbar sobre cosas
+              // que nadie puede arreglar.
+              status: !m.requested
+                ? "not-requested"
+                : m.ran
+                ? "ok"
+                : esNoAplica(m.kind)
+                ? "not-applicable"
+                : "failed",
             })),
             modulesRun: [
               enableCpu && "cpu-memory",
@@ -396,6 +415,13 @@ module.exports = function (RED) {
               version: (lynis && lynis.version) || null,
               testsDone: (lynis && lynis.testsDone) || null,
               scale: { deficiente: "<30", mejorable: "30-54", aceptable: ">=55" },
+              // Cobertura REAL del diccionario de castellano sobre los controles que ha
+              // devuelto ESTE informe. Va al panel para que se lea "34 de 36 traducidos" en vez
+              // de dar por hecho que está todo: la tabla cubre lo visto en los informes de
+              // referencia, no el catálogo entero de Lynis, y eso hay que decirlo.
+              i18n: lynisCoverage(
+                [...(lynis?.warnings || []), ...(lynis?.suggestions || [])].map((e) => e.id)
+              ),
             },
           },
           raw: { ...raw, osInfo },
