@@ -185,7 +185,7 @@ module.exports = function (RED) {
                 id:       "IMG-TRIVY-OFF",
                 title:    "Trivy no disponible",
                 severity: "info",
-                evidence: "trivy not installed",
+                evidence: "Trivy no está instalado en este equipo.",
                 fix:      "Instalar Trivy: https://trivy.dev/latest/getting-started/installation/",
                 category: "image",
                 source:   "native",
@@ -250,7 +250,7 @@ module.exports = function (RED) {
               id:       "IMG-DOCKER-OFF",
               title:    "Docker no disponible",
               severity: "info",
-              evidence: docker.reason || "docker not available",
+              evidence: docker.reason || "Docker no está disponible en este equipo.",
               fix:      "Instalar Docker Desktop desde https://www.docker.com/products/docker-desktop",
               category: "image",
               source:   "native",
@@ -284,7 +284,11 @@ module.exports = function (RED) {
 
         const [configResult, trivyResult] = await Promise.allSettled([
           enableConfig ? auditDockerConfig(docker)         : Promise.resolve([]),
-          enableTrivy  ? runTrivyImage(docker.images, imageTimeout) : Promise.resolve({ skipped: true, reason: "disabled" }),
+          enableTrivy
+            ? runTrivyImage(docker.images, imageTimeout)
+            // `kind` explícito: es lo que separa "lo apagaste tú" de "falló". El texto
+            // es para leer, el kind es para decidir.
+            : Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de vulnerabilidades de las imágenes está desactivado en las opciones del nodo." }),
         ]);
 
         const configFindings = configResult.status === "fulfilled" ? configResult.value : [];

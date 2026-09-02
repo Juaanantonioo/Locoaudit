@@ -111,7 +111,7 @@ async function runLynis() {
   // usuario normal, así que lanzar "lynis" a secas fallaría justo después de haberlo encontrado.
   const lynisPath = await commandExists("lynis");
   if (!lynisPath) {
-    return { skipped: true, kind: "not-installed", reason: "lynis not installed" };
+    return { skipped: true, kind: "not-installed", reason: "Lynis no está instalado en este equipo" };
   }
 
   try {
@@ -135,7 +135,7 @@ async function runLynis() {
       return {
         skipped: true,
         kind: "error",
-        reason: `lynis failed: ${err.message || "unknown error"}`,
+        reason: `Lynis terminó con error y no dejó informe: ${err.message || "sin detalle del sistema"}`,
       };
     }
   }
@@ -153,7 +153,7 @@ async function runLynis() {
     return {
       skipped: true,
       kind: "error",
-      reason: `lynis report not found at ${REPORT_FILE} nor ${REPORT_FALLBACK}`,
+      reason: `Lynis terminó pero no se ha encontrado su informe ni en ${REPORT_FILE} ni en ${REPORT_FALLBACK}`,
     };
   }
 
@@ -164,7 +164,7 @@ async function runLynis() {
     return {
       skipped: true,
       kind: "error",
-      reason: `cannot read ${reportPath}: ${readErr.message}`,
+      reason: `No se ha podido leer el informe de Lynis en ${reportPath}: ${readErr.message}`,
     };
   }
 

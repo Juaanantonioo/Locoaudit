@@ -400,7 +400,10 @@ _already_installed = False
 #   "missing"          no instalada
 _tool_status: dict = {}
 
-TOOL_STATES = ("available", "not_operational", "unsupported", "missing")
+# "unknown" no es un adorno: sin Node no se puede preguntar a lib/executor.js, y
+# entonces un "no la encuentro" de este proceso NO autoriza a decir que falta.
+# Era justo el error que producía "Lynis no encontrado" sobre un Lynis instalado.
+TOOL_STATES = ("available", "not_operational", "unsupported", "unknown", "missing")
 
 
 def _set_tool_state(cmd: str, state: str, reason: str = "") -> None:
@@ -450,6 +453,11 @@ def _tool_summary_lines() -> list:
     if g["unsupported"]:
         lineas.append(("warn", "No disponibles en este sistema: " +
                        ", ".join(l for l, _, _ in g["unsupported"])))
+    if g["unknown"]:
+        # Ni "instaladas" ni "no instaladas": no se ha podido comprobar. Meterlas
+        # en cualquiera de los dos grupos sería afirmar algo que no se sabe.
+        lineas.append(("warn", "Sin comprobar: " +
+                       ", ".join(l for l, _, _ in g["unknown"])))
     if g["missing"]:
         lineas.append(("warn", "No instaladas: " +
                        ", ".join(l for l, _, _ in g["missing"])))
@@ -778,22 +786,94 @@ def _tool_in_known_dirs(tool: str):
     return None
 
 
+# Respuestas de lib/executor.js, cacheadas: {tool: ruta|None}. Se rellena de una
+# sola llamada a Node, no de siete.
+_js_probe_cache: dict = {}
+# ¿Pudo Node responder? None = todavía no se ha intentado.
+_js_probe_ok: bool | None = None
+
+# El detector de JS. Se pasa por -e y no por fichero temporal: es corto, y así no
+# hay nada que limpiar si el proceso muere a medias.
+_JS_PROBE = (
+    "const {commandExists}=require(process.argv[1]);"
+    "(async()=>{const o={};"
+    "for(const t of process.argv.slice(2)) o[t]=(await commandExists(t))||null;"
+    "process.stdout.write(JSON.stringify(o));})()"
+)
+
+
+def _probe_tools_with_node(tools: list) -> dict | None:
+    """Pregunta a lib/executor.js por TODAS las herramientas de una vez.
+
+    Por qué se le pregunta a JS en vez de replicar aquí su lógica: quien ejecuta
+    estas herramientas es Node-RED, no el launcher. `commandExists()` de
+    lib/executor.js sabe cosas que este proceso no —en Linux busca en
+    /usr/local/sbin, /usr/sbin y /sbin, donde Debian instala lynis y de donde el
+    PATH de un usuario normal no lo ve—, y tener dos implementaciones de "¿está
+    instalada?" es tener dos respuestas. El launcher llegó a decir "Lynis no
+    encontrado", ofrecer instalarlo y avisar de "modo reducido" mientras el panel
+    lo estaba usando sin problema.
+
+    Una sola invocación de Node para toda la lista: siete arranques del intérprete
+    para siete preguntas es tiempo tirado en el arranque del asistente.
+
+    Devuelve {tool: ruta|None}, o None si Node no pudo responder — que NO es lo
+    mismo que "no están instaladas", y por eso el llamante lo trata aparte.
+    """
+    executor = os.path.join(PROJECT_ROOT, "lib", "executor.js")
+    if not os.path.isfile(executor):
+        return None
+    try:
+        proc = subprocess.run(
+            ["node", "-e", _JS_PROBE, executor] + list(tools),
+            capture_output=True, text=True, timeout=20, env=_child_env(),
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        datos = json.loads(proc.stdout)
+    except Exception:
+        # Node ausente, roto, o una salida que no es JSON. Cualquiera de las tres
+        # es "no lo sé", nunca "no está instalada".
+        return None
+    return {t: datos.get(t) or None for t in tools}
+
+
+def _prime_tool_probe(tools: list = None) -> None:
+    """Rellena la caché con una sola llamada a Node. Idempotente."""
+    global _js_probe_ok
+    if _js_probe_ok is not None:
+        return
+    lista = tools or [c for c, _ in OPTIONAL_TOOLS]
+    datos = _probe_tools_with_node(lista)
+    if datos is None:
+        _js_probe_ok = False
+        return
+    _js_probe_cache.update(datos)
+    _js_probe_ok = True
+
+
 def _tool_path(tool: str):
     """Ruta del ejecutable de `tool`, o None si no está disponible.
 
-    FUENTE ÚNICA DE VERDAD para "¿está esta herramienta disponible?". Combina las
-    dos señales que existen, en orden de preferencia:
+    FUENTE ÚNICA DE VERDAD para "¿está esta herramienta disponible?". El orden es:
 
-      1. El PATH que heredó este proceso (shutil.which).
-      2. Las carpetas conocidas de _WINDOWS_TOOL_DIRS, que _child_env() inyecta en
+      1. Lo que responde lib/executor.js, que es el código que Node-RED usará de
+         verdad para lanzarla. Si él la encuentra, está — aunque este proceso no.
+      2. El PATH que heredó este proceso (shutil.which).
+      3. Las carpetas conocidas de _WINDOWS_TOOL_DIRS, que _child_env() inyecta en
          el entorno del Node-RED hijo.
 
-    Preguntar solo por (1) daba respuestas que contradecían lo que el usuario veía
-    funcionando: en Windows una herramienta puede estar en disco y ser perfectamente
-    usable por los nodos, sin figurar en el PATH de este proceso. Todo lo que decida
-    en función de la disponibilidad tiene que derivar de aquí, no de shutil.which
-    por su cuenta.
+    (2) y (3) siguen aquí como red para cuando Node todavía no está instalado:
+    en el paso 2 del asistente puede no haberlo. No son un segundo detector, son
+    el mismo de siempre degradado, y su respuesta se marca como no concluyente en
+    _tool_state_for() en vez de afirmar que la herramienta falta.
     """
+    _prime_tool_probe()
+    if _js_probe_ok and tool in _js_probe_cache:
+        ruta = _js_probe_cache[tool]
+        if ruta:
+            return ruta
+
     ruta = shutil.which(tool)
     if ruta:
         return ruta
@@ -809,6 +889,70 @@ def _tool_path(tool: str):
 def _tool_available(tool: str) -> bool:
     """¿Puede LoCoAudit usar esta herramienta? Ver _tool_path()."""
     return _tool_path(tool) is not None
+
+
+def _probe_is_conclusive() -> bool:
+    """¿Se pudo preguntar a lib/executor.js?
+
+    Si no, un "no la encuentro" de este proceso no basta para afirmar que la
+    herramienta no está: en Debian el PATH del usuario no ve /usr/sbin y esa es
+    exactamente la respuesta equivocada. Sin Node, "no lo sé" es la única
+    respuesta honesta.
+    """
+    _prime_tool_probe()
+    return _js_probe_ok is True
+
+
+# ─────────────────────────────────────────────
+#  Permisos de instalación
+# ─────────────────────────────────────────────
+def _can_sudo() -> bool | None:
+    """¿Puede este usuario usar sudo sin que le pidan nada?
+
+    True  → sudo disponible y sin contraseña pendiente.
+    False → sudo existe pero este usuario no puede usarlo (no está en sudoers).
+    None  → no se puede saber: no hay sudo, o lo hay pero pedirá contraseña.
+
+    `sudo -n true` no pregunta nada y devuelve no-cero si haría falta interacción.
+    El caso None NO se trata como False: un usuario que sí puede usar sudo pero
+    tiene que teclear la contraseña debe poder instalar igual.
+    """
+    if OS == "Windows":
+        return None
+    if not shutil.which("sudo"):
+        return False
+    try:
+        proc = subprocess.run(["sudo", "-n", "true"],
+                              capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if proc.returncode == 0:
+        return True
+    salida = ((proc.stderr or "") + (proc.stdout or "")).lower()
+    # "is not in the sudoers file" / "not allowed to run sudo": no es que falte la
+    # contraseña, es que este usuario no puede. Ofrecerle instalar sería ofrecerle
+    # una acción que va a fallar.
+    if "sudoers" in salida or "not allowed" in salida:
+        return False
+    # "a password is required": puede, pero hay que pedírsela.
+    return None
+
+
+def _needs_sudo(cmd: str) -> bool:
+    """¿El comando de instalación necesita privilegios?"""
+    return "sudo " in (cmd or "")
+
+
+def _can_run_install(cmd: str) -> bool:
+    """¿Tiene sentido OFRECER esta instalación?
+
+    Solo se dice que no cuando consta que va a fallar. Ante la duda se ofrece: un
+    falso "no puedes" es tan molesto como el falso "no está instalada" que se
+    acaba de arreglar.
+    """
+    if not _needs_sudo(cmd):
+        return True
+    return _can_sudo() is not False
 
 
 def _child_env() -> dict:
@@ -1053,6 +1197,9 @@ _SUMMARY_SECTIONS = [
     ("available",       "Módulos activos",               "green"),
     ("not_operational", "Requieren atención",            "yellow"),
     ("unsupported",     "No disponibles en este sistema", "yellow"),
+    # Mismo orden que _tool_summary_lines(): las dos vistas del mismo hecho no
+    # pueden enumerarlo distinto.
+    ("unknown",         "Sin comprobar",                 "yellow"),
     ("missing",         "No instaladas",                 "yellow"),
 ]
 
@@ -1298,9 +1445,18 @@ def step2_optional_tools():
     # Pre-pasada: si falta más de una herramienta instalable, se ofrece hacerlo
     # todo de una vez antes de entrar al bucle. Lynis queda fuera por sí solo
     # porque en Windows get_auto_install_cmd() no le devuelve comando.
+    # Una sola llamada a Node para las cuatro, antes de nada: así el bucle de abajo
+    # ya encuentra la caché caliente y no arranca el intérprete una vez por herramienta.
+    _prime_tool_probe()
+
+    # Mismo gate que dentro del bucle: no se ofrece en bloque lo que no se va a
+    # poder instalar, ni lo que no se ha podido comprobar.
     pending = [
         (c, l) for c, l in OPTIONAL_TOOLS
-        if not _tool_available(c) and get_auto_install_cmd(c)
+        if not _tool_available(c)
+        and _probe_is_conclusive()
+        and get_auto_install_cmd(c)
+        and _can_run_install(get_auto_install_cmd(c))
     ]
     install_all = _ask_install_all(pending, is_tty) if len(pending) >= 2 else False
     if install_all:
@@ -1337,11 +1493,34 @@ def step2_optional_tools():
                     "encontrarán hasta que la reinstales desde su instalador oficial.")
             continue
 
-        # ── Tool missing ──
+        # ── No se ha encontrado ──
+        # Con Node disponible, la respuesta es la misma que dará Node-RED y se
+        # puede afirmar que falta. Sin Node, lo único honesto es decir que no se
+        # ha podido comprobar: el PATH de esta ventana no ve /usr/sbin, y ahí es
+        # donde Debian instala lynis.
+        if not _probe_is_conclusive():
+            _set_tool_state(cmd, "unknown", "no se ha podido comprobar desde el asistente")
+            warn(f"{label} — no se ha podido comprobar si está instalado")
+            tip("El asistente no ha podido consultarlo con Node. Si ya lo tienes, "
+                "LoCoAudit lo usará igualmente.")
+            tip(f"Para instalarlo: {MANUAL_INSTALL.get(cmd, {}).get(OS, 'Consulta la documentación oficial')}")
+            blank()
+            continue
+
         _set_tool_state(cmd, "missing")
         warn(f"{label} no encontrado — {TOOL_DESC.get(cmd, '')}")
 
         auto_cmd = get_auto_install_cmd(cmd)
+
+        # Ofrecer una acción que va a fallar es peor que no ofrecerla: el usuario
+        # dice que sí, espera, y recibe un error rojo de sudoers que no puede
+        # resolver desde aquí. Se le da el comando para que lo ejecute él.
+        if auto_cmd and not _can_run_install(auto_cmd):
+            tip("Tu usuario no tiene permisos de administrador en este equipo, así "
+                "que el asistente no puede instalarlo por ti.")
+            tip(f"Pídeselo a quien administre el equipo, o ejecútalo tú con una cuenta que pueda: {auto_cmd}")
+            blank()
+            continue
 
         if auto_cmd and OUTPUT_QUEUE is not None:
             if install_all:
@@ -1430,8 +1609,17 @@ def step2_optional_tools():
     else:
         for tipo, texto in lineas:
             (ok if tipo == "ok" else warn)(texto)
-        tip("Los nodos que dependen de ellas seguirán funcionando en modo "
-            "reducido: avisarán en el panel en vez de dar un resultado vacío.")
+        # Solo si alguna falta o no funciona DE VERDAD. Antes se imprimía siempre
+        # que el resumen no fuera perfecto, así que salía "modo reducido" junto a
+        # una herramienta que estaba instalada y funcionando.
+        grupos = _tool_groups()
+        if grupos["missing"] or grupos["not_operational"] or grupos["unsupported"]:
+            tip("Los nodos que dependen de ellas seguirán funcionando en modo "
+                "reducido: avisarán en el panel en vez de dar un resultado vacío.")
+        if grupos["unknown"]:
+            tip("No se ha podido comprobar su estado desde el asistente. Si están "
+                "instaladas, los nodos las usarán igualmente: LoCoAudit las busca "
+                "también fuera del PATH de esta ventana.")
 
     if _installed_this_run:
         blank()

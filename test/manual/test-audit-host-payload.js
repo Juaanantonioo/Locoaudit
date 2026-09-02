@@ -344,6 +344,80 @@ const CONFIG_BASE = {
   ok(r.msg && r.msg.payload.raw.trivy.scan.children.scanned.length === 1,
      "scan.children del home intacto (lo usan las pills del bloque de alcance)");
 
+  console.log("\n── 8 · Apagado por el usuario ≠ comprobación caída ───────────────\n");
+
+  // El bug: la tarjeta ponía en ámbar "hay comprobaciones caídas" por módulos que
+  // el propio usuario había desactivado. Son cosas distintas y el DATO tiene que
+  // distinguirlas, no el texto de `reason`.
+  trivyStubResult = { skipped: true, kind: "disabled", reason: "irrelevante" };
+  rootfsStubResult = { skipped: true, kind: "disabled", reason: "irrelevante" };
+  r = await ejecutar(Object.assign({}, CONFIG_BASE, {
+    enableLynis: false, enableTrivy: false, trivySystemPkgs: false,
+  }));
+
+  const skips = (r.msg ? r.msg.payload.findings : []).filter((f) => f.skipped);
+  console.log("  findings skipped:", JSON.stringify(skips.map((f) => f.id + "/" + f.kind)));
+
+  ok(skips.length > 0, "los módulos apagados siguen dejando constancia");
+  ok(skips.every((f) => f.kind === "disabled"),
+     "todos llevan kind 'disabled' en el finding, no solo en el resultado del módulo",
+     JSON.stringify(skips.map((f) => f.kind)));
+  // Sin esto la partición del dashboard es imposible: `skipped:true` a secas solo
+  // dice que falta el dato, no por qué.
+  ok(skips.every((f) => typeof f.kind === "string" && f.kind.length > 0),
+     "createFinding conserva el kind (antes se perdía y llegaba undefined)");
+
+  // Y un fallo real sigue distinguiéndose.
+  rootfsStubResult = {
+    skipped: true, kind: "os-unsupported",
+    reason: "Trivy no ha detectado la familia del sistema operativo", durationMs: 400,
+  };
+  r = await ejecutar(Object.assign({}, CONFIG_BASE, {
+    enableLynis: false, enableTrivy: false, trivySystemPkgs: true,
+  }));
+  const mix = (r.msg ? r.msg.payload.findings : []).filter((f) => f.skipped);
+  const apagados = mix.filter((f) => f.kind === "disabled");
+  const caidos   = mix.filter((f) => f.kind !== "disabled");
+  console.log("  mezcla:", JSON.stringify(mix.map((f) => f.id + "/" + f.kind)));
+
+  ok(apagados.length === 2, "2 apagados (lynis, trivy-fs)", String(apagados.length));
+  ok(caidos.length === 1 && caidos[0].id === "HOST-OS-CVE-SKIP",
+     "1 caído (trivy-rootfs), separable del resto", JSON.stringify(caidos.map((f) => f.id)));
+  ok(apagados.length + caidos.length === mix.length, "la partición es exhaustiva");
+
+  console.log("\n── 9 · scanMeta.modules: los OCHO módulos, con su estado ─────────\n");
+
+  const mods = r.msg && r.msg.payload.scanMeta.modules;
+  console.log("  " + (mods || []).map((m) => m.id + "=" + m.status).join(" · "));
+
+  ok(Array.isArray(mods) && mods.length === 8,
+     "los 8 módulos del nodo aparecen siempre, se ejecuten o no", String(mods && mods.length));
+  // Esto es lo que hace que la línea al pie cubra los módulos que NO dejan
+  // finding al apagarse (cpu, disco, inventario, eventos, actualizaciones):
+  // derivarla de los findings cubriría dos de ocho.
+  ok(mods.every((m) => ["ok", "failed", "not-requested"].includes(m.status)),
+     "tres estados, ninguno fuera de la lista");
+  ok(mods.every((m) => typeof m.label === "string" && m.label.length),
+     "cada uno trae su etiqueta legible, para no escribirla en el HTML");
+  ok(mods.find((m) => m.id === "lynis").status === "not-requested",
+     "lynis apagado → 'not-requested', NO 'failed'");
+  ok(mods.find((m) => m.id === "trivy-rootfs").status === "failed",
+     "trivy-rootfs pedido y caído → 'failed'");
+  // pending-updates queda activo en CONFIG_BASE (enableUpdates no se apaga), así
+  // que es el que cubre el caso "se ejecutó".
+  ok(mods.find((m) => m.id === "pending-updates").status === "ok",
+     "y el que se ejecutó → 'ok'", mods.find((m) => m.id === "pending-updates").status);
+
+  // La razón de ser de este bloque: los módulos que NO dejan finding al apagarse
+  // (cpu, disco, inventario, eventos) constan igual. Derivar la línea al pie de
+  // los findings solo habría cubierto lynis y trivy.
+  const sinFinding = ["cpu-memory", "disk-storage", "sw-inventory", "security-events"];
+  ok(sinFinding.every((id) => mods.find((m) => m.id === id).status === "not-requested"),
+     "los 4 módulos que no dejan hallazgo al apagarse constan igual",
+     JSON.stringify(sinFinding.map((id) => id + "=" + mods.find((m) => m.id === id).status)));
+  ok(!(r.msg ? r.msg.payload.findings : []).some((f) => f.id.startsWith("HOST-CPU")),
+     "y en efecto no han dejado ningún finding: por eso scanMeta es la fuente");
+
   console.log(`\n${passed} pasados · ${failed} fallidos\n`);
   process.exit(failed > 0 ? 1 : 0);
 })();

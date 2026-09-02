@@ -76,12 +76,17 @@ module.exports = function (RED) {
             enableCpu ? Promise.resolve(runSystemModule()) : Promise.resolve(null),
             enableDisk ? getDiskInfo() : Promise.resolve(null),
             enableSw ? getSwInventory() : Promise.resolve(null),
-            enableLynis ? runLynis() : Promise.resolve({ skipped: true, reason: "disabled" }),
+            enableLynis
+              ? runLynis()
+              // `kind: "disabled"` explícito: un módulo que apagó el usuario NO es una
+              // comprobación caída, y el dashboard tiene que poder separarlos sin
+              // olfatear el texto de `reason`.
+              : Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de hardening del sistema está desactivado en las opciones del nodo." }),
             enableTrivy
               // Vacío ⇒ el HOME de quien audita. Solo el HOME: los paquetes del sistema son ahora
               // el módulo de al lado y ya no viajan dentro de este resultado.
               ? runTrivyFs({ target: config.trivyTarget, pkgManager })
-              : Promise.resolve({ skipped: true, reason: "disabled" }),
+              : Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de vulnerabilidades de tu carpeta personal está desactivado en las opciones del nodo." }),
             !enableSysPkgs
               ? Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de los paquetes del sistema está desactivado en las opciones del nodo." })
               : !trivyPath
@@ -282,6 +287,33 @@ module.exports = function (RED) {
             type: osInfo.type,
           },
           scanMeta: {
+            /**
+             * Los siete módulos y qué pasó con cada uno. Antes solo viajaba `modulesRun`, la lista
+             * de los que se ejecutaron, y de ahí no se puede deducir la diferencia que importa:
+             * un módulo APAGADO por el usuario y uno que se CAYÓ producen la misma ausencia.
+             *
+             * Se deriva aquí y no de los findings a propósito. Solo Lynis y Trivy emiten un
+             * hallazgo al omitirse; los otros cinco devuelven null y no dejan rastro, así que
+             * contar findings cubriría dos de siete. Esto cubre los siete sin tocar cinco ficheros.
+             */
+            modules: [
+              { id: "cpu-memory",      label: "Procesador y memoria",        requested: enableCpu,       ran: enableCpu },
+              { id: "disk-storage",    label: "Almacenamiento",              requested: enableDisk,      ran: enableDisk },
+              { id: "sw-inventory",    label: "Inventario de software",      requested: enableSw,        ran: enableSw && !swSkipped },
+              { id: "lynis",           label: "Hardening del sistema",       requested: enableLynis,     ran: enableLynis && !lynis?.skipped },
+              { id: "trivy-fs",        label: "Vulnerabilidades del home",   requested: enableTrivy,     ran: enableTrivy && !trivy?.skipped },
+              { id: "trivy-rootfs",    label: "Paquetes del sistema",        requested: enableSysPkgs,   ran: enableSysPkgs && !rootfsSkipped },
+              { id: "security-events", label: "Eventos de seguridad",        requested: enableSecEvents, ran: enableSecEvents && !securityEvents?.skipped },
+              { id: "pending-updates", label: "Actualizaciones pendientes",  requested: enableUpdates,   ran: enableUpdates && !updSkipped },
+            ].map((m) => ({
+              ...m,
+              requested: !!m.requested,
+              ran: !!m.ran,
+              // Tres estados, no dos. 'not-requested' es una decisión del usuario y 'failed' un
+              // agujero en el informe: mezclarlos es lo que ponía la tarjeta en ámbar por un
+              // módulo que alguien apagó a propósito.
+              status: !m.requested ? "not-requested" : m.ran ? "ok" : "failed",
+            })),
             modulesRun: [
               enableCpu && "cpu-memory",
               enableDisk && "disk-storage",

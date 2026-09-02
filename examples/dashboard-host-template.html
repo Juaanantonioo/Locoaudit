@@ -94,6 +94,13 @@
       <div class="nothing-card" v-if="nothingState === 'clean'">
         <div class="nothing-title">✓ No hay nada que tengas que arreglar en tu equipo</div>
         <div class="nothing-body" v-for="(frase, i) in nothingBuckets" :key="i" v-html="frase"></div>
+        <!-- Que el usuario apague un módulo no es un agujero del que avisarle en
+             amarillo: es una decisión suya. Se dice, porque la conclusión no cubre
+             lo que no se miró, pero en tono sobrio y sin icono de alarma. -->
+        <div class="nothing-foot" v-if="disabledNote">
+          {{ disabledNote }}
+          <span class="nothing-foot-list">{{ modulesNotRequested.map(function(m){ return m.label; }).join(' · ') }}</span>
+        </div>
       </div>
 
       <div class="nothing-card nothing-card-warn" v-if="nothingState === 'partial'">
@@ -101,18 +108,24 @@
           ⚠️ No hay nada que arreglar <u>entre lo que sí se ha podido comprobar</u>
         </div>
         <div class="nothing-body">
-          <strong>{{ skippedFindings.length }}</strong>
-          {{ skippedFindings.length === 1 ? 'comprobación no ha llegado a ejecutarse' : 'comprobaciones no han llegado a ejecutarse' }},
+          <strong>{{ failedCheckFindings.length }}</strong>
+          {{ failedCheckFindings.length === 1 ? 'comprobación se ha intentado y no ha podido completarse' : 'comprobaciones se han intentado y no han podido completarse' }},
           así que esta conclusión no cubre todo tu equipo.
         </div>
         <ul class="nothing-skipped">
-          <li v-for="f in skippedFindings" :key="f.id">{{ f.title }}</li>
+          <li v-for="f in failedCheckFindings" :key="f.id">{{ f.title }}</li>
         </ul>
         <div class="nothing-body" v-for="(frase, i) in nothingBuckets" :key="'b' + i" v-html="frase"></div>
         <div class="nothing-body">
           <strong>Revisa el alcance del análisis</strong> aquí debajo: dice exactamente qué se ha
           mirado y qué no. Cero hallazgos en una comprobación que no se ejecutó no significa que
           esa parte esté limpia, significa que nadie la ha mirado.
+        </div>
+        <!-- Lista aparte de la de arriba, a propósito: apagado y caído no se
+             mezclan ni cuando coinciden. -->
+        <div class="nothing-foot" v-if="disabledNote">
+          {{ disabledNote }}
+          <span class="nothing-foot-list">{{ modulesNotRequested.map(function(m){ return m.label; }).join(' · ') }}</span>
         </div>
       </div>
 
@@ -121,7 +134,7 @@
            "37 hallazgos" y concluye que su equipo está cubierto: es ausencia de
            datos presentada como resultado, el mismo patrón que el tick verde
            sobre un host que no responde. -->
-      <div class="scope-card" v-if="trivyScan || sysPkgNotice">
+      <div class="scope-card" v-if="trivyScan || sysPkgNotice || modules.length">
         <div class="scope-header">
           <span class="scope-ico">🔎</span>
           <span class="scope-title">Alcance del análisis</span>
@@ -189,6 +202,20 @@
               <strong>{{ skippedByError.map(function(s){ return s.name; }).join(', ') }}</strong>
               no quiere decir que esté limpia: quiere decir que no se ha podido comprobar.
             </div>
+          </div>
+        </div>
+
+        <!-- Qué se pidió y qué se ejecutó, los siete módulos. Trazabilidad del
+             informe exportado: sin esto, quien lo lee dentro de seis meses no
+             puede saber si una ausencia fue una decisión o un fallo. -->
+        <div class="scope-modules" v-if="modules.length">
+          <div class="scope-detail-title">Módulos del análisis</div>
+          <div class="scope-modules-grid">
+            <span class="scope-module" v-for="m in modules" :key="m.id" :class="'mod-' + m.status">
+              <span class="scope-module-ico">{{ m.status === 'ok' ? '✓' : m.status === 'failed' ? '⚠' : '—' }}</span>
+              {{ m.label }}
+              <span class="scope-module-state">{{ m.status === 'ok' ? 'analizado' : m.status === 'failed' ? 'no se pudo' : 'no solicitado' }}</span>
+            </span>
           </div>
         </div>
 
@@ -830,26 +857,58 @@ export default {
       return (this.auditData && this.auditData.findings) || [];
     },
 
-    // Comprobaciones que NO llegaron a ejecutarse. Sale de `f.skipped`, que sella
+    // Comprobaciones que no llegaron a ejecutarse. Sale de `f.skipped`, que sella
     // createFinding() en lib/finding-schema.js, nunca del sufijo '-SKIP' del id:
     // el id es una etiqueta y esto es un hecho.
+    //
+    // OJO: `skippedByChoice` / `skippedByError`, más abajo, son OTRA cosa —
+    // subcarpetas del home dentro del escaneo de Trivy—. Estos son MÓDULOS.
     skippedFindings() {
       return this.allFindings.filter(function(f) { return f.skipped === true; });
     },
 
-    // Vulnerabilidades DECLARADAS: versiones anotadas en ficheros de dependencias.
-    // `origin` lo pone originOf() en lib/normalizer.js a partir del JSON de Trivy.
-    declaredFindings() {
-      return this.allFindings.filter(function(f) {
-        return !f.skipped && f.origin === 'declared';
-      });
+    // Un módulo que apagó el usuario NO es una comprobación caída. Se distingue
+    // por `kind === 'disabled'`, sellado en audit-host.js, nunca leyendo el
+    // texto de `reason`. Mezclarlos ponía la tarjeta en ámbar por una decisión
+    // deliberada del usuario, que es exactamente el aviso que no hay que dar.
+    disabledFindings() {
+      return this.skippedFindings.filter(function(f) { return f.kind === 'disabled'; });
     },
 
-    // Informativos normales: CPU, RAM, disco, inventario. Ni fallos de
-    // comprobación ni anotaciones de lockfile: datos del equipo.
+    // Lo que SÍ es un agujero en el informe: se pidió y no se pudo. Definido por
+    // EXCLUSIÓN del anterior, no con un segundo predicado: así las dos mitades
+    // suman siempre el total y no pueden divergir si mañana aparece otro kind.
+    failedCheckFindings() {
+      var apagados = this.disabledFindings;
+      return this.skippedFindings.filter(function(f) { return apagados.indexOf(f) === -1; });
+    },
+
+    // ── Módulos, desde scanMeta ───────────────────────────────────────────────
+    // Los siete, no solo los que dejan finding. Solo Lynis y Trivy emiten un
+    // hallazgo al omitirse; los otros cinco devuelven null y no dejan rastro, así
+    // que contar findings cubriría dos de siete. Payloads viejos no traen el
+    // campo → lista vacía y la vista se comporta como antes.
+    modules() {
+      var m = this.auditData && this.auditData.scanMeta;
+      return (m && m.modules) || [];
+    },
+
+    modulesNotRequested() {
+      return this.modules.filter(function(m) { return m.status === 'not-requested'; });
+    },
+
+    // Resúmenes de lo no accionable (HOST-CVE-DECLARED, HOST-OS-CVE-UNFIXED).
+    // `aggregate` lo sella createFinding(). Van aparte de los informativos
+    // normales porque no describen un hecho del equipo: resumen hallazgos.
+    aggregateFindings() {
+      return this.allFindings.filter(function(f) { return f.aggregate === true; });
+    },
+
+    // Informativos normales: CPU, RAM, disco, inventario. Datos del equipo, ni
+    // fallos de comprobación ni resúmenes.
     inventoryFindings() {
       return this.allFindings.filter(function(f) {
-        return !f.skipped && f.origin !== 'declared' &&
+        return !f.skipped && !f.aggregate &&
                (f.severity || 'info').toLowerCase() === 'info';
       });
     },
@@ -866,30 +925,49 @@ export default {
     },
 
     // Tres estados excluyentes:
-    //   'clean'   — nada que arreglar y nada sin comprobar. Verde de verdad.
-    //   'partial' — nada que arreglar ENTRE LO COMPROBADO, con huecos. Ámbar.
+    //   'clean'   — nada que arreglar y nada CAÍDO. Verde.
+    //   'partial' — nada que arreglar ENTRE LO COMPROBADO, con agujeros. Ámbar.
     //   null      — hay trabajo pendiente: manda la lista, no una tarjeta.
+    //
+    // Lo que decide el ámbar son los FALLOS, no los apagados. Que el usuario
+    // desactive un módulo es una decisión suya, no un agujero del que haya que
+    // avisarle en amarillo: eso se dice al pie, en tono sobrio.
     nothingState() {
       if (this.totalFindings === 0) return null;
       if (this.actionableCount > 0) return null;
-      return this.skippedFindings.length > 0 ? 'partial' : 'clean';
+      return this.failedCheckFindings.length > 0 ? 'partial' : 'clean';
+    },
+
+    // Los módulos apagados a mano. Sale de scanMeta.modules y NO de los findings:
+    // solo Lynis y Trivy dejan hallazgo al omitirse, así que contar findings
+    // cubriría dos de siete módulos. La frase y la lista salen del mismo sitio.
+    disabledNote() {
+      var n = this.modulesNotRequested.length;
+      if (!n) return null;
+      return n === 1
+        ? '1 comprobación no se ha ejecutado porque la desactivaste:'
+        : n + ' comprobaciones no se han ejecutado porque las desactivaste:';
     },
 
     // El cuerpo se COMPONE: una frase por bucket que exista. Nunca se afirma un
     // origen que no se haya comprobado en el hallazgo.
+    // El cuerpo se COMPONE: una frase por bucket que exista de verdad.
+    //
+    // Ya NO hay frase sobre ficheros de dependencias: esas vulnerabilidades se
+    // colapsan ahora en un único HOST-CVE-DECLARED que se explica solo, en su
+    // propia tarjeta y con su propio texto. Repetirlo aquí era decir lo mismo en
+    // dos sitios, y la versión de aquí lo afirmaba de TODOS los hallazgos sin
+    // haberlo comprobado en ninguno.
     nothingBuckets() {
       var out = [];
-      var nDec = this.declaredFindings.length;
+      var nAgg = this.aggregateFindings.length;
       var nInv = this.inventoryFindings.length;
 
-      if (nDec > 0) {
+      if (nAgg > 0) {
         out.push(
-          (nDec === 1 ? 'Hay <strong>1 hallazgo</strong> que es una vulnerabilidad <strong>declarada</strong>'
-                      : 'Hay <strong>' + nDec + ' hallazgos</strong> que son vulnerabilidades <strong>declaradas</strong>') +
-          ': versiones anotadas en ficheros de dependencias (<code>yarn.lock</code>, ' +
-          '<code>bun.lock</code>, <code>pom.xml</code>…) de programas de terceros que tienes ' +
-          'instalados. Describen lo que dicen esos ficheros, no software que se esté ejecutando ' +
-          'en tu equipo: no hay ningún paquete que puedas actualizar tú.'
+          (nAgg === 1 ? 'Hay <strong>1 resumen</strong> de vulnerabilidades que no puedes accionar'
+                      : 'Hay <strong>' + nAgg + ' resúmenes</strong> de vulnerabilidades que no puedes accionar') +
+          '. Cada uno explica en su tarjeta de qué se trata y por qué no hay nada que hacer.'
         );
       }
 
@@ -2329,6 +2407,35 @@ export default {
     font-size: 12.5px; color: var(--text); line-height: 1.7;
   }
   .nothing-skipped li { margin-bottom: 2px; }
+  /* Sobria a propósito: es información, no un aviso. Sin color de alarma. */
+  .nothing-foot {
+    margin-top: 10px; padding-top: 8px;
+    border-top: 1px solid rgba(0,0,0,.08);
+    font-size: 11.5px; color: var(--text-secondary);
+  }
+  .nothing-foot-list { display: block; margin-top: 3px; opacity: .85; }
+
+  /* ── Módulos del análisis (Alcance) ── */
+  .scope-modules { margin-top: 14px; }
+  .scope-modules-grid {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;
+  }
+  .scope-module {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--card);
+    color: var(--text);
+  }
+  .scope-module-ico { font-weight: 700; }
+  .scope-module-state { color: var(--text-secondary); }
+  .scope-module.mod-ok .scope-module-ico { color: var(--low); }
+  /* Ámbar solo el que falló. El no solicitado se queda en gris: es una decisión
+     del usuario, no un problema del informe. */
+  .scope-module.mod-failed {
+    border-color: var(--medium-border); background: var(--medium-bg);
+  }
+  .scope-module.mod-failed .scope-module-ico { color: var(--medium); }
+  .scope-module.mod-not-requested { opacity: .72; }
   .nothing-body  { font-size: 12.5px; color: var(--text); line-height: 1.6; margin-top: 6px; }
   .nothing-body code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

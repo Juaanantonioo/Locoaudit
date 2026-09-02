@@ -151,7 +151,7 @@ async function runTrivyCommand(buildCmd, timeoutMs) {
   // instalado": aquí lo que toca es acotar la carpeta a auditar.
   const detail = parsed.reason || "unknown error";
   if (WALK_ERROR_RE.test(detail)) return walkErrorResult(detail);
-  return { skipped: true, kind: parsed.kind || "error", reason: `trivy failed: ${detail}` };
+  return { skipped: true, kind: parsed.kind || "error", reason: `Trivy terminó con error: ${detail}` };
 }
 
 /** Carpeta que no responde: mensaje propio, porque la acción del usuario es distinta. */
@@ -183,7 +183,7 @@ function walkErrorResult(stderr) {
 async function runTrivyFs(opts = {}) {
   const available = await commandExists("trivy");
   if (!available) {
-    return { skipped: true, kind: "not-installed", reason: "trivy not installed" };
+    return { skipped: true, kind: "not-installed", reason: "Trivy no está instalado en este equipo" };
   }
 
   const { target, resolvedFrom } = resolveScanTarget(opts.target);

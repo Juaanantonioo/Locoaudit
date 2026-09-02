@@ -144,7 +144,7 @@ async function runNmap(options = {}) {
 
   const available = await commandExists("nmap");
   if (!available) {
-    return { skipped: true, reason: "nmap not installed" };
+    return { skipped: true, kind: "not-installed", reason: "Nmap no está instalado en este equipo" };
   }
 
   // Rango numérico por modo, más los puertos del catálogo que queden por encima: los de dentro

@@ -65,13 +65,13 @@ function parseContainers(stdout) {
 async function getDockerInfo() {
   const available = await commandExists("docker");
   if (!available) {
-    return { skipped: true, reason: "docker not installed" };
+    return { skipped: true, kind: "not-installed", reason: "Docker no está instalado en este equipo" };
   }
 
   try {
     await execCommand('docker info --format "{{.ServerVersion}}"', 10000);
   } catch (_) {
-    return { skipped: true, reason: "docker daemon not running" };
+    return { skipped: true, kind: "daemon-down", reason: "Docker está instalado pero su servicio no responde" };
   }
 
   let images = [];

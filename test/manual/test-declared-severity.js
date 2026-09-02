@@ -264,5 +264,100 @@ ok(cmdOpenssl && cmdOpenssl.command === "sudo apt update && sudo apt install --o
 ok(rootfsFindings.every((f) => !/fichero de bloqueo/.test(f.fix || "")),
    "ningún paso de resolución dice ya 'anotado en un fichero de bloqueo'");
 
+console.log("\n── 6 · Las declaradas del HOST se colapsan en una sola tarjeta ───\n");
+
+// ⚠️ SINTÉTICO. En la Debian de referencia hay CERO vulnerabilidades declaradas,
+// así que este camino NO se ha podido validar contra hardware: los datos de abajo
+// están construidos a mano con la forma que produce `trivy fs` sobre lockfiles.
+//
+// Enumerarlas llenaba el dashboard de tarjetas sobre versiones anotadas en
+// ficheros de dependencias de programas de terceros: no describen software en
+// ejecución y no tienen ninguna acción asociada. El JSON exportado conserva el
+// detalle completo; lo único que cambia es el renderizado.
+const mkRes = (target, vulns) => ({ Target: target, Class: "lang-pkgs", Type: "npm", Vulnerabilities: vulns });
+const mkVuln = (id, pkg, sev, fixed) => ({
+  VulnerabilityID: id, PkgName: pkg, InstalledVersion: "1.0.0", Severity: sev,
+  ...(fixed ? { FixedVersion: fixed } : {}),
+});
+
+// Siete declaradas en tres ficheros, repartidas a propósito por los tres cubos de
+// severidad (critical/high, medium, low): si el colapso se hiciera filtrando los
+// findings ya construidos en vez de sobre allVulns, los resúmenes 'medium' y
+// 'low' de procedencia mixta se escaparían.
+const declaradoRaw = {
+  Results: [
+    mkRes("proyectos/api/package-lock.json", [
+      mkVuln("CVE-D1", "lodash", "CRITICAL", "4.17.21"),
+      mkVuln("CVE-D2", "axios", "HIGH"),
+      mkVuln("CVE-D3", "minimist", "MEDIUM", "1.2.6"),
+    ]),
+    mkRes("proyectos/web/yarn.lock", [
+      mkVuln("CVE-D4", "tar", "MEDIUM"),
+      mkVuln("CVE-D5", "glob", "LOW", "7.2.0"),
+    ]),
+    mkRes("proyectos/api/pom.xml", [
+      mkVuln("CVE-D6", "log4j", "CRITICAL", "2.17.1"),
+      mkVuln("CVE-D7", "jackson", "LOW"),
+    ]),
+  ],
+  scan: { mode: "fs", target: "/home/ana" },
+};
+
+const colapsado = normalizeHost({ trivy: declaradoRaw }, { platform: "linux", pkgManager: "apt" });
+const agg = colapsado.filter((f) => f.id === "HOST-CVE-DECLARED");
+
+console.log(`  7 declaradas en 3 ficheros → ${colapsado.length} finding(s): ${JSON.stringify(colapsado.map((f) => f.id))}`);
+
+ok(colapsado.length === 1, "las 7 se colapsan en UN solo finding", JSON.stringify(colapsado.map((f) => f.id)));
+ok(agg.length === 1, "ese finding es HOST-CVE-DECLARED");
+ok(agg[0].severity === "info", "severidad info: no hay ninguna acción posible", agg[0].severity);
+ok(agg[0].fix === null, "sin campo fix");
+ok(agg[0].aggregate === true, "marcado como agregado en el DATO, no por el prefijo del id");
+ok(agg[0].origin === "declared", "conserva la procedencia, que es lo que lo deja fuera del riesgo");
+ok(agg[0].title.startsWith("7 "), "el título lleva el total real", agg[0].title);
+ok(agg[0].evidence.includes("3 ficheros"), "la evidencia cuenta los ficheros afectados", agg[0].evidence.slice(0, 80));
+ok(/4 de ellas tienen una versión corregida/.test(agg[0].evidence),
+   "y cuántas traen FixedVersion (4 de 7)", agg[0].evidence);
+ok(agg[0].evidence.includes("exportación JSON"),
+   "cierra remitiendo al JSON, donde el detalle SÍ está completo");
+
+const sColapsado = summarize(colapsado);
+ok(sColapsado.actionable.total === 0, "ninguna cuenta como accionable", String(sColapsado.actionable.total));
+ok(sColapsado.maxSeverity === "info", "y no elevan el riesgo global", sColapsado.maxSeverity);
+
+// Ningún CVE suelto sobrevive en el dashboard de host.
+ok(!colapsado.some((f) => /^HOST-CVE-(\d|MED|LOW)/.test(f.id)),
+   "no queda ningún HOST-CVE-NNN / -MED / -LOW suelto",
+   JSON.stringify(colapsado.map((f) => f.id)));
+
+console.log("\n── 7 · La IMAGEN conserva su detalle intacto ─────────────────────\n");
+
+// El mismo fromTrivyJson() sirve a audit-image, y ahí las declaradas SON el
+// contenido del informe. El colapso va por flag explícito del llamante
+// (collapseDeclared), que normalizeImage no pasa.
+const declaradasEnImagen = normalizeImage(declaradoRaw, "trivy");
+console.log(`  mismo JSON por normalizeImage → ${declaradasEnImagen.length} findings: ${JSON.stringify(declaradasEnImagen.map((f) => f.id))}`);
+
+ok(declaradasEnImagen.length > 1, "la imagen sigue enumerando", String(declaradasEnImagen.length));
+ok(!declaradasEnImagen.some((f) => f.aggregate), "y no aparece ningún agregado");
+ok(!declaradasEnImagen.some((f) => f.id === "HOST-CVE-DECLARED"), "ni el HOST-CVE-DECLARED del host");
+
+// Mezcla instaladas + declaradas: solo se colapsan las segundas.
+const mixtoRaw = {
+  Results: [
+    mkRes("proyectos/api/yarn.lock", [mkVuln("CVE-M1", "lodash", "HIGH", "4.17.21")]),
+    { Target: "/ (debian 12)", Class: "os-pkgs", Type: "debian",
+      Vulnerabilities: [mkVuln("CVE-M2", "openssl", "CRITICAL", "3.0.14")] },
+  ],
+  scan: { mode: "fs", target: "/home/ana" },
+};
+const mixto = normalizeHost({ trivy: mixtoRaw }, { platform: "linux", pkgManager: "apt" });
+console.log(`  mezcla instalada+declarada → ${JSON.stringify(mixto.map((f) => f.id))}`);
+ok(mixto.some((f) => f.id === "HOST-CVE-DECLARED"), "la declarada se colapsa");
+ok(mixto.some((f) => f.origin === "installed" && !f.aggregate),
+   "y la INSTALADA sigue enumerada, con su comando");
+ok(summarize(mixto).actionable.total === 1,
+   "solo la instalada cuenta como accionable", String(summarize(mixto).actionable.total));
+
 console.log(`\n${passed} pasados · ${failed} fallidos\n`);
 process.exit(failed > 0 ? 1 : 0);
