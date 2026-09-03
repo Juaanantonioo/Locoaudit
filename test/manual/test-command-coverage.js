@@ -4,7 +4,7 @@
  * test-command-coverage.js — Guardarraíl contra la regresión de isCommand.
  *
  * Bug que previene: el texto del fix ("poetry update ansible-core") se generaba
- * en un sitio (getTrivyFixCommand / getLynisFixText) y la decisión "esto es un
+ * en un sitio (getTrivyFixCommand / lynisFix) y la decisión "esto es un
  * comando" en OTRO (regex _CMD_PATTERNS). Al añadir un gestor nuevo a la tabla de
  * generación sin tocar el regex, el fix salía como comando pero isCommand=false,
  * y el dashboard lo pintaba como texto plano en vez de con botón «Copiar».
@@ -200,21 +200,58 @@ function testLangManual() {
   }
 }
 
-// ── Bloque 4: Lynis PKGS (comando en 2ª línea → debe tener botón) ─────────────
+// ── Bloque 4: Lynis (comando en 2ª línea → debe tener botón) ─────────────────
 function testLynisPkgs() {
-  log("\n── Lynis PKGS (comando de actualización global en 2ª línea) ──────────");
-  const raw = { hardeningIndex: null, warnings: [{ id: "PKGS-7346", description: "outdated packages" }], suggestions: [] };
-  // Gestor forzado para que el test sea determinista en cualquier SO.
+  log("\n── Lynis: comando de instalación en 2ª línea ─────────────────────────");
+
+  // ACCT-9626 pide instalar sysstat, y ese SÍ es un paso ejecutable. El comando se compone con
+  // installCmd() a partir del gestor real, así que apt, dnf y pacman salen correctos sin escribir
+  // tres textos. Gestor forzado para que el test sea determinista en cualquier SO.
+  const raw = { hardeningIndex: null, warnings: [], suggestions: [{ id: "ACCT-9626", description: "Enable sysstat" }] };
   const out = fromLynisRaw(raw, "linux", "apt");
-  // El id de finding dejó de ser posicional (HOST-LYN-001) y pasó a
-  // HOST-LYN-<CONTROL>-<hash>, porque el orden de aparición no identificaba
-  // nada: se busca por el control, que es lo que este bloque comprueba.
-  const f = out.find((x) => x.control === "PKGS-7346");
-  if (!f) { fail("Lynis PKGS: no generó finding individual"); return; }
-  if (f.command !== "sudo apt update && sudo apt upgrade") {
-    fail(`Lynis PKGS: command esperado "sudo apt update && sudo apt upgrade", got "${f.command}"`);
+  const f = out.find((x) => x.control === "ACCT-9626");
+  if (!f) { fail("Lynis ACCT-9626: no generó finding individual"); return; }
+  if (f.command !== "sudo apt update && sudo apt install -y sysstat") {
+    fail(`Lynis ACCT-9626: command esperado el de instalar sysstat, got "${f.command}"`);
   } else {
-    ok(`Lynis PKGS: command en 2ª línea recuperado («${f.command}»)`);
+    ok(`Lynis ACCT-9626: command en 2ª línea recuperado («${f.command}»)`);
+  }
+
+  // LA REGRESIÓN QUE ESTE BLOQUE FIJA A PARTIR DE AHORA.
+  // Antes, TODO control con prefijo PKGS recibía el comando de actualización global del sistema:
+  // `sudo apt upgrade`, con su botón de copiar. Para PKGS-7420 —"no tienes una herramienta de
+  // auditoría de paquetes"— eso responde a otra pregunta, y el botón invitaba a ejecutar algo que
+  // no resuelve el hallazgo. La tabla por prefijo se eliminó; esto comprueba que no vuelve.
+  const pkgs = fromLynisRaw(
+    { hardeningIndex: null, warnings: [], suggestions: [
+      { id: "PKGS-7420", description: "Install a package audit tool" },
+      { id: "PKGS-7346", description: "Purge old packages" },
+    ] },
+    "linux", "apt"
+  );
+  for (const control of ["PKGS-7420", "PKGS-7346"]) {
+    const g = pkgs.find((x) => x.control === control);
+    if (!g) { fail(`${control}: no generó finding`); continue; }
+    if (/apt upgrade|apt-get upgrade/.test(g.command || "") || /apt upgrade/.test(g.fix || "")) {
+      fail(`${control}: vuelve a proponer la actualización global («${g.command || g.fix}»)`);
+    } else {
+      ok(`${control}: ya no propone la actualización global del sistema`);
+    }
+  }
+
+  // Y ningún fix puede volver a ser el marcador de posición por prefijo.
+  const todos = fromLynisRaw(
+    { hardeningIndex: null, warnings: [], suggestions: [
+      { id: "BOOT-5122", description: "x" }, { id: "TOOL-5002", description: "x" },
+      { id: "FIRE-4590", description: "x" }, { id: "ZZZZ-9999", description: "x" },
+    ] },
+    "linux", "apt"
+  );
+  const genericos = todos.filter((x) => /relacionada con/.test(x.fix || ""));
+  if (genericos.length) {
+    fail(`fix genérico "relacionada con" en: ${genericos.map((x) => x.control).join(", ")}`);
+  } else {
+    ok("ningún fix contiene el marcador de posición «relacionada con»");
   }
 }
 

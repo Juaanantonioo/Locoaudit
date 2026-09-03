@@ -95,6 +95,9 @@ function cargarNodo() {
         node.on = (evt, fn) => { node._handler = fn; };
         node.status = (s) => { node._status = s; };
         node.warn = (m) => { (node._warns = node._warns || []).push(m); };
+        // node.log existe en un nodo real de Node-RED. Sin stub, el aviso de un módulo
+        // omitido que NO es un fallo —que ahora va por log y no por warn— reventaba el test.
+        node.log = (m) => { (node._logs = node._logs || []).push(m); };
       },
       getNode: () => null,
       registerType: (_name, fn) => { ctor = fn; },
@@ -119,7 +122,7 @@ async function ejecutar(config) {
       (e) => { err = e || null; resolve(); }
     );
   });
-  return { msg: enviado, err, status: node._status, warns: node._warns || [] };
+  return { msg: enviado, err, status: node._status, warns: node._warns || [], logs: node._logs || [] };
 }
 
 // Módulos nativos apagados: lo que se prueba es el gate, no la recolección.
@@ -159,8 +162,14 @@ const CONFIG_BASE = {
          `[${reason}] el análisis omitido queda declarado como finding informativo`,
          JSON.stringify(r.msg.payload.findings.map((f) => f.id)));
     }
-    ok(r.warns.some((w) => w.includes("omitido")),
-       `[${reason}] queda anotado en el log del nodo`);
+    // Por `log` y no por `warn`: 'unsupported' es un límite del sistema, no un fallo, y el
+    // amarillo del editor de Node-RED contradecía la clasificación 'not-applicable' que el
+    // propio informe le da.
+    ok(r.logs.some((w) => w.includes("omitido")),
+       `[${reason}] queda anotado en el log del nodo`,
+       JSON.stringify({ warns: r.warns, logs: r.logs }));
+    ok(!r.warns.some((w) => w.includes("omitido")),
+       `[${reason}] y NO en amarillo: no es un fallo`, JSON.stringify(r.warns));
   }
 
   console.log("\n── 2 · 'not-installed' y 'error' SÍ abortan ──────────────────────\n");
@@ -432,6 +441,57 @@ const CONFIG_BASE = {
      JSON.stringify(sinFinding.map((id) => id + "=" + mods.find((m) => m.id === id).status)));
   ok(!(r.msg ? r.msg.payload.findings : []).some((f) => f.id.startsWith("HOST-CPU")),
      "y en efecto no han dejado ningún finding: por eso scanMeta es la fuente");
+
+  console.log("\n── 10 · Windows: reinicio pendiente ≠ sistema al día ─────────────\n");
+
+  // La API COM consulta `IsInstalled=0`, que por definición NO devuelve las actualizaciones ya
+  // instaladas esperando un reinicio. Con una de ellas puesta (reproducido con KB5120708), el
+  // informe decía "Sistema al día" sobre un equipo con una corrección de seguridad sin aplicar.
+  const { normalizeHost: nh } = require("../../lib/normalizer");
+  const baseWin = {
+    skipped: false, platform: "win32", source: "Microsoft.Update.Session",
+    securityDetection: "full", securityCount: 0, unclassifiedCount: 0, total: 0, updates: [],
+  };
+  const conReinicio = (v) => nh({ pendingUpdates: { ...baseWin, rebootPending: v } },
+                                { platform: "win32", pkgManager: "winget" })[0];
+
+  const fReboot = conReinicio(true);
+  console.log(`  reboot=true  → ${fReboot.severity} · ${fReboot.title}`);
+  ok(!/al día/i.test(fReboot.title),
+     "con reinicio pendiente el título NO dice 'al día'", fReboot.title);
+  ok(/reinici/i.test(fReboot.title), "sino que lo menciona", fReboot.title);
+  ok(fReboot.severity === "medium",
+     "y no se queda en 'info': hasta reiniciar, la corrección no está aplicada", fReboot.severity);
+  ok(/YA INSTALADAS/.test(fReboot.evidence), "la evidencia lo explica", fReboot.evidence.slice(0, 90));
+  // Va primero: leerlo después del "no hay nada pendiente" deja la conclusión al revés.
+  ok(fReboot.evidence.indexOf("YA INSTALADAS") < fReboot.evidence.indexOf("No hay actualizaciones"),
+     "y va ANTES del 'no hay pendientes', que es lo que matiza");
+
+  const fLimpio = conReinicio(false);
+  console.log(`  reboot=false → ${fLimpio.severity} · ${fLimpio.title}`);
+  ok(/al día/i.test(fLimpio.title), "sin reinicio pendiente sí puede decir 'al día'", fLimpio.title);
+  ok(fLimpio.severity === "info", "y vuelve a 'info'");
+
+  // El tercer estado: no se pudo leer el registro. No saber no es saber que no.
+  const fNull = conReinicio(null);
+  console.log(`  reboot=null  → ${fNull.severity} · ${fNull.title}`);
+  ok(!/al día/i.test(fNull.title),
+     "con el registro ilegible tampoco afirma 'al día'", fNull.title);
+  ok(/No se ha podido comprobar/i.test(fNull.evidence),
+     "y dice que esa parte no se ha comprobado", fNull.evidence.slice(-120));
+
+  // Con lista NO vacía, el aviso va igual: son dos cosas distintas.
+  const fAmbos = nh({ pendingUpdates: { ...baseWin, total: 2, securityCount: 1, rebootPending: true,
+      updates: [{ name: "KB1", security: true }, { name: "KB2", security: false }] } },
+    { platform: "win32", pkgManager: "winget" })[0];
+  ok(/ya instaladas que no se aplicarán/i.test(fAmbos.evidence),
+     "con actualizaciones pendientes Y reinicio, se avisa de las dos cosas",
+     fAmbos.evidence.slice(-120));
+
+  // Linux no tiene este concepto y no puede verse afectado.
+  const fLinux = nh({ pendingUpdates: { skipped: false, platform: "linux", manager: "apt",
+      source: "apt", total: 0, updates: [], securityDetection: "none" } }, { platform: "linux" })[0];
+  ok(/al día/i.test(fLinux.title), "Linux con 0 pendientes sigue diciendo 'al día'", fLinux.title);
 
   console.log(`\n${passed} pasados · ${failed} fallidos\n`);
   process.exit(failed > 0 ? 1 : 0);

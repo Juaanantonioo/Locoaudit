@@ -592,6 +592,13 @@ const HRESULT_NOT_ELEVATED = "0x80240044";   // WU_E_NOT_ELEVATED
  * `cmd.exe /c` y un salto de línea ahí corta el comando. Es el mismo camino que ya usaba
  * security-events.js.
  *
+ * REINICIO PENDIENTE. Se consultan dos claves del registro y solo dos:
+ *   HKLM\...\Component Based Servicing\RebootPending
+ *   HKLM\...\WindowsUpdate\Auto Update\RebootRequired
+ * Queda FUERA `PendingFileRenameOperations`, que la deja puesta casi cualquier instalador y
+ * produciría un "hay reinicio pendiente" permanente. Un falso positivo constante se aprende a
+ * ignorar, y entonces deja de avisar del caso real.
+ *
  * El script no deja escapar la excepción: la convierte en un JSON con el HRESULT, igual que
  * security-events.js hace con `denied` para el canal Security. Así el mapeo en Node es sobre un
  * campo estructurado y no sobre el stderr, que viene traducido al idioma del equipo.
@@ -603,7 +610,22 @@ const WINDOWS_PS_SCRIPT = [
   "$r = $s.CreateUpdateSearcher().Search('IsInstalled=0')",
   "$u = @($r.Updates | ForEach-Object { [pscustomobject]@{ Title=$_.Title; Severity=$_.MsrcSeverity; " +
     "Categories=@($_.Categories | ForEach-Object { $_.Name }) } })",
-  "ConvertTo-Json -Compress -Depth 4 @{ ok=$true; count=$u.Count; updates=$u }",
+  // Reinicio pendiente. Va DENTRO del mismo try y en su propio try anidado: si la lectura del
+  // registro falla, no puede tirar la consulta de actualizaciones, que es el dato principal.
+  // `reboot=$null` cuando no se pudo mirar: NO es lo mismo que "no hay reinicio pendiente", y el
+  // llamante lo distingue.
+  "$reboot = $null",
+  "$rebootKeys = @()",
+  "try {",
+  "  $cbs = Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending'",
+  "  $wu  = Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired'",
+  "  if ($cbs) { $rebootKeys += 'ComponentBasedServicing' }",
+  "  if ($wu)  { $rebootKeys += 'WindowsUpdate' }",
+  "  $reboot = [bool]($cbs -or $wu)",
+  "} catch {",
+  "  $reboot = $null",
+  "}",
+  "ConvertTo-Json -Compress -Depth 4 @{ ok=$true; count=$u.Count; updates=$u; reboot=$reboot; rebootKeys=@($rebootKeys) }",
   "} catch {",
   "ConvertTo-Json -Compress @{ ok=$false; hresult=('0x{0:X8}' -f $_.Exception.HResult) }",
   "}",
@@ -697,6 +719,11 @@ async function fromWindowsUpdate() {
   const seguras = updates.filter((u) => u.security === true).length;
   const sinClasificar = updates.filter((u) => u.security === null).length;
 
+  // true / false / null, nunca un booleano forzado. Con la lectura del registro caída, `null`
+  // significa "no se sabe": dar `false` ahí sería afirmar que no hay reinicio pendiente sin
+  // haberlo comprobado, que es exactamente el falso verde que este proyecto persigue.
+  const reboot = parsed.reboot === true ? true : parsed.reboot === false ? false : null;
+
   // Una lista vacía es un dato legítimo, no un fallo: un equipo gestionado por WSUS o Intune puede
   // no tener nada pendiente aprobado. Se devuelve como cero, igual que en macOS.
   return {
@@ -707,6 +734,11 @@ async function fromWindowsUpdate() {
     total: updates.length,
     securityDetection: "full",
     securityCount: seguras,
+    // Una actualización instalada a la espera de reinicio NO aparece en `IsInstalled=0`: la API
+    // COM devuelve cero pendientes y el informe decía "Sistema al día". Falso: la corrección de
+    // seguridad no está aplicada hasta que se reinicia.
+    rebootPending: reboot,
+    rebootKeys: Array.isArray(parsed.rebootKeys) ? parsed.rebootKeys : [],
     // Tercer estado, visible y contado aparte. Sin él, una actualización que llega sin categorías
     // caía en `security: false` y se contaba como "no es de seguridad", que es exactamente la
     // asunción que no se puede hacer: no saberlo no es saber que no.

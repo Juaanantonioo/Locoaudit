@@ -16,6 +16,26 @@ const { detectPackageManager, managerLabel } = require("../../lib/pkg-manager");
 const { commandExists } = require("../../lib/executor");
 const { summarize } = require("../../lib/severity-map");
 
+/**
+ * Avisa de un módulo omitido con el NIVEL que corresponde a su motivo.
+ *
+ * `node.warn` pinta el aviso en amarillo en el editor de Node-RED, y eso es una llamada a la
+ * acción. Usarlo para "Trivy no cubre los paquetes de sistema de macOS" contradice la propia
+ * clasificación del informe, que ya trata ese caso como 'not-applicable' y no como fallo: el
+ * panel decía "no aplica" y el log, al lado, lo pintaba como problema.
+ *
+ * El criterio es el mismo `esNoAplica()` que usan el finding y el estado del módulo, no una
+ * segunda lista de kinds aquí.
+ */
+function avisarOmitido(node, modulo, res) {
+  const kind = res && res.kind;
+  const texto = `[audit-host] ${modulo} omitido: ${res && res.reason}`;
+  // 'disabled' lo decidió el usuario y 'no aplica' es un límite del sistema: ninguno es un
+  // problema del que haya que avisar en amarillo.
+  if (kind === "disabled" || esNoAplica(kind)) node.log(texto);
+  else node.warn(texto);
+}
+
 /** Cuántos paquetes inventarió sw-inventory. El módulo devuelve un array plano, o un objeto con
  *  `packages` cuando el inventario salió parcial (macOS con brew caído). */
 function swPackageCount(sw) {
@@ -140,7 +160,7 @@ module.exports = function (RED) {
           }
           // kind 'unsupported': límite conocido (Windows sin WSL), no fallo. Sigue el resto de
           // módulos y el motivo viaja en scanMeta.lynis hasta el dashboard.
-          node.warn(`[audit-host] lynis omitido: ${lynisResolved.reason}`);
+          avisarOmitido(node, "lynis", lynisResolved);
         }
         if (enableTrivy && trivy && trivy.skipped) {
           // Por kind, no por reason: el mismo límite se redacta distinto en macOS ("rootfs solo
@@ -173,7 +193,7 @@ module.exports = function (RED) {
           }
           // kind 'unsupported': límite de esta plataforma o de este gestor. Sigue el resto y el
           // límite viaja en scanMeta.systemPackages hasta el bloque de alcance.
-          node.warn(`[audit-host] trivy-fs omitido: ${trivy.reason}`);
+          avisarOmitido(node, "trivy-fs", trivy);
         }
 
         // Sin herramientas externas detrás: no hay nada que pueda faltar.
@@ -242,13 +262,13 @@ module.exports = function (RED) {
         );
         const rootfsSkipped = !!(rootfsResolved && rootfsResolved.skipped);
         if (enableSysPkgs && rootfsSkipped) {
-          node.warn(`[audit-host] trivy-rootfs omitido: ${rootfsResolved.reason}`);
+          avisarOmitido(node, "trivy-rootfs", rootfsResolved);
         }
 
         const updSkipped = !!(updResolved && updResolved.skipped);
         const updStatus = !enableUpdates ? "disabled" : updSkipped ? "skip" : "ok";
         if (enableUpdates && updSkipped) {
-          node.warn(`[audit-host] pending-updates omitido: ${updResolved.reason}`);
+          avisarOmitido(node, "pending-updates", updResolved);
         }
 
         // Un solo punto decide si el módulo cuenta como ejecutado y qué estado viaja en scanMeta.
@@ -419,8 +439,14 @@ module.exports = function (RED) {
               // devuelto ESTE informe. Va al panel para que se lea "34 de 36 traducidos" en vez
               // de dar por hecho que está todo: la tabla cubre lo visto en los informes de
               // referencia, no el catálogo entero de Lynis, y eso hay que decirlo.
+              // Cobertura REAL sobre los controles que ha devuelto ESTE informe: cuántos
+              // traducidos, cuántos con paso de resolución, y —por separado— cuántos NO admiten
+              // acción frente a cuántos la admiten pero no tenemos el paso escrito. Colapsar
+              // esos dos daría "N sin cubrir" mezclando lo que falta por escribir con lo que no
+              // existe. La plataforma entra porque un fix puede ser solo de Linux.
               i18n: lynisCoverage(
-                [...(lynis?.warnings || []), ...(lynis?.suggestions || [])].map((e) => e.id)
+                [...(lynis?.warnings || []), ...(lynis?.suggestions || [])].map((e) => e.id),
+                process.platform
               ),
             },
           },

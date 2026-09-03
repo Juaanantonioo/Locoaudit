@@ -100,8 +100,16 @@ if (!macRaw) {
     const f = netw2704[0];
     ok(f.lynisType === "warning", "la fusión conserva el tipo aviso");
     ok(/does not respond/i.test(f.evidence), "la evidencia es el AVISO", f.evidence);
-    ok(/Check connection to this nameserver/i.test(f.fix || ""),
-       "el remedio es la SUGERENCIA del mismo control", f.fix);
+    // El remedio de Lynis pasó del `fix` a la EVIDENCIA. Motivo: llega en inglés y el bloque de
+    // "Pasos de Resolución" es texto de LoCoAudit, en castellano. No se pierde nada — sigue
+    // entero, y ahora etiquetado como lo que es: una sugerencia del propio Lynis.
+    ok(/Sugerencia original de Lynis: Check connection to this nameserver/i.test(f.evidence || ""),
+       "el remedio del mismo control se conserva en la evidencia, etiquetado", f.evidence);
+    // NETW-2704 está marcado como control que NO admite acción: que el remedio le montara un
+    // bloque de resolución contradecía el propio dato.
+    ok(f.noAction === true, "NETW-2704 se marca como control sin acción posible");
+    ok(!f.fix, "y por tanto no emite pasos de resolución", JSON.stringify(f.fix));
+    ok(!!f.primaryUrl, "pero sí la ficha oficial del control", f.primaryUrl);
     ok(f.severity === "info",
        "NETW-2704 sigue en info: el override por ID manda en los avisos", f.severity);
   }

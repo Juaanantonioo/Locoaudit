@@ -405,6 +405,20 @@
                   </div>
 
                   <!-- Findings de configuración (no CVE): recomendación específica -->
+                  <!-- Sin pasos que dar. No existía esta rama: la tarjeta se quedaba muda y
+                       parecía que faltaba contenido por cargar. -->
+                  <div v-else-if="!findingIsCVE(f) && !f.fix" class="nofix-note">
+                    <template v-if="f.noAction">
+                      Este hallazgo es informativo. No requiere acción inmediata.
+                    </template>
+                    <template v-else-if="f.primaryUrl">
+                      LoCoAudit no tiene un paso concreto para este hallazgo.
+                      <a :href="f.primaryUrl" target="_blank" rel="noopener">Más información ↗</a>
+                    </template>
+                    <template v-else>
+                      Este hallazgo es informativo. No requiere acción inmediata.
+                    </template>
+                  </div>
                   <div v-else-if="!findingIsCVE(f) && f.fix" class="ia-reco">
                     <span class="ia-reco-label">Recomendación</span>
                     <p class="ia-reco-text">{{ f.fix }}</p>
@@ -1186,6 +1200,15 @@ export default {
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track  { background: var(--accent-border); }
   ::-webkit-scrollbar-thumb  { background: var(--accent); border-radius: 3px; }
+
+  /* Sin pasos de resolución: informa de qué falta, sin fingir un veredicto. */
+  .nofix-note {
+    padding: 12px 0;
+    font-style: italic;
+    color: var(--text-secondary, #6B7280);
+    font-size: 12.5px;
+  }
+  .nofix-note a { color: inherit; font-style: normal; text-decoration: underline; }
 
   /* ── Comprobaciones no realizadas ── */
   .checks-card {

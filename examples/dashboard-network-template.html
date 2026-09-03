@@ -243,8 +243,19 @@
                     </div>
                   </div>
                 </div>
-                <div v-if="!f.fix" style="padding:12px 0;font-style:italic;color:#6B7280;font-size:12.5px;">
-                  Este hallazgo es informativo. No requiere acción inmediata.
+                <!-- Mismos tres textos que en el dashboard de host: sin pasos que dar, lo
+                     honesto es decir si es que no hacen falta o es que no los tenemos. -->
+                <div v-if="!f.fix" class="nofix-note">
+                  <template v-if="f.noAction">
+                    Este hallazgo es informativo. No requiere acción inmediata.
+                  </template>
+                  <template v-else-if="f.primaryUrl">
+                    LoCoAudit no tiene un paso concreto para este hallazgo.
+                    <a :href="f.primaryUrl" target="_blank" rel="noopener">Más información ↗</a>
+                  </template>
+                  <template v-else>
+                    Este hallazgo es informativo. No requiere acción inmediata.
+                  </template>
                 </div>
 
                 <!-- ── Chat con IA ── -->
@@ -999,6 +1010,15 @@ export default {
     font-size: 14px;
     line-height: 1.5;
   }
+
+  /* Sin pasos de resolución: informa de qué falta, sin fingir un veredicto. */
+  .nofix-note {
+    padding: 12px 0;
+    font-style: italic;
+    color: var(--text-secondary, #6B7280);
+    font-size: 12.5px;
+  }
+  .nofix-note a { color: inherit; font-style: normal; text-decoration: underline; }
 
   /* ── HEADER ──────────────────────────────────────────────────── */
   .header {

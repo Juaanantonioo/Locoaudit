@@ -678,8 +678,24 @@
                       </div>
                     </div>
                   </div>
-                  <div v-if="!f.fix" style="padding:12px 0;font-style:italic;color:#6B7280;font-size:12.5px;">
-                    Este hallazgo es informativo. No requiere acción inmediata.
+                  <!-- Sin pasos de resolución. TRES textos, no uno: "no requiere acción
+                       inmediata" es FALSO para un GRUB sin contraseña —sí la requiere, lo que
+                       falta es el paso—, y afirmarlo convierte una carencia de dato nuestra en
+                       una conclusión sobre la severidad del hallazgo. -->
+                  <div v-if="!f.fix" class="nofix-note">
+                    <template v-if="f.noAction">
+                      Este hallazgo es informativo. No requiere acción inmediata.
+                    </template>
+                    <template v-else-if="f.primaryUrl">
+                      LoCoAudit no tiene un paso concreto para este control.
+                      <a :href="f.primaryUrl" target="_blank" rel="noopener">Consulta su ficha oficial ↗</a>
+                    </template>
+                    <template v-else>
+                      <!-- Sin ficha a la que remitir tampoco hay control de Lynis detrás: son
+                           los informativos nativos (CPU, memoria, disco, inventario, resúmenes),
+                           y para ellos "no requiere acción" SÍ es cierto. -->
+                      Este hallazgo es informativo. No requiere acción inmediata.
+                    </template>
                   </div>
 
                   <!-- ── Chat con IA ── -->
@@ -2485,6 +2501,15 @@ export default {
     font-size: 11.5px; background: rgba(255,255,255,.7);
     padding: 1px 5px; border-radius: 4px;
   }
+
+  /* Sin pasos de resolución: informa de qué falta, sin fingir un veredicto. */
+  .nofix-note {
+    padding: 12px 0;
+    font-style: italic;
+    color: var(--text-secondary, #6B7280);
+    font-size: 12.5px;
+  }
+  .nofix-note a { color: inherit; font-style: normal; text-decoration: underline; }
 
   /* ── Comprobaciones no realizadas ── */
   .checks-card {
