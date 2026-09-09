@@ -1407,6 +1407,7 @@ def step1_required_deps() -> list:
 
     if node_red_missing and "Node.js" not in missing and "Node.js ≥ v18" not in missing and "npm" not in missing:
         _node_red_pending_install = True
+        missing.remove("Node-RED")
         tip("Node-RED se ofrecerá junto con las herramientas opcionales en el paso 2")
 
     return missing
@@ -1713,8 +1714,6 @@ def step2_optional_tools():
                 "instaladas, los nodos las usarán igualmente: LoCoAudit las busca "
                 "también fuera del PATH de esta ventana.")
 
-        return not _node_red_pending_install or command_exists("node-red")
-
     if _installed_this_run:
         blank()
         ok(f"Instaladas en esta sesión: {', '.join(_installed_this_run)}")
@@ -1723,6 +1722,8 @@ def step2_optional_tools():
             tip("Cuando te venga bien, reinicia Windows para que queden disponibles "
                 "también en cualquier otro programa o ventana de terminal. Es una "
                 "recomendación, no un requisito para usar LoCoAudit.")
+
+    return not _node_red_pending_install or command_exists("node-red")
 
 
 # ─────────────────────────────────────────────
