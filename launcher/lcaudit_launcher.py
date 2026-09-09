@@ -271,18 +271,18 @@ _DOCKER_SCRIPT = "curl -fsSL https://get.docker.com | sudo sh"
 MANUAL_INSTALL = {
     "node": {
         "Darwin":  "brew install node",
-        "Linux":   "(apt) sudo apt install nodejs   |   (pacman) sudo pacman -S nodejs   |   (dnf) sudo dnf install nodejs",
-        "Windows": "winget install --id OpenJS.NodeJS --source winget -e   o   https://nodejs.org",
+        "Linux":   "Instala Node.js LTS (>=18) desde https://nodejs.org/en/download/package-manager",
+        "Windows": "winget install --id OpenJS.NodeJS.LTS --source winget -e",
     },
     "npm": {
-        "Darwin":  "Se instala junto con Node.js: brew install node",
-        "Linux":   "(apt) sudo apt install npm   |   (pacman) sudo pacman -S npm   |   (dnf) sudo dnf install npm",
-        "Windows": "Se instala junto con Node.js",
+        "Darwin":  "Se instala junto con Node.js; no se instala por separado.",
+        "Linux":   "Se instala junto con Node.js; no se instala por separado.",
+        "Windows": "Se instala junto con Node.js; no se instala por separado.",
     },
     "node-red": {
-        "Darwin":  "npm install -g --unsafe-perm node-red",
-        "Linux":   "sudo npm install -g --unsafe-perm node-red",
-        "Windows": "npm install -g --unsafe-perm node-red",
+        "Darwin":  "npm install -g node-red",
+        "Linux":   "sudo npm install -g node-red",
+        "Windows": "npm install -g node-red",
     },
     "nmap": {
         "Darwin":  "brew install nmap",

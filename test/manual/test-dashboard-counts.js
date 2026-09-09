@@ -57,9 +57,34 @@ const computed = new Function(
   "return {" + extractMethod(tpl, "groups") + "," + extractMethod(tpl, "catBars") + "};"
 )();
 
+/**
+ * `tok` en el navegador lo rellena readTokens() leyendo el :root con
+ * getComputedStyle. Aquí no hay DOM, así que se lee el MISMO :root del template
+ * a mano en vez de escribir los hex otra vez: si un token se renombra o
+ * desaparece, este test falla en voz alta en lugar de tapar el hueco con un
+ * stub que siempre pasa. Los colores no intervienen en ninguna aserción —lo que
+ * se comprueba son recuentos— pero catBars() los pide y no puede recibir undefined.
+ */
+function tokensDelTemplate(src) {
+  const NOMBRES = {
+    critical: "--critical", high: "--high", medium: "--medium",
+    low: "--low", info: "--info", textMuted: "--text-muted",
+  };
+  const root = src.slice(src.indexOf(":root {"), src.indexOf("}", src.indexOf(":root {")));
+  const tok = {};
+  for (const [clave, nombre] of Object.entries(NOMBRES)) {
+    const m = root.match(new RegExp("\\" + nombre + "\\s*:\\s*([^;]+);"));
+    if (!m) throw new Error(`el :root del template ya no declara ${nombre}`);
+    tok[clave] = m[1].trim();
+  }
+  return tok;
+}
+
+const TOK = tokensDelTemplate(tpl);
+
 /** Ejecuta groups()/catBars() del template sobre un payload. */
 function barsFor(auditData) {
-  const ctx = { auditData, filterSev: "all" };
+  const ctx = { auditData, filterSev: "all", tok: TOK };
   ctx.groups = computed.groups.call(ctx);
   return computed.catBars.call(ctx);
 }

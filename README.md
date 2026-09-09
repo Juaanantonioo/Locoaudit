@@ -57,7 +57,7 @@ Las herramientas marcadas como opcionales no bloquean la ejecución. Si Nmap no 
 - Node-RED 3.x o superior
 - Python 3.8 o superior, únicamente para el asistente de instalación
 
-El asistente comprueba y ayuda a instalar el resto. Si prefieres hacerlo a mano, la sección de instalación manual detalla los pasos equivalentes.
+El usuario debe instalar Node.js, npm y Node-RED antes de ejecutar el asistente. El asistente comprueba esos requisitos y puede ofrecer instalar las herramientas de auditoría opcionales cuando el sistema dispone de un comando automático. Si prefieres hacerlo todo a mano, la sección de instalación manual detalla los pasos.
 
 Sistemas operativos verificados: macOS, Linux (probado sobre CachyOS, base Arch) y Windows.
 
@@ -65,7 +65,7 @@ Sistemas operativos verificados: macOS, Linux (probado sobre CachyOS, base Arch)
 
 ## Instalación con el asistente
 
-LoCoAudit incluye un asistente que comprueba qué hace falta, ofrece instalar lo que no encuentre, registra la extensión en Node-RED y lo arranca todo. Es la vía recomendada.
+LoCoAudit incluye un asistente que comprueba los requisitos previamente instalados, ofrece instalar algunas herramientas de auditoría opcionales, registra la extensión en Node-RED y lo arranca todo. Node.js, npm y Node-RED se instalan manualmente antes de ejecutar el asistente.
 
 ```bash
 git clone https://github.com/Juaanantonioo/Locoaudit.git
@@ -78,7 +78,7 @@ En Windows, sustituye `python3` por `python`.
 El asistente recorre seis pasos:
 
 1. **Dependencias requeridas.** Verifica Node.js (versión 18 o superior), npm y Node-RED. Si falta alguno, indica el comando de instalación para tu sistema operativo y se detiene, ya que sin ellos no puede continuar.
-2. **Herramientas opcionales.** Busca Docker, Nmap, Lynis y Trivy. Por cada una que falte, muestra para qué sirve y ofrece instalarla con el gestor de paquetes de tu sistema. Puedes decir que no: el nodo correspondiente seguirá funcionando en modo reducido.
+2. **Herramientas opcionales.** Busca Docker, Nmap, Lynis y Trivy. Por cada una que falte, muestra para qué sirve y, cuando existe un comando automático para tu sistema, ofrece instalarla con su gestor de paquetes. Si no hay instalación automática o dices que no, el nodo correspondiente seguirá funcionando en modo reducido.
 3. **Registro de la extensión.** Instala LoCoAudit dentro del directorio de Node-RED para que sus nodos aparezcan en la paleta.
 4. **Dependencias de Node-RED.** Instala `@flowfuse/node-red-dashboard` si no está presente.
 5. **Flujos de demostración.** Copia el flujo de ejemplo con los tres nodos ya conectados a sus paneles. Si ya tenías flujos propios en Node-RED, no los sobrescribe: te indica cómo importarlo manualmente.
@@ -133,22 +133,21 @@ Si prefieres controlar cada paso, o el asistente falla en tu sistema:
 
 ### 1. Node.js y Node-RED
 
+Instala primero Node.js LTS 18 o superior. npm se instala junto con Node.js.
+
 ```bash
 # macOS con Homebrew
 brew install node
-npm install -g --unsafe-perm node-red
+npm install -g node-red
 
-# Debian / Ubuntu
-sudo apt install nodejs npm
-sudo npm install -g --unsafe-perm node-red
+# Linux
+# Usa la guía oficial para instalar Node.js LTS (>=18) y npm:
+# https://nodejs.org/en/download/package-manager
+sudo npm install -g node-red
 
-# Arch / CachyOS
-sudo pacman -S nodejs npm
-sudo npm install -g --unsafe-perm node-red
-
-# Windows (PowerShell como administrador)
-winget install OpenJS.NodeJS.LTS
-npm install -g --unsafe-perm node-red
+# Windows (PowerShell)
+winget install --id OpenJS.NodeJS.LTS --source winget -e
+npm install -g node-red
 ```
 
 ### 2. Registrar LoCoAudit en Node-RED

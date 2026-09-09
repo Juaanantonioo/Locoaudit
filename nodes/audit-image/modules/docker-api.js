@@ -68,8 +68,11 @@ async function getDockerInfo() {
     return { skipped: true, kind: "not-installed", reason: "Docker no está instalado en este equipo" };
   }
 
+  // La versión del motor ya se pedía para saber si el daemon contesta; se descartaba.
+  // Guardarla no cuesta una llamada más y es lo que permite reproducir el informe.
+  let serverVersion = null;
   try {
-    await execCommand('docker info --format "{{.ServerVersion}}"', 10000);
+    serverVersion = String(await execCommand('docker info --format "{{.ServerVersion}}"', 10000)).trim() || null;
   } catch (_) {
     return { skipped: true, kind: "daemon-down", reason: "Docker está instalado pero su servicio no responde" };
   }
@@ -92,7 +95,7 @@ async function getDockerInfo() {
     containers = parseContainers(psOut);
   } catch (_) { /* devolver array vacío, no propagar */ }
 
-  return { skipped: false, images, containers };
+  return { skipped: false, images, containers, serverVersion };
 }
 
 module.exports = { getDockerInfo, parseSizeBytes };

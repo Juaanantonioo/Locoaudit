@@ -2,8 +2,13 @@
   <div>
 
     <!-- ── Sin datos ── -->
+    <!-- Icono en línea y no <use>: el sprite vive DENTRO de .lca-report-root para
+         viajar con el clon del export, y este estado está fuera de esa raíz. -->
     <div v-show="state === 'idle'" class="lca-state-center">
-      <div class="lca-state-ico">🔍</div>
+      <svg class="icon icon-xl lca-state-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.6-3.6"></path>
+      </svg>
       <h3 class="lca-state-title">Esperando auditoría de tu equipo…</h3>
       <p class="lca-state-desc">Pulsa el botón de inicio en Node-RED para analizar tu equipo.</p>
     </div>
@@ -17,51 +22,127 @@
     <!-- ── Resultados ── -->
     <div v-if="state === 'done' && auditData" class="lca-report-root">
 
+      <!-- ══ SPRITE DE ICONOS ══ -->
+      <!-- Primer hijo de .lca-report-root A PROPÓSITO: el export clona ESTA raíz, así
+           que el sprite viaja con ella y los <use href="#lca-i-…"> del informe
+           descargado siguen resolviendo. Un sprite colocado fuera se quedaría atrás y
+           el HTML exportado saldría sin un solo icono, en silencio.
+           Su clase no contiene ninguna subcadena que el prune del export borre
+           (dl-group, chat, ai-ask-btn, lca-chat-wrap) ni que el @media print toque
+           (finding-detail, finding-body, group-body, group-findings). No renombrar.
+           Los ids llevan prefijo lca-i- para no chocar con otro dashboard de la página. -->
+      <svg class="lca-sprite" aria-hidden="true" focusable="false"><defs>
+        <symbol id="lca-i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M8 21h8M12 17v4"></path></symbol>
+        <symbol id="lca-i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.6-3.6"></path></symbol>
+        <symbol id="lca-i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></symbol>
+        <symbol id="lca-i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="m8.5 12 2.5 2.5 4.5-5"></path></symbol>
+        <symbol id="lca-i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4M12 17h.01"></path></symbol>
+        <symbol id="lca-i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4M12 8h.01"></path></symbol>
+        <symbol id="lca-i-minus" viewBox="0 0 24 24"><path d="M5 12h14"></path></symbol>
+        <symbol id="lca-i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5M4 21h16"></path></symbol>
+        <symbol id="lca-i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8.5 8.5"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></symbol>
+        <symbol id="lca-i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
+        <symbol id="lca-i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></symbol>
+        <symbol id="lca-i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></symbol>
+        <symbol id="lca-i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"></path></symbol>
+        <symbol id="lca-i-memory" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="2"></rect><path d="M7 17v3M12 17v3M17 17v3M7 11v2M12 11v2M17 11v2"></path></symbol>
+        <symbol id="lca-i-apple" viewBox="0 0 24 24"><path d="M16.5 12.5c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.5-.2-2.8.8-3.6.8-.7 0-1.9-.8-3.1-.8-1.6 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.3 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.2.9-1.3 1.3-2.5 1.3-2.6-.1 0-2.4-.9-2.3-3.8z"></path><path d="M14.2 5.3c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2-.5 2.7-1.3z"></path></symbol>
+        <symbol id="lca-i-disk" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></symbol>
+        <symbol id="lca-i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="13" width="18" height="7" rx="2"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></symbol>
+        <symbol id="lca-i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"></path></symbol>
+        <symbol id="lca-i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"></path></symbol>
+        <symbol id="lca-i-package" viewBox="0 0 24 24"><path d="M21 8.5v7a2 2 0 0 1-1 1.7l-7 4a2 2 0 0 1-2 0l-7-4a2 2 0 0 1-1-1.7v-7a2 2 0 0 1 1-1.7l7-4a2 2 0 0 1 2 0l7 4a2 2 0 0 1 1 1.7z"></path><path d="m3.3 7.5 8.7 5 8.7-5M12 22v-9.5"></path></symbol>
+        <symbol id="lca-i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4 12 22l-9-9V4a1 1 0 0 1 1-1h8l8.6 8.6a2 2 0 0 1 0 1.8z"></path><path d="M7.5 7.5h.01"></path></symbol>
+        <symbol id="lca-i-gauge" viewBox="0 0 24 24"><path d="M3 18a9 9 0 1 1 18 0"></path><path d="m12 14 4-4"></path></symbol>
+        <symbol id="lca-i-puzzle" viewBox="0 0 24 24"><path d="M9 3h6v3a2 2 0 0 0 4 0V3h2v6h-3a2 2 0 0 0 0 4h3v6h-6v-3a2 2 0 0 0-4 0v3H5v-6h3a2 2 0 0 0 0-4H5V3h4z"></path></symbol>
+        <symbol id="lca-i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14-4.5L3 9"></path><path d="M4 13a8 8 0 0 0 14 4.5L21 15"></path><path d="M3 4v5h5M21 20v-5h-5"></path></symbol>
+        <symbol id="lca-i-scale" viewBox="0 0 24 24"><path d="M12 3v18M7 21h10M5 7h14M5 7l-2.5 6h5zM19 7l-2.5 6h5z"></path></symbol>
+        <symbol id="lca-i-link" viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 6 .5l2.5-2.5a4 4 0 0 0-5.7-5.7L11.5 6.7"></path><path d="M14 11a4 4 0 0 0-6-.5L5.5 13a4 4 0 0 0 5.7 5.7l1.3-1.3"></path></symbol>
+        <symbol id="lca-i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"></path><path d="M18.5 15.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"></path></symbol>
+        <symbol id="lca-i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></symbol>
+        <symbol id="lca-i-tool" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0 5 5l-9 9a2.8 2.8 0 0 1-5-5z"></path><path d="m14.7 6.3 3-3 3 3-3 3"></path></symbol>
+      </defs></svg>
+
       <!-- ══ HEADER ══ -->
-      <div class="header-card">
-        <div class="host-info">
+      <!-- La barra superior ya no es un gradiente fijo: toma el color del nivel de
+           riesgo real. `riskClass` (computed, más abajo) es la misma que pinta el
+           badge, así que no hay dos definiciones del riesgo. -->
+      <div class="header-card" :class="riskClass">
+        <div class="header-main">
+          <div class="header-eyebrow">LoCoAudit · Auditoría de host</div>
           <div class="host-name">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2" y="3" width="20" height="14" rx="2"></rect>
-              <path d="M8 21h8M12 17v4"></path>
-            </svg>
-            {{ auditData.host && auditData.host.hostname }}
+            <svg class="icon"><use href="#lca-i-monitor"></use></svg>
+            <span class="host-name-text">{{ auditData.host && auditData.host.hostname }}</span>
+          </div>
+          <div class="header-idline">
             <span class="risk-badge" :class="riskClass">
               <span class="risk-badge-dot"></span>
               {{ riskLabel }}
             </span>
+            <!-- Texto corto: la MISMA cadena que ya resume la sección de hallazgos.
+                 No es copy nuevo, es el recuento que el usuario va a volver a leer
+                 abajo, adelantado a donde mira primero. -->
+            <span class="risk-note">{{ act.total > 0 ? act.total + ' requieren tu atención' : 'Nada que arreglar' }}</span>
           </div>
-          <div class="host-os">
-            {{ auditData.host && auditData.host.release }}
-            — {{ auditData.host && auditData.host.platform }}
-            · {{ auditData.host && auditData.host.arch }}
-          </div>
-          <div class="pills-row">
-            <span class="pill"><span class="pill-label">Plataforma</span> {{ auditData.host && auditData.host.platform }}</span>
-            <span class="pill"><span class="pill-label">Activo</span> {{ uptimeHuman }}</span>
-            <span class="pill"><span class="pill-label">Análisis</span> {{ scanTime }}</span>
-            <span class="pill" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">
-              <span class="pill-label">Duración</span> {{ fmtDuration(auditData.scanMeta.durationMs) }}
-            </span>
-            <span class="dl-group">
-              <button class="dl-btn" @click="downloadHtml" title="Descargar informe HTML (imprimible a PDF)">⬇ HTML</button>
-              <button class="dl-btn" @click="downloadJson" title="Descargar datos JSON">⬇ JSON</button>
-            </span>
+
+          <!-- Rejilla clave/valor: etiqueta pequeña sobre valor. Los tres datos que
+               antes vivían en .host-os (release, platform, arch) están aquí, sin
+               cambiar de fuente ni de formato. -->
+          <div class="meta-grid">
+            <div class="meta-item">
+              <span class="meta-key">Plataforma</span>
+              <span class="meta-val">{{ auditData.host && auditData.host.platform }} · {{ auditData.host && auditData.host.arch }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-key">Versión</span>
+              <span class="meta-val meta-val-mono">{{ auditData.host && auditData.host.release }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-key">Activo</span>
+              <span class="meta-val">{{ uptimeHuman }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-key">Análisis</span>
+              <span class="meta-val">{{ scanTime }}</span>
+            </div>
+            <div class="meta-item" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">
+              <span class="meta-key">Duración</span>
+              <span class="meta-val">{{ fmtDuration(auditData.scanMeta.durationMs) }}</span>
+            </div>
+            <div class="meta-item" v-if="modulesLabel">
+              <span class="meta-key">Módulos</span>
+              <span class="meta-val">{{ modulesLabel }}</span>
+            </div>
+            <div class="meta-item" v-if="lynisTests">
+              <span class="meta-key">Controles</span>
+              <span class="meta-val">{{ lynisTests }}</span>
+            </div>
+            <div class="meta-item meta-item-actions">
+              <span class="meta-key">Exportar</span>
+              <span class="dl-group">
+                <button class="dl-btn" @click="downloadHtml" title="Descargar informe HTML (imprimible a PDF)">
+                  <svg class="icon icon-sm"><use href="#lca-i-download"></use></svg> HTML
+                </button>
+                <button class="dl-btn" @click="downloadJson" title="Descargar datos JSON">
+                  <svg class="icon icon-sm"><use href="#lca-i-download"></use></svg> JSON
+                </button>
+              </span>
+            </div>
           </div>
         </div>
 
-        <!-- Gauge circular Lynis -->
-        <div class="gauge-wrap" v-if="lynisIdx !== null">
+        <!-- Gauge circular Lynis, separado por una línea vertical fina (border-left) -->
+        <div class="header-aside" v-if="lynisIdx !== null">
           <span class="gauge-label-top">Hardening Index</span>
           <svg class="gauge-svg" viewBox="0 0 110 110">
             <defs>
               <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" :stop-color="lynisColor"></stop>
-                <stop offset="100%" stop-color="#EA580C"></stop>
+                <stop offset="100%" :stop-color="tok.high"></stop>
               </linearGradient>
             </defs>
             <!-- track -->
-            <circle cx="55" cy="55" r="44" fill="none" stroke="#F1F5F9"
+            <circle cx="55" cy="55" r="44" fill="none" :stroke="tok.surface"
                     stroke-width="10" stroke-dasharray="221 55"
                     stroke-dashoffset="-27.5" stroke-linecap="round"></circle>
             <!-- fill -->
@@ -72,87 +153,233 @@
             <text x="55" y="51" text-anchor="middle" class="gauge-score">{{ lynisIdx }}</text>
             <text x="55" y="63" text-anchor="middle" class="gauge-sub">de 100</text>
           </svg>
-          <span style="font-size:11px;color:var(--text-secondary);">
+          <span class="gauge-verdict">
             Lynis · {{ lynisIdx >= 55 ? 'Aceptable' : lynisIdx >= 30 ? 'Mejorable' : 'Deficiente' }}
           </span>
-          <span v-if="lynisMetaLine" style="font-size:10px;color:var(--text-secondary);opacity:.8;">
-            {{ lynisMetaLine }}
+          <span v-if="lynisMetaLine" class="gauge-meta">{{ lynisMetaLine }}</span>
+        </div>
+      </div>
+
+      <!-- ══ SEVERIDADES ══ -->
+      <!-- Cuentan ACCIONABLES (summary.actionable.counts), no el total: si
+           siguieran contando todo, la cabecera diría "Nada que arreglar" con un
+           9 en CRÍTICO justo debajo. Los informativos tienen su propia celda,
+           neutra, para que no desaparezcan del recuento.
+           Una sola tira con separadores finos, no cinco tarjetas sueltas: cinco
+           bloques con borde y sombra propios se leían como cinco cosas distintas
+           cuando son cinco cortes de la misma cifra. Solo los niveles con
+           hallazgos llevan color; los que están a cero van en gris (.zero).
+           VA AQUÍ, pegada a la cabecera y ANTES de los avisos: las cifras son lo
+           primero que se busca, y empujarlas por debajo de tres tarjetas de
+           matices las escondía. -->
+      <div class="sev-block">
+        <div class="sev-strip">
+          <div class="sev-cell critical" role="button" tabindex="0"
+               :aria-pressed="filterSev === 'critical' ? 'true' : 'false'"
+               :class="{ 'active': filterSev === 'critical', 'zero': !act.counts.critical }"
+               @click="toggleSevFilter('critical')" @keydown.enter.prevent="toggleSevFilter('critical')"
+               @keydown.space.prevent="toggleSevFilter('critical')"
+               title="Filtrar por severidad Crítico">
+            <span class="sev-cell-label">Crítico</span>
+            <span class="sev-cell-num">{{ act.counts.critical || 0 }}</span>
+            <span class="sev-cell-sub">Acción inmediata</span>
+          </div>
+          <div class="sev-cell high" role="button" tabindex="0"
+               :aria-pressed="filterSev === 'high' ? 'true' : 'false'"
+               :class="{ 'active': filterSev === 'high', 'zero': !act.counts.high }"
+               @click="toggleSevFilter('high')" @keydown.enter.prevent="toggleSevFilter('high')"
+               @keydown.space.prevent="toggleSevFilter('high')"
+               title="Filtrar por severidad Alto">
+            <span class="sev-cell-label">Alto</span>
+            <span class="sev-cell-num">{{ act.counts.high || 0 }}</span>
+            <span class="sev-cell-sub">Resolver esta semana</span>
+          </div>
+          <div class="sev-cell medium" role="button" tabindex="0"
+               :aria-pressed="filterSev === 'medium' ? 'true' : 'false'"
+               :class="{ 'active': filterSev === 'medium', 'zero': !act.counts.medium }"
+               @click="toggleSevFilter('medium')" @keydown.enter.prevent="toggleSevFilter('medium')"
+               @keydown.space.prevent="toggleSevFilter('medium')"
+               title="Filtrar por severidad Medio">
+            <span class="sev-cell-label">Medio</span>
+            <span class="sev-cell-num">{{ act.counts.medium || 0 }}</span>
+            <span class="sev-cell-sub">Cuando puedas</span>
+          </div>
+          <div class="sev-cell low" role="button" tabindex="0"
+               :aria-pressed="filterSev === 'low' ? 'true' : 'false'"
+               :class="{ 'active': filterSev === 'low', 'zero': !act.counts.low }"
+               @click="toggleSevFilter('low')" @keydown.enter.prevent="toggleSevFilter('low')"
+               @keydown.space.prevent="toggleSevFilter('low')"
+               title="Filtrar por severidad Bajo">
+            <span class="sev-cell-label">Bajo</span>
+            <span class="sev-cell-num">{{ act.counts.low || 0 }}</span>
+            <span class="sev-cell-sub">Opcional</span>
+          </div>
+          <!-- Sin role="button": no filtra, no es interactiva. -->
+          <div class="sev-cell informative" v-if="inf.total > 0"
+               title="Hallazgos que no requieren ninguna acción por tu parte">
+            <span class="sev-cell-label">Informativos</span>
+            <span class="sev-cell-num">{{ inf.total }}</span>
+            <span class="sev-cell-sub">Solo para tu información</span>
+          </div>
+        </div>
+        <!-- Franja al pie de la tira, no una tarjeta aparte. Con los recuentos
+             pegados a la cabecera, un "0 crítico" queda por encima de cualquier
+             aviso de cobertura, y eso es el falso verde que la regla "fallo de
+             herramienta ≠ dato negativo" existe para impedir: un cero solo
+             tranquiliza si consta que alguien miró. La franja va PEGADA a los
+             números, dentro de su misma caja, para que no se puedan leer sin ella. -->
+        <div class="sev-gap" v-if="failedCheckFindings.length > 0">
+          <svg class="icon icon-sm"><use href="#lca-i-alert"></use></svg>
+          <span>
+            <strong>{{ failedCheckFindings.length }}</strong>
+            {{ failedCheckFindings.length === 1 ? 'comprobación no se ha completado' : 'comprobaciones no se han completado' }}:
+            estos recuentos no cubren todo tu equipo.
           </span>
         </div>
       </div>
 
-      <!-- ══ NADA QUE ARREGLAR ══ -->
-      <!-- Tres estados excluyentes, no dos. "No hay nada que arreglar" sobre una
-           auditoría con comprobaciones caídas es un falso verde: el usuario lee
-           una conclusión sobre partes que nadie llegó a mirar.
-           El cuerpo se COMPONE de las frases de los buckets que existan de
-           verdad (nothingBuckets). El texto anterior afirmaba que todos los
-           hallazgos eran vulnerabilidades declaradas de ficheros de dependencias
-           sin comprobarlo en ningún sitio: la condición solo miraba severidad, y
-           en Windows salía sobre 9 informativos de los que 4 eran fallos de
-           comprobación y ninguno venía de un lockfile. -->
-      <div class="nothing-card" v-if="nothingState === 'clean'">
-        <div class="nothing-title">✓ No hay nada que tengas que arreglar en tu equipo</div>
-        <div class="nothing-body" v-for="(frase, i) in nothingBuckets" :key="i" v-html="frase"></div>
-        <!-- Que el usuario apague un módulo no es un agujero del que avisarle en
-             amarillo: es una decisión suya. Se dice, porque la conclusión no cubre
-             lo que no se miró, pero en tono sobrio y sin icono de alarma. -->
-        <div class="nothing-foot" v-if="disabledNote">
-          {{ disabledNote }}
-          <span class="nothing-foot-list">{{ modulesNotRequested.map(function(m){ return m.label; }).join(' · ') }}</span>
+      <!-- ══ AVISOS ══ ═════════════════════════════════════════════════════════
+           Un solo componente (.lca-notice) en tres niveles, en vez de las tres
+           anatomías que había (nothing-card, checks-card, scope-notice) sin regla
+           de orden ni de cuándo aparecía cada una.
+
+             nivel 1 · VEREDICTO — ¿tengo algo que hacer?
+             nivel 2 · COBERTURA — ¿se miró todo?
+             nivel 3 · CONTEXTO  — ¿qué más conviene saber?
+
+           El corte entre 2 y 3 es lo importante: el nivel 2 son huecos de ESTA
+           ejecución, que se cierran reintentando, activando el módulo o instalando
+           la herramienta; el nivel 3 es cómo es este equipo siempre. Trivy no lee
+           los paquetes de macOS y no lo hará mañana tampoco: eso no es un agujero,
+           es el alcance real, y pintarlo en ámbar sería el falso positivo que la
+           regla de CLAUDE.md existe para evitar.
+           El tono es independiente del nivel: un aviso de nivel 3 puede ser warn. -->
+
+      <!-- ── Nivel 1 · VEREDICTO ──────────────────────────────────────────────
+           SOLO cuando no hay nada accionable, para explicar por qué no lo hay.
+           Con trabajo pendiente no se renderiza: la cabecera y la tira ya lo han
+           dicho con una cifra, y repetirlo en prosa resta en vez de sumar.
+           Dos estados excluyentes: 'clean' es verde; 'partial' es ámbar porque la
+           conclusión está limitada por comprobaciones que fallaron, y un verde ahí
+           sería una conclusión sobre partes que nadie llegó a mirar. -->
+      <div class="lca-notice lvl-1 is-ok" v-if="nothingState === 'clean'">
+        <svg class="icon lca-notice-icon"><use href="#lca-i-check-circle"></use></svg>
+        <div class="lca-notice-main">
+          <div class="lca-notice-title">No hay nada que tengas que arreglar en tu equipo</div>
+          <div class="lca-notice-body" v-for="(frase, i) in nothingBuckets" :key="i" v-html="frase"></div>
+          <!-- Que el usuario apague un módulo no es un agujero del que avisarle en
+               amarillo: es una decisión suya. Se dice, porque la conclusión no cubre
+               lo que no se miró, pero en tono sobrio y sin icono de alarma. -->
+          <div class="lca-notice-foot" v-if="disabledNote">
+            {{ disabledNote }}
+            <span class="lca-notice-foot-list">{{ modulesNotRequested.map(function(m){ return m.label; }).join(' · ') }}</span>
+          </div>
         </div>
       </div>
 
-      <div class="nothing-card nothing-card-warn" v-if="nothingState === 'partial'">
-        <div class="nothing-title">
-          ⚠️ No hay nada que arreglar <u>entre lo que sí se ha podido comprobar</u>
-        </div>
-        <div class="nothing-body">
-          <strong>{{ failedCheckFindings.length }}</strong>
-          {{ failedCheckFindings.length === 1 ? 'comprobación se ha intentado y no ha podido completarse' : 'comprobaciones se han intentado y no han podido completarse' }},
-          así que esta conclusión no cubre todo tu equipo.
-        </div>
-        <ul class="nothing-skipped">
-          <li v-for="f in failedCheckFindings" :key="f.id">{{ f.title }}</li>
-        </ul>
-        <div class="nothing-body" v-for="(frase, i) in nothingBuckets" :key="'b' + i" v-html="frase"></div>
-        <div class="nothing-body">
-          <strong>Revisa el alcance del análisis</strong> aquí debajo: dice exactamente qué se ha
-          mirado y qué no. Cero hallazgos en una comprobación que no se ejecutó no significa que
-          esa parte esté limpia, significa que nadie la ha mirado.
-        </div>
-        <!-- Lista aparte de la de arriba, a propósito: apagado y caído no se
-             mezclan ni cuando coinciden. -->
-        <div class="nothing-foot" v-if="disabledNote">
-          {{ disabledNote }}
-          <span class="nothing-foot-list">{{ modulesNotRequested.map(function(m){ return m.label; }).join(' · ') }}</span>
+      <div class="lca-notice lvl-1 is-warn" v-if="nothingState === 'partial'">
+        <svg class="icon lca-notice-icon"><use href="#lca-i-alert"></use></svg>
+        <div class="lca-notice-main">
+          <div class="lca-notice-title">No hay nada que arreglar <u>entre lo que sí se ha podido comprobar</u></div>
+          <div class="lca-notice-body">
+            <strong>{{ failedCheckFindings.length }}</strong>
+            {{ failedCheckFindings.length === 1 ? 'comprobación se ha intentado y no ha podido completarse' : 'comprobaciones se han intentado y no han podido completarse' }},
+            así que esta conclusión no cubre todo tu equipo.
+          </div>
+          <ul class="lca-notice-list">
+            <li v-for="f in failedCheckFindings" :key="f.id">{{ f.title }}</li>
+          </ul>
+          <div class="lca-notice-body" v-for="(frase, i) in nothingBuckets" :key="'b' + i" v-html="frase"></div>
+          <div class="lca-notice-body">
+            <strong>Revisa el alcance del análisis</strong> aquí debajo: dice exactamente qué se ha
+            mirado y qué no. Cero hallazgos en una comprobación que no se ejecutó no significa que
+            esa parte esté limpia, significa que nadie la ha mirado.
+          </div>
+          <!-- Lista aparte de la de arriba, a propósito: apagado y caído no se
+               mezclan ni cuando coinciden. -->
+          <div class="lca-notice-foot" v-if="disabledNote">
+            {{ disabledNote }}
+            <span class="lca-notice-foot-list">{{ modulesNotRequested.map(function(m){ return m.label; }).join(' · ') }}</span>
+          </div>
         </div>
       </div>
 
-      <!-- ══ COMPROBACIONES NO REALIZADAS ══ -->
-      <!-- Junto al Alcance y no en la lista de hallazgos: es la otra mitad de la misma
-           pregunta ("qué se ha mirado"), no un problema del equipo. Un solo bloque para
-           todas, igual que HOST-CVE-DECLARED agrupa las declaradas: cuatro tarjetas
-           informativas sueltas se leían como cuatro cosas que arreglar. -->
-      <div class="checks-card" v-if="checksSkipped" :class="{ 'checks-card-warn': checksSkipped.failed > 0 }">
-        <div class="checks-header">
-          <span class="checks-ico">{{ checksSkipped.failed > 0 ? '⚠️' : 'ℹ️' }}</span>
-          <span class="checks-title">{{ checksSkipped.title }}</span>
+      <!-- ── Nivel 2 · COBERTURA ──────────────────────────────────────────────
+           Qué NO se miró en esta ejecución. -->
+
+      <!-- Un solo bloque para todas las comprobaciones no realizadas, igual que
+           HOST-CVE-DECLARED agrupa las declaradas: cuatro tarjetas informativas
+           sueltas se leían como cuatro cosas que arreglar.
+           NO se parte por estado aunque sus ítems mezclen failed / not-applicable
+           / disabled: lo agrega buildSkippedChecksSummary() en el backend y
+           recomponerlo aquí crearía un segundo recuento que acabaría divergiendo.
+           El matiz lo lleva cada línea con su propio estado. -->
+      <div class="lca-notice lvl-2" v-if="checksSkipped"
+           :class="checksSkipped.failed > 0 ? 'is-warn' : 'is-neutral'">
+        <svg class="icon lca-notice-icon"><use :href="checksSkipped.failed > 0 ? '#lca-i-alert' : '#lca-i-info'"></use></svg>
+        <div class="lca-notice-main">
+          <div class="lca-notice-title">{{ checksSkipped.title }}</div>
+          <div class="lca-notice-body" v-for="(frase, i) in checksSkipped.evidence.split('\n\n')" :key="i">
+            {{ frase }}
+          </div>
+          <!-- Una línea por módulo. El estado va delante porque es lo que decide si el
+               usuario tiene algo que hacer con esa línea o no. -->
+          <ul class="lca-notice-list is-stated">
+            <li v-for="it in checksSkipped.items" :key="it.id" :class="'chk-' + it.estado">
+              <span class="lca-notice-state">{{
+                it.estado === 'failed' ? 'no se pudo'
+                : it.estado === 'not-applicable' ? 'no aplica'
+                : 'desactivada' }}</span>
+              <span class="lca-notice-name">{{ it.title }}</span>
+            </li>
+          </ul>
         </div>
-        <div class="checks-body" v-for="(frase, i) in checksSkipped.evidence.split('\n\n')" :key="i">
-          {{ frase }}
+      </div>
+
+      <!-- Un trozo del home que no se pudo leer es un AGUJERO en el informe,
+           no un detalle. Mismo razonamiento que el objetivo inalcanzable del
+           dashboard de red: no encontrar nada ≠ que no haya nada. -->
+      <div class="lca-notice lvl-2 is-warn" v-if="skippedByError.length">
+        <svg class="icon lca-notice-icon"><use href="#lca-i-alert"></use></svg>
+        <div class="lca-notice-main">
+          <div class="lca-notice-title">Una parte de tu carpeta personal no se ha podido analizar</div>
+          <div class="lca-notice-body">
+            Que no aparezca ningún hallazgo de
+            <strong>{{ skippedByError.map(function(s){ return s.name; }).join(', ') }}</strong>
+            no quiere decir que esté limpia: quiere decir que no se ha podido comprobar.
+          </div>
         </div>
-        <!-- Una línea por módulo. El estado va delante porque es lo que decide si el
-             usuario tiene algo que hacer con esa línea o no. -->
-        <ul class="checks-list">
-          <li v-for="it in checksSkipped.items" :key="it.id" :class="'chk-' + it.estado">
-            <span class="checks-state">{{
-              it.estado === 'failed' ? 'no se pudo'
-              : it.estado === 'not-applicable' ? 'no aplica'
-              : 'desactivada' }}</span>
-            <span class="checks-name">{{ it.title }}</span>
-          </li>
-        </ul>
+      </div>
+
+      <!-- Paquetes del sistema. El MISMO computed alimenta el nivel 2 y el 3; lo
+           que decide cuál es sysPkgNoticeLevel, que mira el estado y no el tono. -->
+      <div class="lca-notice lvl-2" :class="'is-' + sysPkgNotice.tone"
+           v-if="sysPkgNotice && sysPkgNoticeLevel === 2">
+        <svg class="icon lca-notice-icon"><use :href="'#lca-i-' + sysPkgNotice.ico"></use></svg>
+        <div class="lca-notice-main">
+          <div class="lca-notice-title">{{ sysPkgNotice.title }}</div>
+          <div class="lca-notice-lead" v-if="sysPkgNotice.lead">{{ sysPkgNotice.lead }}</div>
+          <div class="lca-notice-body">{{ sysPkgNotice.body }}</div>
+          <!-- La frase que impide leer "no se ha comprobado" como "está limpio".
+               Es contenido con énfasis, no una anatomía aparte. -->
+          <div class="lca-notice-body is-strong" v-if="sysPkgNotice.warning">{{ sysPkgNotice.warning }}</div>
+          <div class="lca-notice-hint" v-if="sysPkgNotice.hint">{{ sysPkgNotice.hint }}</div>
+        </div>
+      </div>
+
+      <!-- ── Nivel 3 · CONTEXTO ───────────────────────────────────────────────
+           Cómo es este equipo, siempre. No se cierra reintentando, así que no
+           lleva ámbar ni pide nada. -->
+      <div class="lca-notice lvl-3" :class="'is-' + sysPkgNotice.tone"
+           v-if="sysPkgNotice && sysPkgNoticeLevel === 3">
+        <svg class="icon lca-notice-icon"><use :href="'#lca-i-' + sysPkgNotice.ico"></use></svg>
+        <div class="lca-notice-main">
+          <div class="lca-notice-title">{{ sysPkgNotice.title }}</div>
+          <div class="lca-notice-lead" v-if="sysPkgNotice.lead">{{ sysPkgNotice.lead }}</div>
+          <div class="lca-notice-body">{{ sysPkgNotice.body }}</div>
+          <div class="lca-notice-body is-strong" v-if="sysPkgNotice.warning">{{ sysPkgNotice.warning }}</div>
+          <div class="lca-notice-hint" v-if="sysPkgNotice.hint">{{ sysPkgNotice.hint }}</div>
+        </div>
       </div>
 
       <!-- ══ ALCANCE DEL ESCANEO ══ -->
@@ -162,72 +389,66 @@
            sobre un host que no responde. -->
       <div class="scope-card" v-if="trivyScan || sysPkgNotice || modules.length">
         <div class="scope-header">
-          <span class="scope-ico">🔎</span>
+          <svg class="icon"><use href="#lca-i-search"></use></svg>
           <span class="scope-title">Alcance del análisis</span>
           <button class="scope-toggle" v-if="trivyScan" @click="scopeOpen = !scopeOpen">
             {{ scopeOpen ? 'Ocultar detalle' : 'Ver detalle' }}
           </button>
         </div>
 
-        <div class="pills-row scope-pills" v-if="trivyScan">
-          <span class="pill">
-            <span class="pill-label">Carpeta</span> <code>{{ trivyScan.target }}</code>
-          </span>
-          <span class="pill" v-if="scannedChildren.length">
-            <span class="pill-label">Subcarpetas analizadas</span> {{ scannedChildren.length }}
-          </span>
-          <span class="pill" v-if="skippedByChoice.length">
-            <span class="pill-label">Excluidas</span> {{ skippedByChoice.length }}
-          </span>
-          <span class="pill pill-warn" v-if="skippedByError.length">
-            <span class="pill-label">Sin analizar</span> {{ skippedByError.length }}
-          </span>
-          <span class="pill" v-if="trivyScan.durationMs">
+        <div class="scope-grid" v-if="trivyScan">
+          <div class="scope-item">
+            <span class="scope-key">Carpeta</span>
+            <span class="scope-val"><code>{{ trivyScan.target }}</code></span>
+          </div>
+          <div class="scope-item" v-if="scannedChildren.length">
+            <span class="scope-key">Subcarpetas analizadas</span>
+            <span class="scope-val">{{ scannedChildren.length }}</span>
+          </div>
+          <div class="scope-item" v-if="skippedByChoice.length">
+            <span class="scope-key">Excluidas</span>
+            <span class="scope-val">{{ skippedByChoice.length }}</span>
+          </div>
+          <div class="scope-item scope-item-warn" v-if="skippedByError.length">
+            <span class="scope-key">Sin analizar</span>
+            <span class="scope-val">{{ skippedByError.length }}</span>
+          </div>
+          <div class="scope-item" v-if="trivyScan.durationMs">
             <!-- "Duración carpeta" y no "Duración" a secas: desde que el escaneo
                  de paquetes del sistema se suma, hay dos y tardan cosas distintas. -->
-            <span class="pill-label">{{ sysPkgs && sysPkgs.durationMs ? 'Duración carpeta' : 'Duración' }}</span> {{ fmtDuration(trivyScan.durationMs) }}
-          </span>
+            <span class="scope-key">{{ sysPkgs && sysPkgs.durationMs ? 'Duración carpeta' : 'Duración' }}</span>
+            <span class="scope-val">{{ fmtDuration(trivyScan.durationMs) }}</span>
+          </div>
           <!-- Paquetes del sistema, con la CIFRA y su FUENTE. Antes decía solo
                "analizados" / "no analizados", que no permite distinguir un
                análisis que cubrió 2056 paquetes de uno que cubrió tres. La
                fuente va escrita porque justo al lado hay otra cuenta de
                paquetes, la de sw-inventory, que sale de dpkg/rpm y da otro
                número: son dos medidas distintas y no se intentan cuadrar. -->
-          <span class="pill" v-if="sysPkgs" :class="sysPkgs.status === 'scanned' ? '' : 'pill-warn'">
-            <span class="pill-label">Paquetes del sistema</span>
-            <template v-if="sysPkgs.status === 'scanned'">
-              {{ sysPkgs.packages != null ? sysPkgs.packages + ' analizados' : 'analizados' }}
-              <template v-if="sysPkgs.osFamily"> · {{ sysPkgs.osFamily }}{{ sysPkgs.osName ? ' ' + sysPkgs.osName : '' }}</template>
-              <template v-if="sysPkgs.trivyVersion"> · Trivy {{ sysPkgs.trivyVersion }}</template>
-            </template>
-            <template v-else>no analizados</template>
-          </span>
+          <div class="scope-item" v-if="sysPkgs" :class="sysPkgs.status === 'scanned' ? '' : 'scope-item-warn'">
+            <span class="scope-key">Paquetes del sistema</span>
+            <span class="scope-val">
+              <template v-if="sysPkgs.status === 'scanned'">
+                {{ sysPkgs.packages != null ? sysPkgs.packages + ' analizados' : 'analizados' }}
+                <template v-if="sysPkgs.osFamily"> · {{ sysPkgs.osFamily }}{{ sysPkgs.osName ? ' ' + sysPkgs.osName : '' }}</template>
+                <template v-if="sysPkgs.trivyVersion"> · Trivy {{ sysPkgs.trivyVersion }}</template>
+              </template>
+              <template v-else>no analizados</template>
+            </span>
+          </div>
           <!-- El inventario de sw-inventory, con SU fuente. Misma pregunta,
                otra herramienta, otro número. -->
-          <span class="pill" v-if="swPkgs && swPkgs.packages != null">
-            <span class="pill-label">Inventario de software</span>
-            {{ swPkgs.packages }} paquetes<template v-if="swPkgs.source"> · según {{ swPkgs.source }}</template>
-          </span>
-          <span class="pill" v-if="sysPkgs && sysPkgs.durationMs">
-            <span class="pill-label">Duración sistema</span> {{ fmtDuration(sysPkgs.durationMs) }}
-          </span>
-          <span class="pill" v-if="trivyScan.trivyVersion">
-            <span class="pill-label">Trivy</span> {{ trivyScan.trivyVersion }}
-          </span>
-        </div>
-
-        <!-- Un trozo del home que no se pudo leer es un AGUJERO en el informe,
-             no un detalle. Mismo razonamiento que el objetivo inalcanzable del
-             dashboard de red: no encontrar nada ≠ que no haya nada. -->
-        <div class="scope-notice warn" v-if="skippedByError.length">
-          <span class="scope-notice-ico">⚠️</span>
-          <div>
-            <div class="scope-notice-title">Una parte de tu carpeta personal no se ha podido analizar</div>
-            <div class="scope-notice-body">
-              Que no aparezca ningún hallazgo de
-              <strong>{{ skippedByError.map(function(s){ return s.name; }).join(', ') }}</strong>
-              no quiere decir que esté limpia: quiere decir que no se ha podido comprobar.
-            </div>
+          <div class="scope-item" v-if="swPkgs && swPkgs.packages != null">
+            <span class="scope-key">Inventario de software</span>
+            <span class="scope-val">{{ swPkgs.packages }} paquetes<template v-if="swPkgs.source"> · según {{ swPkgs.source }}</template></span>
+          </div>
+          <div class="scope-item" v-if="sysPkgs && sysPkgs.durationMs">
+            <span class="scope-key">Duración sistema</span>
+            <span class="scope-val">{{ fmtDuration(sysPkgs.durationMs) }}</span>
+          </div>
+          <div class="scope-item" v-if="trivyScan.trivyVersion">
+            <span class="scope-key">Trivy</span>
+            <span class="scope-val meta-val-mono">{{ trivyScan.trivyVersion }}</span>
           </div>
         </div>
 
@@ -238,22 +459,10 @@
           <div class="scope-detail-title">Módulos del análisis</div>
           <div class="scope-modules-grid">
             <span class="scope-module" v-for="m in modules" :key="m.id" :class="'mod-' + m.status">
-              <span class="scope-module-ico">{{ m.status === 'ok' ? '✓' : m.status === 'failed' ? '⚠' : '—' }}</span>
+              <svg class="icon icon-sm scope-module-ico"><use :href="m.status === 'ok' ? '#lca-i-check' : m.status === 'failed' ? '#lca-i-alert' : '#lca-i-minus'"></use></svg>
               {{ m.label }}
               <span class="scope-module-state">{{ m.status === 'ok' ? 'analizado' : m.status === 'failed' ? 'no se pudo' : 'no solicitado' }}</span>
             </span>
-          </div>
-        </div>
-
-        <!-- Paquetes del sistema: el hecho que faltaba por completo. -->
-        <div class="scope-notice" :class="sysPkgNotice.tone" v-if="sysPkgNotice">
-          <span class="scope-notice-ico">{{ sysPkgNotice.ico }}</span>
-          <div>
-            <div class="scope-notice-title">{{ sysPkgNotice.title }}</div>
-            <div class="scope-notice-lead" v-if="sysPkgNotice.lead">{{ sysPkgNotice.lead }}</div>
-            <div class="scope-notice-body">{{ sysPkgNotice.body }}</div>
-            <div class="scope-notice-warn" v-if="sysPkgNotice.warning">{{ sysPkgNotice.warning }}</div>
-            <div class="scope-notice-hint" v-if="sysPkgNotice.hint">{{ sysPkgNotice.hint }}</div>
           </div>
         </div>
 
@@ -288,78 +497,6 @@
         </div>
       </div>
 
-      <!-- ══ SEVERITY COUNTERS ══ -->
-      <!-- Cuentan ACCIONABLES (summary.actionable.counts), no el total: si
-           siguieran contando todo, la cabecera diría "Nada que arreglar" con un
-           9 en CRÍTICO justo debajo. Los informativos tienen su propia tarjeta,
-           neutra, para que no desaparezcan del recuento. -->
-      <div class="counters-row">
-        <div class="counter-card critical" :class="{ 'counter-active': filterSev === 'critical' }"
-             @click="toggleSevFilter('critical')" title="Filtrar por severidad Crítico">
-          <div class="counter-top">
-            <span class="counter-severity">Crítico</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2.5">
-              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path>
-              <line x1="12" y1="9" x2="12" y2="13"></line>
-              <line x1="12" y1="17" x2="12.01" y2="17"></line>
-            </svg>
-          </div>
-          <div class="counter-num" :style="act.counts.critical === 0 ? {color:'#CBD5E1'} : {}">{{ act.counts.critical || 0 }}</div>
-          <div class="counter-sub">Acción inmediata</div>
-        </div>
-        <div class="counter-card high" :class="{ 'counter-active': filterSev === 'high' }"
-             @click="toggleSevFilter('high')" title="Filtrar por severidad Alto">
-          <div class="counter-top">
-            <span class="counter-severity">Alto</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EA580C" stroke-width="2.5">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="12" y1="8" x2="12" y2="12"></line>
-              <line x1="12" y1="16" x2="12.01" y2="16"></line>
-            </svg>
-          </div>
-          <div class="counter-num" :style="act.counts.high === 0 ? {color:'#CBD5E1'} : {}">{{ act.counts.high || 0 }}</div>
-          <div class="counter-sub">Resolver esta semana</div>
-        </div>
-        <div class="counter-card medium" :class="{ 'counter-active': filterSev === 'medium' }"
-             @click="toggleSevFilter('medium')" title="Filtrar por severidad Medio">
-          <div class="counter-top">
-            <span class="counter-severity">Medio</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2.5">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="12" y1="8" x2="12" y2="12"></line>
-              <line x1="12" y1="16" x2="12.01" y2="16"></line>
-            </svg>
-          </div>
-          <div class="counter-num" :style="act.counts.medium === 0 ? {color:'#CBD5E1'} : {}">{{ act.counts.medium || 0 }}</div>
-          <div class="counter-sub">Cuando puedas</div>
-        </div>
-        <div class="counter-card low" :class="{ 'counter-active': filterSev === 'low' }"
-             @click="toggleSevFilter('low')" title="Filtrar por severidad Bajo">
-          <div class="counter-top">
-            <span class="counter-severity">Bajo</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#65A30D" stroke-width="2.5">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="8" y1="12" x2="16" y2="12"></line>
-            </svg>
-          </div>
-          <div class="counter-num" :style="act.counts.low === 0 ? {color:'#CBD5E1'} : {}">{{ act.counts.low || 0 }}</div>
-          <div class="counter-sub">Opcional</div>
-        </div>
-        <div class="counter-card informative" v-if="inf.total > 0"
-             title="Hallazgos que no requieren ninguna acción por tu parte">
-          <div class="counter-top">
-            <span class="counter-severity">Informativos</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2.5">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="12" y1="16" x2="12" y2="12"></line>
-              <line x1="12" y1="8" x2="12.01" y2="8"></line>
-            </svg>
-          </div>
-          <div class="counter-num">{{ inf.total }}</div>
-          <div class="counter-sub">Solo para tu información</div>
-        </div>
-      </div>
-
       <!-- ══ CHARTS ══ -->
       <div class="charts-row" v-if="totalFindings > 0">
 
@@ -369,7 +506,7 @@
           <div class="donut-wrap">
             <svg class="donut-svg" viewBox="0 0 140 140">
               <!-- track -->
-              <circle cx="70" cy="70" r="54" fill="none" stroke="#F1F5F9" stroke-width="18"></circle>
+              <circle cx="70" cy="70" r="54" fill="none" :stroke="tok.surface" stroke-width="18"></circle>
               <!-- segmentos calculados -->
               <circle v-for="seg in donutSegments" :key="seg.key"
                       cx="70" cy="70" r="54" fill="none"
@@ -401,37 +538,49 @@
               <div class="hbar-track">
                 <div class="hbar-fill" :style="{width: bar.pct + '%', background: bar.color}"></div>
               </div>
-              <span class="hbar-count" :style="{color: bar.color}">{{ bar.count }}</span>
+              <span class="hbar-count" :style="{color: bar.textColor}">{{ bar.count }}</span>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- ══ METRICS ══ -->
+      <!-- ══ MÉTRICAS ══ -->
+      <!-- Las tres con la MISMA anatomía: título · cifra grande · barra · dos datos
+           al pie. Antes cada una se estructuraba a su manera (RAM con su fila de
+           GiB, CPU con tres píldoras de load, disco con su cabecera por partición)
+           y comparar de un vistazo era imposible.
+           Las tres píldoras de load 1m/5m/15m SIGUEN estando: son tres datos, y un
+           pie de dos celdas que se comiera dos de ellos sería perder información,
+           no simplificar. Van como bloque propio dentro del pie de CPU. -->
       <div class="metrics-row">
 
         <!-- RAM -->
         <div class="metric-card" v-if="ramData">
           <div class="metric-header">
             <span class="metric-title">Memoria RAM</span>
-            <span class="metric-icon">{{ ramData.platform === 'darwin' ? '🍎' : '🧠' }}</span>
+            <svg class="icon"><use :href="ramData.platform === 'darwin' ? '#lca-i-apple' : '#lca-i-memory'"></use></svg>
           </div>
           <div class="ram-macos-note" v-if="ramData.platform === 'darwin'">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-            </svg>
+            <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
             Gestión unificada macOS — memoria compartida
           </div>
           <div class="metric-bar-section">
-            <div class="ram-usage-row">
-              <span class="ram-used">{{ ramData.usedGiB }}</span>
-              <span class="ram-of">GiB de</span>
-              <span class="ram-total">{{ ramData.totalGiB }} GiB</span>
+            <div class="metric-figure">
+              {{ ramData.usedGiB }}<span class="metric-figure-unit">GiB</span>
             </div>
             <div class="progress-bar" v-if="ramData.pct !== null">
               <div class="progress-fill" :style="{width: ramData.pct + '%', background: ramBarStyle(ramData.pct)}"></div>
             </div>
-            <div class="progress-pct" v-if="ramData.pct !== null">{{ ramData.pct }}% en uso</div>
+            <div class="metric-foot">
+              <div class="metric-foot-item" v-if="ramData.pct !== null">
+                <span class="metric-foot-key">En uso</span>
+                <span class="metric-foot-val">{{ ramData.pct }}%</span>
+              </div>
+              <div class="metric-foot-item">
+                <span class="metric-foot-key">Total</span>
+                <span class="metric-foot-val">{{ ramData.totalGiB }} GiB</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -439,65 +588,73 @@
         <div class="metric-card" v-if="cpuData">
           <div class="metric-header">
             <span class="metric-title">Carga de CPU</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2">
-              <rect x="4" y="4" width="16" height="16" rx="2"></rect>
-              <rect x="9" y="9" width="6" height="6"></rect>
-              <path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"></path>
-            </svg>
-          </div>
-          <div class="cpu-loads" v-if="cpuData.loadAvg">
-            <div class="load-pill">
-              <span class="load-val">{{ cpuData.loadAvg[0] != null ? cpuData.loadAvg[0].toFixed(2) : '—' }}</span>
-              <span class="load-period">1 min</span>
-            </div>
-            <div class="load-pill">
-              <span class="load-val">{{ cpuData.loadAvg[1] != null ? cpuData.loadAvg[1].toFixed(2) : '—' }}</span>
-              <span class="load-period">5 min</span>
-            </div>
-            <div class="load-pill">
-              <span class="load-val">{{ cpuData.loadAvg[2] != null ? cpuData.loadAvg[2].toFixed(2) : '—' }}</span>
-              <span class="load-period">15 min</span>
-            </div>
+            <svg class="icon"><use href="#lca-i-cpu"></use></svg>
           </div>
           <div class="metric-bar-section">
-            <div class="cpu-bar-label" v-if="cpuData.loadAvg">
-              Utilización estimada (load avg 1m vs. {{ cpuData.cores }} cores)
+            <div class="metric-figure" v-if="cpuData.loadAvg">
+              ~{{ Math.min(100, Math.round(cpuData.loadAvg[0] / cpuData.cores * 100)) }}<span class="metric-figure-unit">%</span>
             </div>
+            <div class="metric-figure metric-figure-na" v-else>—</div>
             <div class="progress-bar" v-if="cpuData.loadAvg">
               <div class="progress-fill" :style="{
                 width: Math.min(100, cpuData.loadAvg[0] / cpuData.cores * 100).toFixed(0) + '%',
                 background: cpuBarColor(cpuData.loadAvg[0] / cpuData.cores)
               }"></div>
             </div>
-            <div class="progress-pct" v-if="cpuData.loadAvg">
-              ~{{ Math.min(100, Math.round(cpuData.loadAvg[0] / cpuData.cores * 100)) }}% · {{ cpuData.cores }} núcleos {{ cpuData.model }}
+            <div class="metric-foot">
+              <div class="metric-foot-item">
+                <span class="metric-foot-key">Estimación</span>
+                <span class="metric-foot-val" v-if="cpuData.loadAvg">load avg 1m vs. {{ cpuData.cores }} núcleos</span>
+                <span class="metric-foot-val" v-else>Load avg no disponible</span>
+              </div>
+              <div class="metric-foot-item">
+                <span class="metric-foot-key">Procesador</span>
+                <span class="metric-foot-val">{{ cpuData.cores }} núcleos · {{ cpuData.model }}</span>
+              </div>
             </div>
-            <div class="progress-pct" v-else>Load avg no disponible</div>
+            <div class="cpu-loads" v-if="cpuData.loadAvg">
+              <div class="load-pill">
+                <span class="load-val">{{ cpuData.loadAvg[0] != null ? cpuData.loadAvg[0].toFixed(2) : '—' }}</span>
+                <span class="load-period">1 min</span>
+              </div>
+              <div class="load-pill">
+                <span class="load-val">{{ cpuData.loadAvg[1] != null ? cpuData.loadAvg[1].toFixed(2) : '—' }}</span>
+                <span class="load-period">5 min</span>
+              </div>
+              <div class="load-pill">
+                <span class="load-val">{{ cpuData.loadAvg[2] != null ? cpuData.loadAvg[2].toFixed(2) : '—' }}</span>
+                <span class="load-period">15 min</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Disco -->
+        <!-- Disco: la misma anatomía, repetida por partición. -->
         <div class="metric-card" v-if="diskData && diskData.length > 0">
           <div class="metric-header">
             <span class="metric-title">Almacenamiento</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2">
-              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
-              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
-              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
-            </svg>
+            <svg class="icon"><use href="#lca-i-disk"></use></svg>
           </div>
           <div class="disk-parts-container">
             <div class="disk-part" v-for="(p, i) in diskData" :key="i">
               <div class="disk-part-header">
                 <span class="disk-mount">{{ p.mount }}</span>
-                <span class="disk-pct">{{ p.usedPercent }}%</span>
+              </div>
+              <div class="metric-figure">
+                {{ p.usedPercent }}<span class="metric-figure-unit">%</span>
               </div>
               <div class="progress-bar">
                 <div class="progress-fill" :style="{width: p.usedPercent + '%', background: p.sevColor}"></div>
               </div>
-              <div class="disk-detail-row">
-                <span>{{ p.usedGB }} GB usados</span>
-                <span>{{ p.freeGB }} GB libres</span>
+              <div class="metric-foot">
+                <div class="metric-foot-item">
+                  <span class="metric-foot-key">Usados</span>
+                  <span class="metric-foot-val">{{ p.usedGB }} GB</span>
+                </div>
+                <div class="metric-foot-item">
+                  <span class="metric-foot-key">Libres</span>
+                  <span class="metric-foot-val">{{ p.freeGB }} GB</span>
+                </div>
               </div>
             </div>
           </div>
@@ -516,21 +673,21 @@
             <span class="pill pill-action" v-if="act.total > 0">{{ act.total }} requieren tu atención</span>
             <span class="pill pill-calm" v-else>Nada que arreglar</span>
             <span class="pill" v-if="inf.total > 0">{{ inf.total }} informativos</span>
-            <span class="pill" style="background:#F1F5F9">{{ activeGroups }} categorías</span>
+            <span class="pill">{{ activeGroups }} categorías</span>
           </span>
         </div>
 
         <template v-for="g in groups" :key="g.key">
           <div class="findings-group" v-if="g.items.length > 0">
             <div class="group-header" @click="toggleGroup(g.key)">
-              <span class="group-icon">{{ g.icon }}</span>
+              <svg class="icon group-icon"><use :href="'#lca-i-' + g.icon"></use></svg>
               <span class="group-name">{{ g.label }}</span>
+              <!-- Severidad máxima del grupo: g.items viene ordenado por severidad
+                   descendente (ver groups()), así que [0] ES el máximo. Sin computed
+                   nuevo y sin un segundo criterio que pueda divergir del orden. -->
+              <span class="sev-badge group-sev" :class="sevClass(g.items[0].severity)">{{ sevLabel(g.items[0].severity) }}</span>
               <span class="group-count">{{ g.items.length }}</span>
-              <svg class="group-chevron" :class="{open: openGroups[g.key]}"
-                   viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                   stroke-width="2.5" stroke-linecap="round">
-                <polyline points="6 9 12 15 18 9"></polyline>
-              </svg>
+              <svg class="icon group-chevron" :class="{open: openGroups[g.key]}"><use href="#lca-i-chevron"></use></svg>
             </div>
             <div class="group-findings" v-show="openGroups[g.key]">
               <div v-for="(f, fi) in g.items" :key="g.key + '-' + fi">
@@ -556,7 +713,12 @@
                   <span class="cat-badge">{{ f.subcategory || catLabel(f.category) }}</span>
                   <span class="finding-title">{{ f.title }}</span>
                   <span v-if="isDeclared(f)" class="finding-note">anotado en un lockfile · nada que actualizar</span>
-                  <span class="finding-expand-icon">{{ openFindings[g.key + '-' + fi] ? '▲' : '▼' }}</span>
+                  <!-- La clase lleva "chevron" a propósito: el toggle vanilla del
+                       export hace h.querySelector('[class*=chevron]') sobre la FILA
+                       además de sobre la cabecera del grupo, así que con este nombre
+                       el informe descargado también gira la flecha al desplegar. Con
+                       el ▲/▼ de texto anterior no podía. -->
+                  <svg class="icon icon-sm finding-chevron" :class="{open: openFindings[g.key + '-' + fi]}"><use href="#lca-i-chevron"></use></svg>
                 </div>
                 <div class="finding-detail" :class="{open: openFindings[g.key + '-' + fi]}">
                   <div class="detail-stack" v-if="f.evidence || f.fix">
@@ -569,49 +731,49 @@
                       <!-- Tira de metadatos: datos estructurados de Trivy (findings CVE) -->
                       <div v-if="hasMeta(f)" class="meta-strip">
                         <div v-if="f.pkg" class="meta-cell">
-                          <span class="meta-label">📦 Paquete</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-package"></use></svg> Paquete</span>
                           <span class="meta-value">{{ f.pkg }}</span>
                         </div>
                         <div v-if="f.installedVersion" class="meta-cell">
-                          <span class="meta-label">🔖 Instalada</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-tag"></use></svg> Instalada</span>
                           <span class="meta-value meta-mono">{{ f.installedVersion }}</span>
                         </div>
                         <div v-if="f.fixedVersion" class="meta-cell">
-                          <span class="meta-label">✅ Corregida</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-check"></use></svg> Corregida</span>
                           <span class="meta-value meta-mono meta-fixed">{{ f.fixedVersion }}</span>
                         </div>
                         <div v-else-if="f.pkg" class="meta-cell">
-                          <span class="meta-label">✅ Corregida</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-check"></use></svg> Corregida</span>
                           <span class="meta-value meta-nofix">sin parche</span>
                         </div>
                         <div v-if="f.cvss != null" class="meta-cell">
-                          <span class="meta-label">📊 CVSS</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-gauge"></use></svg> CVSS</span>
                           <span class="meta-value">
                             {{ f.cvss }}
                             <span class="cvss-chip" :class="sevClass(f.severity)">{{ sevLabel(f.severity) }}</span>
                           </span>
                         </div>
                         <div v-if="f.cveCount > 1" class="meta-cell">
-                          <span class="meta-label">🧩 CVEs</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-puzzle"></use></svg> CVEs</span>
                           <span class="meta-value">{{ f.cveCount }}</span>
                         </div>
                         <!-- Metadatos de control (Lynis). El código va aquí, de
                              dato secundario: el título de la tarjeta es la
                              descripción legible, no el identificador. -->
                         <div v-if="f.control" class="meta-cell">
-                          <span class="meta-label">🔖 Control Lynis</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-tag"></use></svg> Control Lynis</span>
                           <span class="meta-value meta-mono">{{ f.control }}</span>
                         </div>
                         <div v-if="f.lynisType" class="meta-cell">
-                          <span class="meta-label">⚠️ Tipo</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-alert"></use></svg> Tipo</span>
                           <span class="meta-value">{{ lynisTypeLabel(f) }}</span>
                         </div>
                         <div v-if="f.detail" class="meta-cell">
-                          <span class="meta-label">🔍 Detalle</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-search"></use></svg> Detalle</span>
                           <span class="meta-value meta-mono">{{ f.detail }}</span>
                         </div>
                         <div v-if="f.actionType === 'reboot'" class="meta-cell">
-                          <span class="meta-label">🔄 Requiere</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-refresh"></use></svg> Requiere</span>
                           <span class="meta-value">Reiniciar el equipo</span>
                         </div>
                         <!-- Lynis NO puntúa sus controles: el nivel lo pone
@@ -619,19 +781,19 @@
                              de que el usuario sepa de quién es el juicio. -->
                         <div v-if="f.severitySource === 'locoaudit'" class="meta-cell"
                              title="Lynis no asigna severidad a sus controles. Este nivel lo establece LoCoAudit según el tipo de control (AUTH, FIRE, NETW…) y según si es un aviso o una sugerencia.">
-                          <span class="meta-label">⚖️ Severidad</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-scale"></use></svg> Severidad</span>
                           <span class="meta-value">
                             {{ sevLabel(f.severity) }}
                             <span class="meta-muted">· criterio de LoCoAudit</span>
                           </span>
                         </div>
                         <div class="meta-cell">
-                          <span class="meta-label">🔎 Fuente</span>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-search"></use></svg> Fuente</span>
                           <span class="meta-value">{{ originLabel(f.source) }}</span>
                         </div>
                         <div class="meta-cell">
-                          <span class="meta-label">🔗 Advisory</span>
-                          <a v-if="f.primaryUrl" class="meta-value meta-link" :href="f.primaryUrl" target="_blank" rel="noopener">{{ f.advisoryLabel || 'Ver' }} ↗</a>
+                          <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-link"></use></svg> Advisory</span>
+                          <a v-if="f.primaryUrl" class="meta-value meta-link" :href="f.primaryUrl" target="_blank" rel="noopener">{{ f.advisoryLabel || 'Ver' }} <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg></a>
                           <span v-else class="meta-value meta-muted" title="Trivy no aporta una URL pública fiable para este hallazgo">no disponible</span>
                         </div>
                       </div>
@@ -649,7 +811,7 @@
                                 <button @click.stop="copyCommand(st.cmd)"
                                         :class="{ copied: copiedKey === st.cmd }"
                                         class="command-btn">
-                                  {{ copiedKey === st.cmd ? '✓ Copiado' : 'Copiar' }}
+                                  <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg>{{ copiedKey === st.cmd ? ' Copiado' : 'Copiar' }}
                                 </button>
                               </span>
                             </span>
@@ -665,7 +827,7 @@
                         <button @click.stop="copyCommand(f.command || f.fix)"
                                 :class="{ copied: copiedKey === (f.command || f.fix) }"
                                 class="command-btn">
-                          {{ copiedKey === (f.command || f.fix) ? '✓ Copiado' : 'Copiar' }}
+                          <svg class="icon icon-sm" v-if="copiedKey === (f.command || f.fix)"><use href="#lca-i-check"></use></svg>{{ copiedKey === (f.command || f.fix) ? ' Copiado' : 'Copiar' }}
                         </button>
                       </div>
                       <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
@@ -674,7 +836,8 @@
                         Cópialo y ejecútalo en tu terminal después de revisarlo.
                       </div>
                       <div v-if="/(^|\s)sudo(\s|$)/.test(f.fix || '')" class="cmd-sudo">
-                        🔒 Requiere privilegios de administrador: pedirá tu contraseña de usuario. Revísalo bien antes de ejecutarlo.
+                        <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
+                        Requiere privilegios de administrador: pedirá tu contraseña de usuario. Revísalo bien antes de ejecutarlo.
                       </div>
                     </div>
                   </div>
@@ -688,7 +851,7 @@
                     </template>
                     <template v-else-if="f.primaryUrl">
                       LoCoAudit no tiene un paso concreto para este control.
-                      <a :href="f.primaryUrl" target="_blank" rel="noopener">Consulta su ficha oficial ↗</a>
+                      <a :href="f.primaryUrl" target="_blank" rel="noopener">Consulta su ficha oficial <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg></a>
                     </template>
                     <template v-else>
                       <!-- Sin ficha a la que remitir tampoco hay control de Lynis detrás: son
@@ -701,9 +864,18 @@
                   <!-- ── Chat con IA ── -->
                   <div class="lca-chat-wrap" v-if="llmAvailable === true">
                     <button class="ai-ask-btn" @click.stop="toggleChat(chatKey(f, g.key, fi), f)">
-                      🤖 {{ chatOpen[chatKey(f, g.key, fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
+                      <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
+                      {{ chatOpen[chatKey(f, g.key, fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
                     </button>
                     <div class="lca-chat" v-if="chatOpen[chatKey(f, g.key, fi)]">
+                      <!-- Cabecera con el modelo: /locoaudit/chat/status YA devuelve
+                           `model` (llm-config.js) y hasta ahora se tiraba. Quien lee la
+                           respuesta necesita saber quién la ha escrito. -->
+                      <div class="lca-chat-head">
+                        <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
+                        <span class="lca-chat-head-title">Asistente</span>
+                        <span class="lca-chat-model" v-if="llmModel">{{ llmModel }}</span>
+                      </div>
                       <div class="lca-chat-msgs">
                         <div v-for="(cm, ci) in (chatMessages[chatKey(f, g.key, fi)] || [])" :key="ci"
                              class="chat-msg" :class="cm.role === 'user' ? 'chat-user' : 'chat-ai'">
@@ -715,7 +887,7 @@
                                 <button @click.stop="copyCommand(seg.code)"
                                         :class="{ copied: copiedKey === seg.code }"
                                         class="command-btn">
-                                  {{ copiedKey === seg.code ? '✓ Copiado' : 'Copiar' }}
+                                  <svg class="icon icon-sm" v-if="copiedKey === seg.code"><use href="#lca-i-check"></use></svg>{{ copiedKey === seg.code ? ' Copiado' : 'Copiar' }}
                                 </button>
                               </div>
                             </template>
@@ -735,6 +907,12 @@
                         <button class="chat-send-btn"
                                 :disabled="chatLoading[chatKey(f, g.key, fi)]"
                                 @click.stop="sendChat(chatKey(f, g.key, fi), f)">Enviar</button>
+                      </div>
+                      <!-- El aviso va al pie y no en un modal: se lee después de la
+                           respuesta, que es cuando el usuario decide si actuar. -->
+                      <div class="lca-chat-foot">
+                        Un modelo de lenguaje puede equivocarse. Contrasta lo que te diga
+                        con la evidencia del hallazgo antes de ejecutar nada.
                       </div>
                     </div>
                   </div>
@@ -807,17 +985,33 @@
 
         <!-- Sin hallazgos -->
         <div v-if="groups.filter(function(g){ return g.items.length > 0; }).length === 0"
-             class="lca-state-center" style="padding:40px 0">
-          <div class="lca-state-ico">✅</div>
+             class="lca-state-center lca-state-inline">
+          <svg class="icon icon-xl lca-state-ico"><use href="#lca-i-check-circle"></use></svg>
           <h3 class="lca-state-title">¡Sin hallazgos!</h3>
           <p class="lca-state-desc">No se encontraron problemas en esta auditoría.</p>
         </div>
       </div>
 
-      <!-- Footer -->
-      <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--text-secondary);"
-           v-if="auditData.scanMeta">
-        LoCoAudit · Módulos: {{ (auditData.scanMeta.modulesRun || []).join(', ') }} · {{ scanTime }}
+      <!-- Footer: herramienta · fuentes · marca temporal. Las versiones salen de
+           donde ya se muestran arriba (scanMeta.lynis.version, trivyScan/sysPkgs
+           .trivyVersion); no hay ninguna consulta nueva. -->
+      <div class="report-foot" v-if="auditData.scanMeta">
+        <div class="report-foot-item">
+          <span class="report-foot-key">Herramienta</span>
+          <span class="report-foot-val">LoCoAudit · auditoría de host</span>
+        </div>
+        <div class="report-foot-item" v-if="toolSources">
+          <span class="report-foot-key">Fuentes</span>
+          <span class="report-foot-val">{{ toolSources }}</span>
+        </div>
+        <div class="report-foot-item" v-if="(auditData.scanMeta.modulesRun || []).length">
+          <span class="report-foot-key">Módulos</span>
+          <span class="report-foot-val">{{ (auditData.scanMeta.modulesRun || []).join(', ') }}</span>
+        </div>
+        <div class="report-foot-item">
+          <span class="report-foot-key">Generado</span>
+          <span class="report-foot-val">{{ scanTime }}</span>
+        </div>
       </div>
 
     </div>
@@ -844,7 +1038,24 @@ export default {
       chatInput: {},       // por findingKey: texto en curso
       chatLoading: {},     // por findingKey: esperando respuesta
       chatEpoch: 0,        // se incrementa con cada escaneo: descarta respuestas en vuelo
-      llmAvailable: null   // null = sin comprobar; true/false tras comprobar
+      llmAvailable: null,  // null = sin comprobar; true/false tras comprobar
+      llmModel: null,      // modelo que responde; /locoaudit/chat/status ya lo devuelve
+
+      // ── Tokens de color leídos del CSS ───────────────────────────────────────
+      // Los colores que acaban en un ATRIBUTO SVG o en una cadena de estilo no los
+      // alcanza ningún var(), así que antes estaban escritos a mano aquí abajo. Eso
+      // los convertía en una segunda fuente de verdad, y se desincronizaron: el
+      // gauge de Lynis pintaba la paleta de image (#EF4444/#F97316/#22C55E) dentro
+      // de host, cuyos badges son #DC2626/#EA580C/#65A30D.
+      // Ahora se LEEN del :root con getComputedStyle (ver readTokens): el CSS sigue
+      // siendo la única autoridad del color y el JS solo lo consulta.
+      // Vacíos hasta la primera lectura: un valor vacío no pinta nada, mientras que
+      // una constante de respaldo volvería a ser la segunda fuente que sobra.
+      tok: {
+        critical: '', high: '', medium: '', low: '', info: '',
+        criticalText: '', highText: '', mediumText: '', lowText: '', infoText: '',
+        surface: '', textMuted: '', textSecondary: ''
+      }
     };
   },
 
@@ -1099,7 +1310,7 @@ export default {
 
       if (sp.status === 'unsupported-manager') {
         return {
-          tone: 'warn', ico: '⚠️',
+          tone: 'warn', ico: 'alert',
           title: 'Los paquetes del sistema no se han analizado',
           // `requested` distingue "no se analizó porque nadie lo pidió" de
           // "lo pediste y no se pudo". Antes el segundo caso abortaba el nodo
@@ -1115,7 +1326,7 @@ export default {
       }
       if (sp.status === 'supported-not-run') {
         return {
-          tone: 'info', ico: 'ℹ️',
+          tone: 'info', ico: 'info',
           title: 'Solo se ha analizado tu carpeta personal',
           lead: null,
           body: 'La opción está desactivada en el nodo, así que el software instalado por el sistema ' +
@@ -1139,7 +1350,7 @@ export default {
             (sp.osName ? ' ' + sp.osName : '') + ', según Trivy)'
           : 'el software instalado por el sistema operativo';
         return {
-          tone: 'ok', ico: '✓',
+          tone: 'ok', ico: 'check',
           title: carpeta
             ? 'Se ha analizado tu carpeta personal y los paquetes del sistema'
             : 'Se han analizado los paquetes del sistema',
@@ -1154,7 +1365,7 @@ export default {
       }
       if (sp.status === 'failed') {
         return {
-          tone: 'warn', ico: '⚠️',
+          tone: 'warn', ico: 'alert',
           title: 'El análisis de los paquetes del sistema falló',
           lead: null,
           body: 'Se intentó, pero no llegó a terminar: ' + (sp.reason || 'motivo no disponible') + '.',
@@ -1168,7 +1379,7 @@ export default {
       // distintas para el usuario. No se pueden fusionar en una frase.
       if (plat === 'darwin') {
         return {
-          tone: 'info', ico: 'ℹ️',
+          tone: 'info', ico: 'info',
           title: 'En macOS no se analizan los paquetes del sistema',
           lead: null,
           body: 'macOS no tiene un gestor de paquetes de sistema que Trivy pueda leer. Homebrew instala software tuyo, ' +
@@ -1178,13 +1389,30 @@ export default {
         };
       }
       return {
-        tone: 'info', ico: 'ℹ️',
+        tone: 'info', ico: 'info',
         title: 'En Windows no se analizan los paquetes del sistema',
         lead: null,
         body: 'Trivy no analiza el software instalado de Windows. Se ha analizado tu carpeta personal de usuario.',
         warning: null,
         hint: 'Mantén el sistema al día con Windows Update y revisa tus programas con: winget upgrade --all'
       };
+    },
+
+    // Nivel del aviso de paquetes del sistema: 2 (cobertura) o 3 (contexto).
+    //
+    // El corte NO es por tono, es por si el hueco se puede cerrar. Nivel 2 son
+    // huecos de ESTA ejecución —el gestor no lo reconoce Trivy, no se pidió, o se
+    // intentó y falló—: se cierran instalando, activando o reintentando. Nivel 3 es
+    // cómo es este equipo siempre: macOS no tiene un gestor de paquetes de sistema
+    // que Trivy sepa leer, y eso no cambia mañana. Pintar el nivel 3 en ámbar sería
+    // el falso positivo que la regla "fallo de herramienta ≠ dato negativo" existe
+    // para evitar: un límite conocido de la plataforma no es un fallo.
+    //
+    // Sale de sysPkgs.status, la MISMA fuente que ya elige el texto en
+    // sysPkgNotice(). No se compara ninguna cadena de prosa ni se lee el tono.
+    sysPkgNoticeLevel() {
+      var st = this.sysPkgs && this.sysPkgs.status;
+      return (st === 'unsupported-manager' || st === 'supported-not-run' || st === 'failed') ? 2 : 3;
     },
 
     riskLabel() {
@@ -1240,13 +1468,42 @@ export default {
       return parts.join(' · ');
     },
 
+    // Sin índice no hay dato, y "no hay dato" no se pinta de verde: neutro.
+    // Los tres tramos leen los MISMOS tokens que pintan los badges de severidad.
+    // Antes eran tres literales de la paleta de image dentro de host, así que el
+    // gauge y los badges daban dos rojos, dos naranjas y dos verdes distintos para
+    // el mismo nivel. Al leerlos del :root la divergencia no puede volver.
+    // Presentacionales: solo reformatean valores que ya se muestran en otras
+    // partes del informe. Ningún dato ni cálculo de negocio nuevo.
+    modulesLabel() {
+      var m = this.modules;
+      if (!m.length) return null;
+      var run = m.filter(function(x) { return x.status === 'ok'; }).length;
+      return run + ' de ' + m.length;
+    },
+
+    lynisTests() {
+      var meta = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.lynis;
+      return (meta && meta.testsDone) || null;
+    },
+
+    // Herramientas que han producido los datos, con su versión. Salen de donde ya
+    // se enseñan (el Alcance y el gauge); si una no consta, no se inventa.
+    toolSources() {
+      var out = [];
+      var t = (this.trivyScan && this.trivyScan.trivyVersion) ||
+              (this.sysPkgs && this.sysPkgs.trivyVersion);
+      if (t) out.push('Trivy ' + t);
+      var lm = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.lynis;
+      if (lm && lm.version) out.push('Lynis ' + lm.version);
+      return out.length ? out.join(' · ') : null;
+    },
+
     lynisColor() {
-      // Sin índice no hay dato, y "no hay dato" no se pinta de verde: neutro, el mismo
-      // --text-secondary del resto del gauge. Literal y no var(): es un atributo SVG.
-      if (this.lynisIdx === null) return '#64748B';
-      if (this.lynisIdx < 30) return '#EF4444';
-      if (this.lynisIdx < 55) return '#F97316';
-      return '#22C55E';
+      if (this.lynisIdx === null) return this.tok.textSecondary;
+      if (this.lynisIdx < 30) return this.tok.critical;
+      if (this.lynisIdx < 55) return this.tok.high;
+      return this.tok.low;
     },
 
     // arc length = lynisIdx% of the visible 221-unit arc; total circumference r=44 ≈ 276
@@ -1282,6 +1539,7 @@ export default {
       var disk = this.auditData && this.auditData.raw && this.auditData.raw.disk;
       if (!Array.isArray(disk) || disk.length === 0) return [];
       var platform = this.auditData.host && this.auditData.host.platform;
+      var T = this.tok;   // el color va a una cadena de estilo: ningún var() llega ahí
       return disk.filter(function(d) {
         // En macOS "/" es el volumen de solo lectura del sistema (~11 GB).
         // /System/Volumes/Data es el volumen real con los datos del usuario.
@@ -1294,7 +1552,7 @@ export default {
           usedGB:      d.usedGB,
           totalGB:     d.totalGB,
           freeGB:      d.freeGB != null ? d.freeGB : Math.round((d.totalGB - d.usedGB) * 100) / 100,
-          sevColor:    pct >= 90 ? '#DC2626' : pct >= 75 ? '#EA580C' : pct >= 60 ? '#D97706' : '#65A30D'
+          sevColor:    pct >= 90 ? T.critical : pct >= 75 ? T.high : pct >= 60 ? T.medium : T.low
         };
       });
     },
@@ -1309,15 +1567,17 @@ export default {
       // y en el donut y luego no tenía fila en ninguna parte de la lista, así que
       // el usuario veía "1 alto" sin poder encontrarlo. Excluirlo además hacía
       // que las barras por categoría no sumaran el total de la cabecera.
+      // `icon` es la CLAVE de un <symbol> del sprite, no un glifo: se compone como
+      // '#lca-i-' + icon en la plantilla. El campo, su nombre y su papel no cambian.
       var CATS = {
-        vulnerability: { icon: '🔒', label: 'Vulnerabilidades',        order: 0 },
-        cpu:           { icon: '⚙️', label: 'Procesador (CPU)',         order: 1 },
-        memory:        { icon: '🧠', label: 'Memoria RAM',              order: 2 },
-        disk:          { icon: '💾', label: 'Almacenamiento',           order: 3 },
-        system:        { icon: '🖥️', label: 'Sistema & Actualizaciones', order: 4 },
-        network:       { icon: '🌐', label: 'Red & Firewall',           order: 5 },
-        'system-logs': { icon: '📋', label: 'Logs del sistema',         order: 6 },
-        other:         { icon: '📦', label: 'Otros',                    order: 99 }
+        vulnerability: { icon: 'lock',    label: 'Vulnerabilidades',          order: 0 },
+        cpu:           { icon: 'cpu',     label: 'Procesador (CPU)',          order: 1 },
+        memory:        { icon: 'memory',  label: 'Memoria RAM',               order: 2 },
+        disk:          { icon: 'disk',    label: 'Almacenamiento',            order: 3 },
+        system:        { icon: 'server',  label: 'Sistema & Actualizaciones', order: 4 },
+        network:       { icon: 'globe',   label: 'Red & Firewall',            order: 5 },
+        'system-logs': { icon: 'list',    label: 'Logs del sistema',          order: 6 },
+        other:         { icon: 'package', label: 'Otros',                     order: 99 }
       };
       var SEV_ORDER = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
       var catMap = {};
@@ -1348,7 +1608,7 @@ export default {
         });
       });
       return Object.keys(catMap).map(function(c) {
-        var meta = CATS[c] || { icon: '📋', label: c, order: 50 };
+        var meta = CATS[c] || { icon: 'list', label: c, order: 50 };
         return { key: c, icon: meta.icon, label: meta.label, order: meta.order, items: catMap[c] };
       }).sort(function(a, b) { return a.order - b.order; });
     },
@@ -1382,7 +1642,12 @@ export default {
 
     catBars() {
       var SEV_ORDER = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
-      var SEV_COLOR = { CRITICAL: '#DC2626', HIGH: '#EA580C', MEDIUM: '#D97706', LOW: '#65A30D', INFO: '#0EA5E9' };
+      var T = this.tok;
+      // Dos colores por barra, no uno: `color` rellena la barra —ahí manda la
+      // identidad— y `textColor` pinta la cifra, que es TEXTO sobre blanco y con el
+      // tono base no llega al mínimo legible (3,09 medido para low, mínimo 4,5).
+      var SEV_COLOR = { CRITICAL: T.critical, HIGH: T.high, MEDIUM: T.medium, LOW: T.low, INFO: T.info };
+      var SEV_TEXT  = { CRITICAL: T.criticalText, HIGH: T.highText, MEDIUM: T.mediumText, LOW: T.lowText, INFO: T.infoText };
       var nonEmpty = this.groups.filter(function(g) { return g.items.length > 0; });
       if (!nonEmpty.length) return [];
       var maxCount = Math.max.apply(null, nonEmpty.map(function(g) { return g.items.length; }));
@@ -1397,7 +1662,8 @@ export default {
           label: g.label,
           count: g.items.length,
           pct:   maxCount > 0 ? Math.round(g.items.length / maxCount * 100) : 0,
-          color: SEV_COLOR[maxSev] || '#94a3b8'
+          color: SEV_COLOR[maxSev] || T.textMuted,
+          textColor: SEV_TEXT[maxSev] || T.textSecondary
         };
       });
     },
@@ -1405,14 +1671,15 @@ export default {
     donutSegments() {
       var C = 339.3; // circumference r=54
       var c = this.counts;
+      var T = this.tok;   // atributo :stroke del <circle>: fuera del alcance de var()
       var total = c.critical + c.high + c.medium + c.low + c.info;
       if (total === 0) return [];
       var sevs = [
-        { key: 'info',     color: '#0EA5E9', count: c.info     },
-        { key: 'low',      color: '#65A30D', count: c.low      },
-        { key: 'medium',   color: '#D97706', count: c.medium   },
-        { key: 'high',     color: '#EA580C', count: c.high     },
-        { key: 'critical', color: '#DC2626', count: c.critical }
+        { key: 'info',     color: T.info,     count: c.info     },
+        { key: 'low',      color: T.low,      count: c.low      },
+        { key: 'medium',   color: T.medium,   count: c.medium   },
+        { key: 'high',     color: T.high,     count: c.high     },
+        { key: 'critical', color: T.critical, count: c.critical }
       ].filter(function(s) { return s.count > 0; });
 
       var offset = C / 4; // start at 12 o'clock
@@ -1442,6 +1709,7 @@ export default {
         }
         this.auditData    = newMsg.payload;
         this.state        = 'done';
+        this.readTokens();   // síncrono: el primer pintado de los resultados ya va con color
         this.openGroups   = {};
         this.openFindings = {};
         this.resetChats();
@@ -1450,6 +1718,36 @@ export default {
   },
 
   methods: {
+    // ── Lectura de los tokens de color ────────────────────────────────────────
+    // El CSS es la única autoridad del color; esto solo lo consulta para los sitios
+    // que ningún var() alcanza: atributos SVG y cadenas de estilo en JS.
+    //
+    // getPropertyValue devuelve la cadena CON el espacio inicial del CSS y solo
+    // resuelve con el elemento ya en el documento, de ahí el .trim() y el momento
+    // de la llamada: mounted() (la hoja del componente entra en el head con el
+    // propio componente) y, otra vez, al llegar cada payload —síncrono, antes del
+    // re-render, así que el primer pintado de los resultados ya tiene color—.
+    // Si una lectura vuelve vacía se conserva la anterior: nunca se cae a una
+    // constante de respaldo, que sería justo la segunda fuente que esto elimina.
+    readTokens() {
+      var cs;
+      try { cs = getComputedStyle(document.documentElement); } catch (e) { return; }
+      var NAMES = {
+        critical: '--critical', high: '--high', medium: '--medium', low: '--low',
+        info: '--info', surface: '--surface', textMuted: '--text-muted',
+        textSecondary: '--text-secondary',
+        // El tono legible, para los sitios donde el color va como TEXTO.
+        criticalText: '--critical-text', highText: '--high-text',
+        mediumText: '--medium-text', lowText: '--low-text', infoText: '--info-text'
+      };
+      var next = Object.assign({}, this.tok), got = false;
+      Object.keys(NAMES).forEach(function(k) {
+        var v = (cs.getPropertyValue(NAMES[k]) || '').trim();
+        if (v) { next[k] = v; got = true; }
+      });
+      if (got) this.tok = next;
+    },
+
     toggleGroup(key) {
       this.openGroups = Object.assign({}, this.openGroups, { [key]: !this.openGroups[key] });
     },
@@ -1789,16 +2087,19 @@ export default {
       return m > 0 ? m + ' min ' + (s % 60) + ' s' : s + ' s';
     },
 
+    // Los dos colores acaban en una cadena de estilo, donde ningún var() llega:
+    // se leen del :root con readTokens() en vez de repetir la paleta aquí.
     cpuBarColor(ratio) {
-      if (ratio >= 0.80) return '#DC2626';
-      if (ratio >= 0.50) return '#D97706';
-      return '#65A30D';
+      if (ratio >= 0.80) return this.tok.critical;
+      if (ratio >= 0.50) return this.tok.medium;
+      return this.tok.low;
     },
 
     ramBarStyle(pct) {
-      if (pct >= 95) return 'linear-gradient(90deg,#65A30D,#D97706 70%,#EA580C)';
-      if (pct >= 85) return '#D97706';
-      return '#65A30D';
+      var T = this.tok;
+      if (pct >= 95) return 'linear-gradient(90deg,' + T.low + ',' + T.medium + ' 70%,' + T.high + ')';
+      if (pct >= 85) return T.medium;
+      return T.low;
     },
 
     async copyCommand(text) {
@@ -1925,11 +2226,22 @@ export default {
   },
 
   mounted() {
+    this.readTokens();
+    // Segunda pasada en nextTick: si la hoja del componente aún no estuviera en el
+    // head al montar, la primera lectura vuelve vacía y se conserva lo anterior.
+    // Aquí ya está puesta con seguridad.
+    this.$nextTick(this.readTokens);
+
     // Detecta si hay un nodo llm-config desplegado para mostrar (o no) el chat.
+    // `model` ya venía en la respuesta y se descartaba; ahora lo enseña la cabecera
+    // del chat, para que se sepa quién firma cada contestación.
     var self = this;
     fetch('/locoaudit/chat/status')
       .then(function(r) { return r.json(); })
-      .then(function(d) { self.llmAvailable = !!(d && d.available); })
+      .then(function(d) {
+        self.llmAvailable = !!(d && d.available);
+        self.llmModel = (d && d.model) || null;
+      })
       .catch(function() { self.llmAvailable = false; });
   }
 };
@@ -1939,7 +2251,17 @@ export default {
   /*LCA-STYLE-DASH:host — fuente única de estilo del export*/
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+  /* ═══ TOKENS ═══════════════════════════════════════════════════════════════
+     Ningún valor de los que ya existían cambia. Lo que se añade son NOMBRES para
+     hex que ya estaban escritos a mano más abajo, dentro de este mismo fichero.
+     Regla seguida: un hex igual a un token pasa a var(); uno distinto que se
+     repite gana token propio; uno distinto que aparece una vez se queda literal,
+     con su comentario. Los tonos profundos (#3F6212, #92400E, #15803D…) NO son
+     vocabulario de severidad y por eso no reciben nombre: bautizarlos invitaría a
+     reutilizarlos donde no corresponde. */
   :root {
+    /* Severidad. Es la referencia de diseño del proyecto y también lo que lee
+       readTokens() para los atributos SVG. Intocable. */
     --critical: #DC2626;
     --critical-bg: #FEF2F2;
     --critical-border: #FECACA;
@@ -1955,19 +2277,60 @@ export default {
     --info: #0EA5E9;
     --info-bg: #F0F9FF;
     --info-border: #BAE6FD;
+
+    /* Tono 700, para cuando el color va como TEXTO.
+       REVOCA la antigua regla `--X-text = var(--X)`, que se decidió por coherencia
+       sin medir. Medido sobre el fondo pálido del propio nivel, el tono base da
+       4,41 / 3,35 / 3,07 / 2,98 / 2,60 (critical / high / medium / low / info) y el
+       mínimo WCAG AA es 4,5: falla en los cinco. Con el 700 son 5,91 / 4,88 / 4,75 /
+       4,82 / 5,57.
+       El tono base sigue siendo la IDENTIDAD —bordes, puntos, rellenos sólidos,
+       arcos, barras—; el 700 es el que se lee. */
+    --critical-text: #B91C1C;
+    --high-text: #C2410C;
+    --medium-text: #A16207;
+    --low-text: #4D7C0F;
+    --info-text: #0369A1;
+
+    /* Chrome */
     --bg: #F8FAFC;
     --card: #FFFFFF;
     --text: #1E293B;
     --text-secondary: #64748B;
     --border: #E2E8F0;
+    /* Nuevos, y solo porque ya estaban literales: --surface era el #F1F5F9 de las
+       píldoras, los raíles de barra y los contadores; --text-muted el #94A3B8 de
+       las etiquetas pequeñas y los chevrones. No hay --surface-2 ni --ink: serían
+       #F8FAFC y #1E293B otra vez, o sea --bg y --text con otro nombre. */
+    --surface: #F1F5F9;
+    --text-muted: #94A3B8;
+
+    /* Acento. Hasta ahora --accent NO estaba declarada: vivía del fallback de
+       var(--accent, #7C3AED) en .dl-btn y .meta-link, una declaración escondida
+       que no aparecía en ningún :root. Declararla no mueve esos dos y da al chat
+       un acento propio, morado, que no compite con el azul de --info (que es un
+       NIVEL DE SEVERIDAD y no debería usarse como color de interfaz). */
+    --accent: #7C3AED;
+    --accent-bg: #F5F3FF;
+    --accent-border: #DDD6FE;
+    --accent-light: #C4B5FD;
+
+    /* Geometría */
     --radius: 12px;
     --radius-sm: 8px;
+    /* Unifica los 100px y 999px que convivían para el mismo concepto. También
+       absorbe el 20px de .scope-toggle: ese botón mide ~23px de alto, así que su
+       radio ya renderizaba como píldora completa. */
+    --radius-pill: 100px;
     --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
     --shadow-md: 0 4px 12px rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.04);
+
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "Fira Code", monospace;
+    --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
 
   body {
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-family: var(--font-sans);
     background: var(--bg);
     color: var(--text);
     font-size: 14px;
@@ -1976,108 +2339,169 @@ export default {
     padding: 24px;
   }
 
-  /* ── HEADER ── */
+  /* ── Iconos ────────────────────────────────────────────────────────────────
+     Un solo <symbol> por icono, referenciado con <use>. El sprite es el primer
+     hijo de .lca-report-root para que el clon del export se lo lleve; escondido
+     con position/size y no con display:none, que en el informe descargado podría
+     verse pisado por alguna regla !important del CSS extra. */
+  .lca-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+  .icon {
+    width: 16px; height: 16px;
+    flex-shrink: 0;
+    /* stroke y fill son heredables, así que esto alcanza al contenido del <use>. */
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vertical-align: -3px;
+  }
+  .icon-sm { width: 13px; height: 13px; vertical-align: -2px; }
+  .icon-xl { width: 44px; height: 44px; stroke-width: 1.25; }
+
+  /* ═══ CABECERA ═════════════════════════════════════════════════════════════ */
   .header-card {
     background: var(--card);
     border-radius: var(--radius);
     border: 1px solid var(--border);
     box-shadow: var(--shadow);
-    padding: 24px 28px;
+    padding: 26px 28px;
     display: flex;
-    align-items: center;
-    gap: 24px;
+    align-items: stretch;
+    gap: 28px;
     margin-bottom: 20px;
     position: relative;
     overflow: hidden;
   }
+  /* La barra ya no es un gradiente decorativo fijo: es el nivel de riesgo real.
+     La clase la pone riskClass, la misma que pinta el badge. */
   .header-card::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 3px;
-    background: linear-gradient(90deg, var(--high) 0%, var(--medium) 60%, var(--low) 100%);
+    background: var(--text-muted);
   }
+  .header-card.critical::before { background: var(--critical); }
+  .header-card.high::before     { background: var(--high); }
+  .header-card.medium::before   { background: var(--medium); }
+  .header-card.low::before      { background: var(--low); }
+  .header-card.info::before     { background: var(--info); }
 
-  .host-info { flex: 1; min-width: 0; }
+  .header-main { flex: 1; min-width: 0; }
+  .header-eyebrow {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
   .host-name {
-    font-size: 22px;
+    font-size: 26px;
     font-weight: 700;
     color: var(--text);
-    letter-spacing: -.3px;
+    letter-spacing: -.4px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .host-name .icon { width: 20px; height: 20px; color: var(--text-secondary); }
+  /* Mono: el hostname es un identificador. */
+  .host-name-text {
+    font-family: var(--font-mono);
+    font-size: 24px;
+    overflow-wrap: anywhere;
+  }
+
+  .header-idline {
     display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-  }
-  .host-os {
-    font-size: 13px;
-    color: var(--text-secondary);
-    margin-top: 2px;
+    margin-top: 8px;
   }
   .risk-badge {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     padding: 5px 14px;
-    border-radius: 100px;
+    border-radius: var(--radius-pill);
     font-size: 13px;
     font-weight: 600;
     letter-spacing: .1px;
   }
-  .risk-badge.critical { background: var(--critical-bg); color: var(--critical); border: 1.5px solid var(--critical-border); }
-  .risk-badge.high     { background: var(--high-bg);     color: var(--high);     border: 1.5px solid var(--high-border); }
-  .risk-badge.medium   { background: var(--medium-bg);   color: var(--medium);   border: 1.5px solid var(--medium-border); }
-  .risk-badge.low      { background: var(--low-bg);      color: var(--low);      border: 1.5px solid var(--low-border); }
-  .risk-badge.info     { background: var(--info-bg);     color: var(--info);     border: 1.5px solid var(--info-border); }
+  .risk-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1.5px solid var(--critical-border); }
+  .risk-badge.high     { background: var(--high-bg);     color: var(--high-text);     border: 1.5px solid var(--high-border); }
+  .risk-badge.medium   { background: var(--medium-bg);   color: var(--medium-text);   border: 1.5px solid var(--medium-border); }
+  .risk-badge.low      { background: var(--low-bg);      color: var(--low-text);      border: 1.5px solid var(--low-border); }
+  .risk-badge.info     { background: var(--info-bg);     color: var(--info-text);     border: 1.5px solid var(--info-border); }
   .risk-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .risk-note { font-size: 13px; color: var(--text-secondary); }
 
-  .pills-row {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-top: 12px;
+  /* Rejilla de metadatos: etiqueta pequeña sobre valor. */
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+    gap: 14px 22px;
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
   }
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 3px 10px;
-    background: #F1F5F9;
-    border-radius: 100px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    border: 1px solid var(--border);
-  }
-  .pill-label { color: #94A3B8; font-size: 11px; }
-  .dl-group { margin-left: auto; display: flex; gap: 6px; }
-  .dl-btn {
-    display: inline-flex; align-items: center;
-    padding: 3px 11px;
-    background: #fff;
-    border: 1px solid var(--accent, #7C3AED);
-    color: var(--accent, #7C3AED);
-    border-radius: 100px;
-    font-size: 12px; font-weight: 600;
-    cursor: pointer; transition: background .15s, color .15s;
-  }
-  .dl-btn:hover { background: var(--accent, #7C3AED); color: #fff; }
-
-  /* Gauge circular */
-  .gauge-wrap {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-  .gauge-label-top {
-    font-size: 11px;
-    font-weight: 600;
+  .meta-item { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .meta-key {
+    font-size: 10px;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .6px;
     color: var(--text-secondary);
   }
-  .gauge-svg { width: 110px; height: 110px; }
+  .meta-val { font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+  /* Mono solo donde hay una versión, una ruta o un identificador. */
+  .meta-val-mono { font-family: var(--font-mono); font-size: 12px; }
+  /* Los dos botones caben en una fila: la celda ocupa el ancho de dos. */
+  .meta-item-actions { grid-column: span 2; }
+  .meta-item-actions .dl-group { margin-top: 1px; flex-wrap: nowrap; }
+  /* En el informe exportado el prune ELIMINA .dl-group del clon, así que esta
+     celda se quedaba con su etiqueta "Exportar" y nada debajo. Sin .dl-btn
+     dentro, no hay nada que exportar y la celda entera desaparece. Si un
+     navegador no entendiera :has(), lo peor que pasa es que vuelva a verse la
+     etiqueta suelta: degrada a lo de ahora, no rompe nada. */
+  .meta-item-actions:not(:has(.dl-btn)) { display: none; }
+
+  .dl-group { display: flex; gap: 6px; flex-wrap: wrap; }
+  .dl-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 11px;
+    background: var(--card);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: var(--radius-pill);
+    font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: background .15s, color .15s;
+  }
+  .dl-btn:hover { background: var(--accent); color: #fff; }
+
+  /* Columna derecha: el gauge, separado por una línea vertical fina. */
+  .header-aside {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    flex-shrink: 0;
+    padding-left: 28px;
+    border-left: 1px solid var(--border);
+  }
+  .gauge-label-top {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    color: var(--text-secondary);
+  }
+  .gauge-svg { width: 148px; height: 148px; }
   .gauge-score {
     font-size: 28px;
     font-weight: 800;
@@ -2085,73 +2509,297 @@ export default {
     letter-spacing: -1px;
   }
   .gauge-sub { font-size: 11px; fill: var(--text-secondary); }
+  .gauge-verdict { font-size: 11.5px; color: var(--text-secondary); }
+  .gauge-meta { font-size: 10.5px; color: var(--text-secondary); }
 
-  /* ── SEVERITY COUNTERS ── */
-  .counters-row {
-    display: grid;
-    /* auto-fit: 4 tarjetas de severidad, o 5 cuando hay informativos. */
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 14px;
+  @media (max-width: 820px) {
+    .header-card { flex-direction: column; }
+    .header-aside { padding-left: 0; padding-top: 20px; border-left: none; border-top: 1px solid var(--border); align-self: stretch; }
+  }
+
+  /* ═══ TIRA DE SEVERIDADES ══════════════════════════════════════════════════
+     Una sola tarjeta con celdas separadas por un filete, no cinco tarjetas: son
+     cinco cortes de la misma cifra y cinco cajas con sombra propia los leían
+     como cinco asuntos distintos. */
+  /* La tira y su franja comparten UNA caja: la franja no es una tarjeta aparte
+     porque su trabajo es no poder leerse separada de los números. */
+  .sev-block {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
     margin-bottom: 20px;
   }
-  .counter-card {
-    background: var(--card);
-    border-radius: var(--radius);
-    border: 1.5px solid var(--border);
-    padding: 18px 20px;
-    box-shadow: var(--shadow);
+  .sev-strip { display: flex; flex-wrap: wrap; }
+
+  /* Un "0 crítico" solo tranquiliza si consta que alguien miró. Con los recuentos
+     pegados a la cabecera quedan por encima de cualquier aviso de cobertura, así
+     que la advertencia baja hasta ellos en vez de esperar más abajo. Ámbar y no
+     rojo: no es un hallazgo, es un hueco. */
+  .sev-gap {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px 20px;
+    background: var(--medium-bg);
+    border-top: 1px solid var(--medium-border);
+    font-size: 12px;
+    line-height: 1.5;
+    color: #92400E;
+  }
+  .sev-gap .icon { color: var(--medium); margin-top: 2px; }
+  .sev-cell {
+    flex: 1 1 150px;
+    min-width: 0;
+    padding: 16px 20px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    transition: transform .15s, box-shadow .15s;
-    cursor: default;
+    gap: 2px;
+    border-left: 1px solid var(--border);
+    cursor: pointer;
+    transition: background .15s;
+    position: relative;
   }
-  .counter-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
-  .counter-card.critical { border-color: var(--critical-border); background: var(--critical-bg); }
-  .counter-card.high     { border-color: var(--high-border);     background: var(--high-bg); }
-  .counter-card.medium   { border-color: var(--medium-border);   background: var(--medium-bg); }
-  .counter-card.low      { border-color: var(--low-border);      background: var(--low-bg); }
-
-  .counter-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .counter-severity {
-    font-size: 12px;
+  .sev-cell:first-child { border-left: none; }
+  .sev-cell:hover { background: var(--surface); }
+  .sev-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .sev-cell-label {
+    font-size: 11.5px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .5px;
   }
-  .counter-card.critical .counter-severity { color: var(--critical); }
-  .counter-card.high     .counter-severity { color: var(--high); }
-  .counter-card.medium   .counter-severity { color: var(--medium); }
-  .counter-card.low      .counter-severity { color: var(--low); }
-
-  .counter-num {
-    font-size: 42px;
+  .sev-cell-num {
+    font-size: 34px;
     font-weight: 800;
-    line-height: 1;
-    letter-spacing: -2px;
+    line-height: 1.05;
+    letter-spacing: -1.5px;
   }
-  .counter-card.critical .counter-num { color: var(--critical); }
-  .counter-card.high     .counter-num { color: var(--high); }
-  .counter-card.medium   .counter-num { color: var(--medium); }
-  .counter-card.low      .counter-num { color: var(--low); }
+  .sev-cell-sub { font-size: 11px; color: var(--text-secondary); }
 
-  .counter-sub {
-    font-size: 11px;
-    color: var(--text-secondary);
-    margin-top: 2px;
+  /* Solo los niveles CON hallazgos llevan color. */
+  .sev-cell.critical { background: var(--critical-bg); }
+  .sev-cell.high     { background: var(--high-bg); }
+  .sev-cell.medium   { background: var(--medium-bg); }
+  .sev-cell.low      { background: var(--low-bg); }
+  .sev-cell.critical .sev-cell-label, .sev-cell.critical .sev-cell-num { color: var(--critical-text); }
+  .sev-cell.high     .sev-cell-label, .sev-cell.high     .sev-cell-num { color: var(--high-text); }
+  .sev-cell.medium   .sev-cell-label, .sev-cell.medium   .sev-cell-num { color: var(--medium-text); }
+  .sev-cell.low      .sev-cell-label, .sev-cell.low      .sev-cell-num { color: var(--low-text); }
+
+  /* A cero: gris. Un color de alarma sobre un cero es ruido, y con cinco tarjetas
+     encendidas el ojo no encontraba dónde estaba el trabajo real. */
+  .sev-cell.zero { background: var(--card); }
+  .sev-cell.zero .sev-cell-label { color: var(--text-secondary); }
+  .sev-cell.zero .sev-cell-num   { color: var(--text-secondary); }
+
+  /* Informativos: neutra y no interactiva, no es un nivel de riesgo. */
+  .sev-cell.informative { cursor: default; background: var(--card); }
+  .sev-cell.informative:hover { background: var(--card); }
+  .sev-cell.informative .sev-cell-label { color: var(--text-secondary); }
+  .sev-cell.informative .sev-cell-num   { color: var(--text-secondary); }
+
+  /* Filtro activo: un filete grueso arriba, dentro de la propia celda; con la
+     tira compartiendo caja, una sombra alrededor no cabía. */
+  .sev-cell.active::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--accent);
   }
+  .sev-cell.active { background: var(--surface); }
 
-  /* ── CHARTS ROW ── */
+  /* ═══ AVISOS ═══════════════════════════════════════════════════════════════
+     UN solo componente en tres niveles. Antes había tres anatomías distintas
+     (nothing-card, checks-card, scope-notice) diciendo cosas del mismo tipo con
+     tres maquetaciones, tres formas de poner el icono y ninguna regla de orden.
+
+       lvl-1 · VEREDICTO — ¿tengo algo que hacer?
+       lvl-2 · COBERTURA — ¿se miró todo?
+       lvl-3 · CONTEXTO  — ¿qué más conviene saber?
+
+     El NIVEL manda en el peso: tamaño del título, densidad y si hay fondo.
+     El TONO manda en el color: --notice-accent y el tinte. Son independientes a
+     propósito — un aviso de nivel 3 puede ser is-warn y seguir siendo pequeño. */
+  .lca-notice {
+    --notice-accent: var(--text-secondary);
+    --notice-bg: var(--card);
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    background: var(--notice-bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--notice-accent);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 12px;
+  }
+  .lca-notice-icon { color: var(--notice-accent); margin-top: 1px; }
+  .lca-notice-main { flex: 1; min-width: 0; }
+  .lca-notice-title { font-weight: 700; color: var(--text); }
+  /* "Lo has activado, pero no ha podido hacerse": lo primero que necesita leer
+     quien marcó la casilla y no ve resultados. */
+  .lca-notice-lead { font-size: 12.5px; font-weight: 700; color: var(--text); margin-top: 4px; }
+  .lca-notice-body { font-size: 12.5px; color: var(--text); line-height: 1.6; margin-top: 6px; }
+  /* La frase que impide leer "no se ha comprobado" como "está limpio". Es
+     contenido con énfasis, no una anatomía aparte. */
+  .lca-notice-body.is-strong { font-weight: 600; }
+  .lca-notice-body code {
+    font-family: var(--font-mono);
+    font-size: 11.5px; background: rgba(255,255,255,.7);
+    padding: 1px 5px; border-radius: 4px;
+  }
+  .lca-notice-list {
+    margin: 8px 0 0; padding-left: 20px;
+    font-size: 12.5px; color: var(--text); line-height: 1.7;
+  }
+  .lca-notice-list li { margin-bottom: 2px; }
+  /* Variante con estado por delante: sin viñeta, porque la viñeta y la etiqueta
+     de estado compiten por el mismo sitio. */
+  .lca-notice-list.is-stated { list-style: none; padding-left: 0; margin-top: 10px; }
+  .lca-notice-list.is-stated li {
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 12px; padding: 3px 0; margin-bottom: 0;
+    border-top: 1px solid var(--border);
+  }
+  /* El estado va delante porque es lo que decide si el usuario tiene algo que
+     hacer con esa línea o no. */
+  .lca-notice-state {
+    flex: 0 0 auto; min-width: 78px;
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .3px; color: var(--text-secondary);
+  }
+  .lca-notice-list.is-stated li.chk-failed .lca-notice-state { color: var(--medium-text); }
+  .lca-notice-name { color: var(--text); }
+  .lca-notice-hint {
+    font-size: 12px; color: var(--text-secondary); margin-top: 8px;
+    font-family: var(--font-mono);
+  }
+  /* Sobrio a propósito: es información, no un aviso. Sin color de alarma. */
+  .lca-notice-foot {
+    margin-top: 10px; padding-top: 8px;
+    border-top: 1px solid rgba(0,0,0,.08);
+    font-size: 11.5px; color: var(--text-secondary);
+  }
+  .lca-notice-foot-list { display: block; margin-top: 3px; opacity: .85; }
+
+  /* ── Tonos: solo color ── */
+  .lca-notice.is-ok      { --notice-accent: var(--low);      --notice-bg: var(--low-bg);      border-color: var(--low-border); }
+  .lca-notice.is-warn    { --notice-accent: var(--medium);   --notice-bg: var(--medium-bg);   border-color: var(--medium-border); }
+  .lca-notice.is-info    { --notice-accent: var(--info);     --notice-bg: var(--info-bg);     border-color: var(--info-border); }
+  .lca-notice.is-neutral { --notice-accent: var(--text-secondary); --notice-bg: var(--card);  border-color: var(--border); }
+  .lca-notice.is-ok   .lca-notice-title { color: #3F6212; }
+  .lca-notice.is-warn .lca-notice-title { color: #92400E; }
+
+  /* ── Niveles: solo peso ── */
+  .lca-notice.lvl-1 { padding: 16px 20px; margin-bottom: 14px; }
+  .lca-notice.lvl-1 .lca-notice-title { font-size: 15px; }
+  .lca-notice.lvl-1 .lca-notice-icon  { width: 18px; height: 18px; }
+
+  .lca-notice.lvl-2 .lca-notice-title { font-size: 14px; }
+
+  /* El nivel 3 no pide nada, así que no ocupa como si lo pidiera: sin tinte de
+     fondo, letra secundaria y el color solo en el filete y el icono. */
+  .lca-notice.lvl-3 {
+    --notice-bg: var(--card);
+    border-color: var(--border);
+    padding: 12px 16px;
+  }
+  .lca-notice.lvl-3 .lca-notice-title { font-size: 13px; }
+  .lca-notice.lvl-3 .lca-notice-body,
+  .lca-notice.lvl-3 .lca-notice-lead  { color: var(--text-secondary); font-size: 12px; }
+  .lca-notice.lvl-3 .lca-notice-title { color: var(--text); }
+  .lca-notice.lvl-3 .lca-notice-icon  { width: 14px; height: 14px; }
+
+  /* ═══ ALCANCE DEL ANÁLISIS ═════════════════════════════════════════════════ */
+  .scope-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px 20px;
+    margin-bottom: 20px;
+  }
+  .scope-header { display: flex; align-items: center; gap: 8px; }
+  .scope-header .icon { color: var(--text-secondary); }
+  .scope-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-secondary); flex: 1;
+  }
+  .scope-toggle {
+    background: none; border: 1px solid var(--border); border-radius: var(--radius-pill);
+    padding: 3px 11px; font-size: 11.5px; color: var(--text-secondary);
+    cursor: pointer; transition: background .15s;
+  }
+  .scope-toggle:hover { background: var(--bg); }
+
+  /* Los chips pasan a rejilla clave/valor: la misma anatomía que la cabecera, y
+     con sitio para la etiqueta, que en una píldora competía con el valor. */
+  .scope-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px 22px;
+    margin-top: 14px;
+  }
+  .scope-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .scope-key {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .6px; color: var(--text-secondary);
+  }
+  .scope-val { font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+  .scope-val code, .scope-val.meta-val-mono {
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--text);
+  }
+  .scope-item-warn .scope-key { color: var(--medium-text); }
+  .scope-item-warn .scope-val { color: var(--medium-text); font-weight: 600; }
+
+  /* ── Módulos del análisis: siguen siendo píldoras ── */
+  .scope-modules { margin-top: 16px; }
+  .scope-modules-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .scope-module {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; padding: 3px 10px; border-radius: var(--radius-pill);
+    border: 1px solid var(--border); background: var(--card);
+    color: var(--text);
+  }
+  .scope-module-ico { color: var(--text-muted); }
+  .scope-module-state { color: var(--text-secondary); }
+  .scope-module.mod-ok .scope-module-ico { color: var(--low); }
+  /* Ámbar solo el que falló. El no solicitado se queda en gris: es una decisión
+     del usuario, no un problema del informe. */
+  .scope-module.mod-failed {
+    border-color: var(--medium-border); background: var(--medium-bg);
+  }
+  .scope-module.mod-failed .scope-module-ico { color: var(--medium); }
+  .scope-module.mod-not-requested { opacity: .72; }
+
+  .scope-detail { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 12px; }
+  .scope-detail-block + .scope-detail-block { margin-top: 12px; }
+  .scope-detail-title {
+    font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .4px; color: var(--text-secondary); margin-bottom: 5px;
+  }
+  .scope-detail-title.warn { color: var(--medium-text); }
+  .scope-detail-item { font-size: 12px; color: var(--text); line-height: 1.6; }
+  .scope-detail-item code {
+    font-family: var(--font-mono);
+    font-size: 11.5px; background: var(--surface); padding: 1px 5px;
+    border-radius: 4px; margin-right: 4px;
+  }
+  .scope-detail-flow { display: flex; flex-wrap: wrap; gap: 4px; }
+  .scope-detail-note { font-size: 11.5px; color: var(--text-secondary); margin-top: 4px; font-style: italic; }
+  .scope-detail-note.warn { color: var(--medium-text); font-style: normal; font-weight: 600; }
+
+  /* ═══ GRÁFICOS ═════════════════════════════════════════════════════════════ */
   .charts-row {
     display: grid;
     grid-template-columns: 1fr 1.6fr;
     gap: 14px;
     margin-bottom: 20px;
   }
+  @media (max-width: 900px) { .charts-row { grid-template-columns: 1fr; } }
   .chart-card {
     background: var(--card);
     border-radius: var(--radius);
@@ -2173,6 +2821,7 @@ export default {
     align-items: center;
     justify-content: center;
     gap: 24px;
+    flex-wrap: wrap;
   }
   .donut-svg { width: 140px; height: 140px; flex-shrink: 0; }
   .donut-total { font-size: 28px; font-weight: 800; fill: var(--text); }
@@ -2184,29 +2833,32 @@ export default {
   .legend-name  { color: var(--text-secondary); flex: 1; }
   .legend-val   { font-weight: 700; color: var(--text); }
 
-  /* Horizontal bars */
   .hbar-list { display: flex; flex-direction: column; gap: 14px; }
   .hbar-item { display: grid; grid-template-columns: 110px 1fr 28px; align-items: center; gap: 10px; }
   .hbar-label { font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hbar-track {
     height: 18px;
-    background: #F1F5F9;
-    border-radius: 100px;
+    background: var(--surface);
+    border-radius: var(--radius-pill);
     overflow: hidden;
   }
-  .hbar-fill { height: 100%; border-radius: 100px; transition: width .4s; }
+  .hbar-fill { height: 100%; border-radius: var(--radius-pill); transition: width .4s; }
   .hbar-count { font-size: 13px; font-weight: 700; color: var(--text-secondary); text-align: right; }
 
-  /* ── METRICS ROW ── */
+  /* ═══ MÉTRICAS ═════════════════════════════════════════════════════════════
+     Las tres con la misma anatomía: título · cifra grande · barra · pie de dos
+     datos. Antes cada tarjeta se organizaba a su manera y no se podían comparar
+     de un vistazo. */
   .metrics-row {
     display: flex;
     flex-direction: row;
     align-items: stretch;
     gap: 14px;
     margin-bottom: 20px;
+    flex-wrap: wrap;
   }
   .metric-card {
-    flex: 1;
+    flex: 1 1 260px;
     min-width: 0;
     background: var(--card);
     border-radius: var(--radius);
@@ -2216,17 +2868,13 @@ export default {
     display: flex;
     flex-direction: column;
   }
-  .disk-parts-container {
-    display: flex;
-    flex-direction: column;
-    margin-top: auto;
-  }
   .metric-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 14px;
   }
+  .metric-header .icon { color: var(--text-secondary); }
   .metric-title {
     font-size: 12px;
     font-weight: 700;
@@ -2234,45 +2882,65 @@ export default {
     letter-spacing: .5px;
     color: var(--text-secondary);
   }
-  .metric-icon { font-size: 18px; }
+  .metric-bar-section { margin-top: auto; }
+  .metric-figure {
+    font-size: 32px;
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -1.5px;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .metric-figure-unit {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0;
+    color: var(--text-secondary);
+    margin-left: 4px;
+  }
+  /* El guion de "sin dato" es TEXTO, no un icono: --text-muted da 2,56:1. */
+  .metric-figure-na { color: var(--text-secondary); }
+  .metric-foot {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .metric-foot-item { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .metric-foot-key {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .6px; color: var(--text-secondary);
+  }
+  .metric-foot-val { font-size: 11.5px; color: var(--text-secondary); overflow-wrap: anywhere; }
+
+  .progress-bar {
+    height: 10px;
+    background: var(--surface);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+  }
+  .progress-fill { height: 100%; border-radius: var(--radius-pill); }
 
   /* RAM */
   .ram-macos-note {
     display: flex;
     align-items: center;
     gap: 8px;
+    /* Verde propio: no es severidad "baja", es una nota de plataforma. */
     background: #F0FDF4;
     border: 1px solid #BBF7D0;
     border-radius: var(--radius-sm);
     padding: 10px 12px;
-    font-size: 13px;
+    font-size: 12.5px;
     color: #15803D;
     margin-bottom: 14px;
   }
-  .ram-usage-row {
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
-    margin-bottom: 6px;
-  }
-  .ram-used  { font-size: 26px; font-weight: 800; letter-spacing: -1px; color: var(--text); }
-  .ram-of    { font-size: 13px; color: var(--text-secondary); }
-  .ram-total { font-size: 18px; font-weight: 600; color: var(--text-secondary); }
-  .progress-bar {
-    height: 10px;
-    background: #F1F5F9;
-    border-radius: 100px;
-    overflow: hidden;
-    margin-bottom: 4px;
-  }
-  .progress-fill { height: 100%; border-radius: 100px; }
-  .progress-pct  { font-size: 11px; color: var(--text-secondary); }
 
-  /* CPU */
+  /* CPU: las tres medidas de load siguen estando. */
   .cpu-loads {
     display: flex;
     gap: 8px;
-    margin-bottom: 14px;
+    margin-top: 14px;
     flex-wrap: wrap;
   }
   .load-pill {
@@ -2280,39 +2948,31 @@ export default {
     flex-direction: column;
     align-items: center;
     gap: 2px;
-    background: #F8FAFC;
+    background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    padding: 8px 14px;
+    padding: 7px 12px;
     flex: 1;
   }
-  .load-val    { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; color: var(--text); }
-  .load-period { font-size: 11px; color: var(--text-secondary); }
-  .cpu-bar-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; }
-  .metric-bar-section { margin-top: auto; }
+  .load-val    { font-size: 16px; font-weight: 700; letter-spacing: -.3px; color: var(--text); font-family: var(--font-mono); }
+  .load-period { font-size: 10.5px; color: var(--text-secondary); }
 
   /* Disco */
-  .disk-part { margin-bottom: 14px; }
+  .disk-parts-container { display: flex; flex-direction: column; margin-top: auto; }
+  .disk-part { margin-bottom: 16px; }
   .disk-part:last-child { margin-bottom: 0; }
-  .disk-part-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
-  .disk-mount  { font-size: 14px; font-weight: 600; color: var(--text); font-family: "SF Mono", "Fira Code", monospace; }
-  .disk-pct    { font-size: 13px; font-weight: 700; color: #475569; }
-  .disk-detail { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
-  .disk-detail-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11px;
-    color: var(--text-secondary);
-    margin-top: 4px;
-  }
+  .disk-part-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  /* Mono: es una ruta de montaje. */
+  .disk-mount  { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); font-family: var(--font-mono); }
 
-  /* ── FINDINGS ── */
-  .findings-section { }
+  /* ═══ HALLAZGOS ════════════════════════════════════════════════════════════ */
   .section-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     margin-bottom: 12px;
+    flex-wrap: wrap;
   }
   .section-title {
     font-size: 13px;
@@ -2321,6 +2981,24 @@ export default {
     letter-spacing: .5px;
     color: var(--text-secondary);
   }
+  /* El section-header reparte con space-between; sin agrupar, las pills se
+     desperdigaban a lo ancho de la fila. */
+  .section-pills { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  /* Fondo de tarjeta y no --surface: sobre el gris #F1F5F9 el texto secundario da
+     4,34:1 y el mínimo es 4,5. El borde ya distingue la ficha del fondo. */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    background: var(--card);
+    border-radius: var(--radius-pill);
+    font-size: 12px;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  .pill-action { background: var(--high-bg); color: var(--high-text); border-color: var(--high-border); font-weight: 600; }
+  .pill-calm   { background: var(--low-bg);  color: var(--low-text);  border-color: var(--low-border);  font-weight: 600; }
 
   .findings-group {
     background: var(--card);
@@ -2339,28 +3017,28 @@ export default {
     user-select: none;
     transition: background .12s;
   }
-  .group-header:hover { background: #F8FAFC; }
-  .group-icon { font-size: 16px; }
-  .group-name { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
+  .group-header:hover { background: var(--bg); }
+  .group-icon { color: var(--text-secondary); }
+  .group-name { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; }
+  /* Severidad máxima del grupo: dice si hace falta abrirlo antes de abrirlo. */
+  .group-sev { margin-right: 2px; }
   .group-count {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     min-width: 22px;
     height: 22px;
-    background: #F1F5F9;
-    border-radius: 100px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
     font-size: 12px;
     font-weight: 700;
     color: var(--text-secondary);
     padding: 0 6px;
   }
   .group-chevron {
-    width: 16px;
-    height: 16px;
-    color: #94A3B8;
+    color: var(--text-muted);
     transition: transform .2s;
-    flex-shrink: 0;
   }
   .group-chevron.open { transform: rotate(180deg); }
 
@@ -2370,12 +3048,14 @@ export default {
     align-items: center;
     gap: 10px;
     padding: 12px 18px;
-    border-bottom: 1px solid #F1F5F9;
+    border-bottom: 1px solid var(--surface);
     cursor: pointer;
     transition: background .1s;
   }
   .finding-row:last-child { border-bottom: none; }
-  .finding-row:hover { background: #F8FAFC; }
+  .finding-row:hover { background: var(--bg); }
+  .finding-chevron { color: var(--text-muted); transition: transform .2s; }
+  .finding-chevron.open { transform: rotate(180deg); }
 
   .sev-badge {
     font-size: 10px;
@@ -2383,21 +3063,21 @@ export default {
     text-transform: uppercase;
     letter-spacing: .4px;
     padding: 2px 8px;
-    border-radius: 100px;
+    border-radius: var(--radius-pill);
     flex-shrink: 0;
   }
-  .sev-badge.critical { background: var(--critical-bg); color: var(--critical); border: 1px solid var(--critical-border); }
-  .sev-badge.high     { background: var(--high-bg);     color: var(--high);     border: 1px solid var(--high-border); }
-  .sev-badge.medium   { background: var(--medium-bg);   color: var(--medium);   border: 1px solid var(--medium-border); }
-  .sev-badge.low      { background: var(--low-bg);      color: var(--low);      border: 1px solid var(--low-border); }
-  .sev-badge.info     { background: var(--info-bg);     color: var(--info);     border: 1px solid var(--info-border); }
+  .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+  .sev-badge.high     { background: var(--high-bg);     color: var(--high-text);     border: 1px solid var(--high-border); }
+  .sev-badge.medium   { background: var(--medium-bg);   color: var(--medium-text);   border: 1px solid var(--medium-border); }
+  .sev-badge.low      { background: var(--low-bg);      color: var(--low-text);      border: 1px solid var(--low-border); }
+  .sev-badge.info     { background: var(--info-bg);     color: var(--info-text);     border: 1px solid var(--info-border); }
 
   .cat-badge {
     font-size: 10px;
     font-weight: 600;
     padding: 2px 8px;
-    border-radius: 100px;
-    background: #F1F5F9;
+    border-radius: var(--radius-pill);
+    background: var(--card);
     color: var(--text-secondary);
     border: 1px solid var(--border);
     flex-shrink: 0;
@@ -2410,19 +3090,26 @@ export default {
     text-transform: uppercase;
     letter-spacing: .4px;
     padding: 2px 8px;
-    border-radius: 100px;
+    border-radius: var(--radius-pill);
     flex-shrink: 0;
   }
   /* Neutro A PROPÓSITO: no comunica nivel de riesgo porque, para este equipo,
      no lo hay. Ocupa el sitio del sev-badge en la fila. */
   .origin-badge.declared {
-    background: #F1F5F9;
+    background: var(--card);
     color: var(--text-secondary);
     border: 1px solid var(--border);
   }
   /* 'installed' sí acompaña a la severidad: hereda su color componiendo con
      .sev-badge.<sev>, que ya define fondo, texto y borde. */
 
+  .finding-title {
+    font-size: 13px;
+    color: var(--text);
+    flex: 1;
+    min-width: 0;
+    text-wrap: pretty;
+  }
   .finding-note {
     font-size: 11px;
     font-style: italic;
@@ -2432,299 +3119,33 @@ export default {
   }
   @media (max-width: 760px) { .finding-note { display: none; } }
 
-  /* ── Contador de informativos: neutro, no es un nivel de riesgo ── */
-  .counter-card.informative { cursor: default; }
-  .counter-card.informative .counter-num { color: var(--text-secondary); }
-
-  /* ── Cabecera: recuento segmentado ── */
-  /* El section-header reparte con space-between; sin agrupar, las pills se
-     desperdigaban a lo ancho de la fila. */
-  .section-pills { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-  .pill-action { background: var(--high-bg); color: var(--high); border-color: var(--high-border); font-weight: 600; }
-  .pill-calm   { background: var(--low-bg);  color: var(--low);  border-color: var(--low-border);  font-weight: 600; }
-
-  /* ── "Nada que arreglar" ── */
-  .nothing-card {
-    background: var(--low-bg);
-    border: 1px solid var(--low-border);
-    border-left: 4px solid var(--low);
-    border-radius: var(--radius);
-    padding: 16px 20px;
-    margin-bottom: 20px;
-  }
-  /* Ámbar, no verde: hay huecos en la auditoría y el color es lo primero que se
-     lee. Un verde aquí es el falso positivo que esta tarjeta existe para evitar. */
-  .nothing-card-warn {
-    background: var(--medium-bg);
-    border-color: var(--medium-border);
-    border-left-color: var(--medium);
-  }
-  .nothing-card-warn .nothing-title { color: #92400E; }
-  .nothing-title { font-size: 15px; font-weight: 700; color: #3F6212; margin-bottom: 8px; }
-  .nothing-skipped {
-    margin: 8px 0 4px; padding-left: 20px;
-    font-size: 12.5px; color: var(--text); line-height: 1.7;
-  }
-  .nothing-skipped li { margin-bottom: 2px; }
-  /* Sobria a propósito: es información, no un aviso. Sin color de alarma. */
-  .nothing-foot {
-    margin-top: 10px; padding-top: 8px;
-    border-top: 1px solid rgba(0,0,0,.08);
-    font-size: 11.5px; color: var(--text-secondary);
-  }
-  .nothing-foot-list { display: block; margin-top: 3px; opacity: .85; }
-
-  /* ── Módulos del análisis (Alcance) ── */
-  .scope-modules { margin-top: 14px; }
-  .scope-modules-grid {
-    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;
-  }
-  .scope-module {
-    display: inline-flex; align-items: center; gap: 6px;
-    font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
-    border: 1px solid var(--border); background: var(--card);
-    color: var(--text);
-  }
-  .scope-module-ico { font-weight: 700; }
-  .scope-module-state { color: var(--text-secondary); }
-  .scope-module.mod-ok .scope-module-ico { color: var(--low); }
-  /* Ámbar solo el que falló. El no solicitado se queda en gris: es una decisión
-     del usuario, no un problema del informe. */
-  .scope-module.mod-failed {
-    border-color: var(--medium-border); background: var(--medium-bg);
-  }
-  .scope-module.mod-failed .scope-module-ico { color: var(--medium); }
-  .scope-module.mod-not-requested { opacity: .72; }
-  .nothing-body  { font-size: 12.5px; color: var(--text); line-height: 1.6; margin-top: 6px; }
-  .nothing-body code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11.5px; background: rgba(255,255,255,.7);
-    padding: 1px 5px; border-radius: 4px;
-  }
-
-  /* Sin pasos de resolución: informa de qué falta, sin fingir un veredicto. */
-  .nofix-note {
-    padding: 12px 0;
-    font-style: italic;
-    color: var(--text-secondary, #6B7280);
-    font-size: 12.5px;
-  }
-  .nofix-note a { color: inherit; font-style: normal; text-decoration: underline; }
-
-  /* ── Comprobaciones no realizadas ── */
-  .checks-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-left: 4px solid var(--text-secondary);
-    border-radius: var(--radius);
-    padding: 14px 18px;
-    margin-bottom: 20px;
-  }
-  /* Ámbar SOLO si alguna falló de verdad. Un módulo apagado o un límite de la plataforma no
-     son un aviso: pintarlos de amarillo era el falso positivo que se está corrigiendo. */
-  .checks-card-warn {
-    background: var(--medium-bg);
-    border-color: var(--medium-border);
-    border-left-color: var(--medium);
-  }
-  .checks-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-  .checks-ico { font-size: 14px; }
-  .checks-title { font-size: 14px; font-weight: 700; color: var(--text); }
-  .checks-body { font-size: 12.5px; color: var(--text); line-height: 1.6; margin-top: 5px; }
-  .checks-list { list-style: none; margin: 10px 0 0; padding: 0; }
-  .checks-list li {
-    display: flex; align-items: baseline; gap: 8px;
-    font-size: 12px; padding: 3px 0;
-    border-top: 1px solid var(--border);
-  }
-  .checks-state {
-    flex: 0 0 auto; min-width: 78px;
-    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .3px; color: var(--text-secondary);
-  }
-  .checks-list li.chk-failed .checks-state { color: var(--medium); }
-  .checks-name { color: var(--text); }
-
-  /* ── Alcance del análisis ── */
-  .scope-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    padding: 16px 20px;
-    margin-bottom: 20px;
-  }
-  .scope-header { display: flex; align-items: center; gap: 8px; }
-  .scope-ico    { font-size: 15px; }
-  .scope-title {
-    font-size: 13px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .5px; color: var(--text-secondary); flex: 1;
-  }
-  .scope-toggle {
-    background: none; border: 1px solid var(--border); border-radius: 20px;
-    padding: 3px 11px; font-size: 11.5px; color: var(--text-secondary);
-    cursor: pointer; transition: background .15s;
-  }
-  .scope-toggle:hover { background: #F8FAFC; }
-  .scope-pills { margin-top: 10px; }
-  .scope-pills code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11.5px; color: var(--text);
-  }
-  .pill-warn { background: var(--medium-bg); color: var(--medium); border-color: var(--medium-border); }
-
-  .scope-notice {
-    display: flex; align-items: flex-start; gap: 10px;
-    margin-top: 12px; padding: 12px 14px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--info-border);
-    border-left-width: 4px;
-    background: var(--info-bg);
-  }
-  .scope-notice.warn { background: var(--medium-bg); border-color: var(--medium-border); }
-  .scope-notice.ok   { background: var(--low-bg);    border-color: var(--low-border); }
-  .scope-notice-ico  { font-size: 16px; line-height: 1.3; flex-shrink: 0; }
-  .scope-notice-title { font-size: 13px; font-weight: 700; color: var(--text); }
-  /* "Lo has activado, pero no ha podido hacerse": lo primero que necesita leer
-     quien marcó la casilla y no ve resultados. */
-  .scope-notice-lead  { font-size: 12.5px; font-weight: 700; color: var(--text); margin-top: 3px; }
-  .scope-notice-body  { font-size: 12.5px; color: var(--text); line-height: 1.55; margin-top: 3px; }
-  /* La frase que impide leer "no se ha comprobado" como "está limpio". */
-  .scope-notice-warn  { font-size: 12.5px; font-weight: 600; color: var(--text); margin-top: 6px; }
-  .scope-notice-hint  {
-    font-size: 12px; color: var(--text-secondary); margin-top: 6px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-
-  .scope-detail { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 12px; }
-  .scope-detail-block + .scope-detail-block { margin-top: 12px; }
-  .scope-detail-title {
-    font-size: 11.5px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .4px; color: var(--text-secondary); margin-bottom: 5px;
-  }
-  .scope-detail-title.warn { color: var(--medium); }
-  .scope-detail-item { font-size: 12px; color: var(--text); line-height: 1.6; }
-  .scope-detail-item code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11.5px; background: #F1F5F9; padding: 1px 5px;
-    border-radius: 4px; margin-right: 4px;
-  }
-  .scope-detail-flow { display: flex; flex-wrap: wrap; gap: 4px; }
-  .scope-detail-note { font-size: 11.5px; color: var(--text-secondary); margin-top: 4px; font-style: italic; }
-  .scope-detail-note.warn { color: var(--medium); font-style: normal; font-weight: 600; }
-
-  /* ── Logs del sistema: tabla de eventos ── */
-  .seclog { padding: 12px 16px 16px; border-top: 1px dashed var(--border); }
-  .seclog-title {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--info);
-    text-transform: uppercase;
-    letter-spacing: .4px;
-    margin-bottom: 8px;
-  }
-  .seclog-title-sessions { margin-top: 18px; }
-  .seclog-empty { font-size: 12.5px; font-style: italic; color: var(--text-secondary); }
-  .seclog-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-  .seclog-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .seclog-table th {
-    background: var(--info-bg);
-    color: var(--info);
-    text-align: left;
-    padding: 6px 10px;
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: .4px;
-    white-space: nowrap;
-  }
-  .seclog-table td { padding: 5px 10px; border-top: 1px solid var(--border); vertical-align: top; }
-  .seclog-table tr:nth-child(even) td { background: #F8FAFC; }
-  .seclog-mono {
-    font-family: "SF Mono", "Fira Code", monospace;
-    font-size: 11px;
-    white-space: nowrap;
-    color: var(--text-secondary);
-  }
-  .seclog-detail { color: var(--text); }
-  .seclog-badge {
-    font-size: 9.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: .4px;
-    padding: 1px 7px;
-    border-radius: 100px;
-    white-space: nowrap;
-  }
-  .seclog-badge.ev-ok    { background: var(--low-bg);      color: var(--low);      border: 1px solid var(--low-border); }
-  .seclog-badge.ev-fail  { background: var(--medium-bg);   color: var(--medium);   border: 1px solid var(--medium-border); }
-  .seclog-badge.ev-burst { background: var(--critical-bg); color: var(--critical); border: 1px solid var(--critical-border); }
-  .seclog-truncated { font-size: 11px; color: var(--text-secondary); font-style: italic; margin-top: 6px; }
-
-  .finding-title {
-    font-size: 13px;
-    color: var(--text);
-    flex: 1;
-    text-wrap: pretty;
-  }
-  .finding-expand-icon {
-    color: #94A3B8;
-    font-size: 12px;
-    flex-shrink: 0;
-  }
-
-  /* Expanded detail */
+  /* ── Ficha expandida ── */
   .finding-detail {
     display: none;
-    padding: 0 18px 16px 18px;
+    padding: 4px 18px 18px 18px;
     animation: slideDown .15s ease;
   }
   .finding-detail.open { display: block; }
   @keyframes slideDown { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
-  .detail-grid {
+  /* Dos columnas: evidencia a la izquierda, pasos de resolución a la derecha.
+     Apilado, había que bajar toda la evidencia para llegar a lo accionable.
+     NO renombrar .detail-stack: no está en la lista de subcadenas que el export
+     selecciona, pero sí lo está su contenedor .finding-detail, y este div tiene
+     que seguir siendo hijo suyo. */
+  .detail-stack {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
+    align-items: start;
   }
-  /* Layout apilado: Impacto+metadatos arriba, Pasos de Resolución debajo */
-  .detail-stack { display: flex; flex-direction: column; gap: 12px; }
-
-  /* ── Tira de metadatos del hallazgo (findings CVE de Trivy) ── */
-  .meta-strip {
-    display: flex; flex-wrap: wrap; gap: 10px 22px;
-    margin-top: 14px; padding-top: 14px;
-    border-top: 1px dashed var(--border);
-  }
-  .meta-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-  .meta-label {
-    font-size: 10px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: .04em;
-    color: var(--text-secondary);
-  }
-  .meta-value {
-    font-size: 12.5px; font-weight: 600; color: var(--text);
-    display: inline-flex; align-items: center; gap: 6px;
-    word-break: break-word;
-  }
-  .meta-value.meta-mono { font-family: "SF Mono", "Fira Code", monospace; font-weight: 500; font-size: 11.5px; }
-  .meta-fixed { color: #047857; }
-  .meta-nofix { color: #B45309; font-style: italic; font-weight: 500; }
-  .meta-muted { color: #9CA3AF; font-style: italic; font-weight: 500; }
-  .cvss-chip {
-    font-size: 9.5px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: .03em;
-    padding: 1px 6px; border-radius: 999px;
-  }
-  .cvss-chip.critical { background: var(--critical-bg); color: var(--critical); }
-  .cvss-chip.high     { background: var(--high-bg);     color: var(--high); }
-  .cvss-chip.medium   { background: var(--medium-bg);   color: var(--medium); }
-  .cvss-chip.low      { background: var(--low-bg);      color: var(--low); }
-  .cvss-chip.info     { background: var(--info-bg);     color: var(--info); }
-  .meta-link { color: var(--accent, #7C3AED); text-decoration: none; font-weight: 600; }
-  .meta-link:hover { text-decoration: underline; }
+  @media (max-width: 900px) { .detail-stack { grid-template-columns: 1fr; } }
+  /* Un hallazgo sin pasos de resolución tiene una sola columna: que ocupe el
+     ancho entero en vez de dejar media ficha vacía. */
+  .detail-stack:has(> .detail-col:only-child) { grid-template-columns: 1fr; }
 
   .detail-col {
-    background: #F8FAFC;
+    background: var(--bg);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
     padding: 14px;
@@ -2739,8 +3160,8 @@ export default {
   }
   .detail-evidence {
     font-size: 12px;
-    font-family: "SF Mono", "Fira Code", monospace;
-    background: #1E293B;
+    font-family: var(--font-mono);
+    background: var(--text);
     color: #E2E8F0;
     border-radius: 6px;
     padding: 10px;
@@ -2748,17 +3169,57 @@ export default {
     white-space: pre-wrap;
     word-break: break-word;
     overflow-x: auto;
-    max-height: 160px;
+    max-height: 200px;
     overflow-y: auto;
   }
+
+  /* ── Metadatos del hallazgo: lista clave/valor ── */
+  .meta-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px 18px;
+    margin-top: 14px; padding-top: 14px;
+    border-top: 1px dashed var(--border);
+  }
+  .meta-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .meta-label {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+    color: var(--text-secondary);
+  }
+  .meta-value {
+    font-size: 12.5px; font-weight: 600; color: var(--text);
+    display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    word-break: break-word;
+  }
+  /* Mono: versiones, códigos de control e identificadores. */
+  .meta-value.meta-mono { font-family: var(--font-mono); font-weight: 500; font-size: 11.5px; }
+  .meta-fixed { color: #047857; }
+  .meta-nofix { color: #B45309; font-style: italic; font-weight: 500; }
+  .meta-muted { color: var(--text-secondary); font-style: italic; font-weight: 500; }
+  .cvss-chip {
+    font-size: 9.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .03em;
+    padding: 1px 6px; border-radius: var(--radius-pill);
+  }
+  .cvss-chip.critical { background: var(--critical-bg); color: var(--critical-text); }
+  .cvss-chip.high     { background: var(--high-bg);     color: var(--high-text); }
+  .cvss-chip.medium   { background: var(--medium-bg);   color: var(--medium-text); }
+  .cvss-chip.low      { background: var(--low-bg);      color: var(--low-text); }
+  .cvss-chip.info     { background: var(--info-bg);     color: var(--info-text); }
+  .meta-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .meta-link:hover { text-decoration: underline; }
+
+  /* ── Pasos de resolución ── */
   .fix-steps { display: flex; flex-direction: column; gap: 8px; }
   .fix-step  { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--text); line-height: 1.5; }
   .fix-num {
     width: 20px;
     height: 20px;
     border-radius: 50%;
-    background: #1E293B;
-    color: white;
+    background: var(--text);
+    color: #fff;
     font-size: 11px;
     font-weight: 700;
     display: flex;
@@ -2767,62 +3228,42 @@ export default {
     flex-shrink: 0;
     margin-top: 1px;
   }
+  .fix-step-body   { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .fix-step-label  { color: var(--text); }
+  .command-inline  { margin-top: 0; }
 
-  /* ── Estados idle / scanning ── */
-  .lca-state-center {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 60px 20px;
-    text-align: center;
+  /* Sin pasos de resolución: informa de qué falta, sin fingir un veredicto. */
+  .nofix-note {
+    padding: 12px 0;
+    font-style: italic;
     color: var(--text-secondary);
+    font-size: 12.5px;
   }
-  .lca-state-ico {
-    font-size: 3rem;
-    margin-bottom: 14px;
-    animation: lcaPulse 2.2s ease-in-out infinite;
-  }
-  .lca-state-title {
-    font-size: 1.05rem;
-    font-weight: 700;
-    color: #334155;
-    margin-bottom: 8px;
-  }
-  .lca-state-desc { font-size: .88rem; line-height: 1.4; }
-  .lca-spinner {
-    width: 48px;
-    height: 48px;
-    border: 4px solid #e2e8f0;
-    border-top-color: #3b82f6;
-    border-radius: 50%;
-    animation: lcaSpin 1s linear infinite;
-    margin-bottom: 16px;
-  }
-  @keyframes lcaPulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
-  @keyframes lcaSpin  { to { transform: rotate(360deg); } }
+  .nofix-note a { color: inherit; font-style: normal; text-decoration: underline; }
 
   /* ── Command box ── */
   .command-box {
     display: flex;
     align-items: center;
     gap: 12px;
-    background: #1E293B;
-    border-radius: 8px;
+    background: var(--text);
+    border-radius: var(--radius-sm);
     padding: 10px 14px;
     margin-top: 14px;
   }
+  /* Mono: es un comando. */
   .command-text {
     flex: 1;
-    font-family: "SF Mono", "Consolas", "Courier New", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
-    color: #93C5FD;
+    color: var(--accent-light);
     overflow-x: auto;
     white-space: nowrap;
   }
   .command-btn {
     flex-shrink: 0;
-    background: #0EA5E9;
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--accent);
     color: #fff;
     border: none;
     border-radius: 6px;
@@ -2832,37 +3273,129 @@ export default {
     cursor: pointer;
     transition: background .2s;
   }
-  .command-btn:hover  { background: #0284C7; }
-  .command-btn.copied { background: #22C55E; }
+  .command-btn:hover  { background: #6D28D9; }
+  .command-btn.copied { background: var(--low); }
 
-  /* Paso de resolución con comando embebido (template híbrido) */
-  .fix-step-body   { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-  .fix-step-label  { color: var(--text); }
-  .command-inline  { margin-top: 0; }
+  /* ── Resolución inline: origen + avisos ── */
+  .cmd-intro { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 10px; }
+  .cmd-origin { color: var(--accent); font-weight: 600; margin-left: 4px; }
+  /* Nota explicativa que acompaña a un comando: nunca entra en el portapapeles. */
+  .cmd-note {
+    margin-top: 6px; font-size: 12px; line-height: 1.55; color: var(--text-secondary);
+    white-space: pre-wrap;
+  }
+  .cmd-warn {
+    margin-top: 8px; font-size: 12px; line-height: 1.55; color: var(--text);
+    background: var(--medium-bg); border: 1px solid var(--medium-border);
+    border-left: 3px solid var(--medium);
+    border-radius: var(--radius-sm); padding: 9px 11px;
+  }
+  .cmd-sudo {
+    display: flex; align-items: flex-start; gap: 7px;
+    margin-top: 8px; font-size: 12px; line-height: 1.55; color: #92400E;
+    /* Un ámbar más saturado que .cmd-warn: pide la contraseña del usuario. */
+    background: #FEF3C7; border: 1px solid #FCD34D;
+    border-left: 3px solid #D97706;
+    border-radius: var(--radius-sm); padding: 9px 11px;
+  }
+  .cmd-sudo .icon { margin-top: 2px; }
 
-  /* ── Chat con IA ── */
+  /* ── Logs del sistema: tabla de eventos ── */
+  .seclog { padding: 12px 18px 16px; border-top: 1px dashed var(--border); }
+  .seclog-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    margin-bottom: 8px;
+  }
+  .seclog-title-sessions { margin-top: 18px; }
+  .seclog-empty { font-size: 12.5px; font-style: italic; color: var(--text-secondary); }
+  .seclog-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .seclog-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .seclog-table th {
+    background: var(--surface);
+    color: var(--text-secondary);
+    text-align: left;
+    padding: 6px 10px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    white-space: nowrap;
+  }
+  .seclog-table td { padding: 5px 10px; border-top: 1px solid var(--border); vertical-align: top; }
+  .seclog-table tr:nth-child(even) td { background: var(--bg); }
+  /* Mono: marcas de tiempo y direcciones de origen. */
+  .seclog-mono {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    white-space: nowrap;
+    color: var(--text-secondary);
+  }
+  .seclog-detail { color: var(--text); }
+  .seclog-badge {
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    padding: 1px 7px;
+    border-radius: var(--radius-pill);
+    white-space: nowrap;
+  }
+  .seclog-badge.ev-ok    { background: var(--low-bg);      color: var(--low-text);      border: 1px solid var(--low-border); }
+  .seclog-badge.ev-fail  { background: var(--medium-bg);   color: var(--medium-text);   border: 1px solid var(--medium-border); }
+  .seclog-badge.ev-burst { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+  .seclog-truncated { font-size: 11px; color: var(--text-secondary); font-style: italic; margin-top: 6px; }
+
+  /* ═══ CHAT CON IA ══════════════════════════════════════════════════════════
+     Acento morado, no azul: --info es un NIVEL DE SEVERIDAD y usarlo también
+     como color de interfaz hacía que un panel de ayuda y un hallazgo informativo
+     se pintaran igual. */
   .lca-chat-wrap { margin-top: 14px; }
   .ai-ask-btn {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: var(--info-bg);
-    color: var(--info);
-    border: 1px solid var(--info-border);
-    border-radius: 100px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-pill);
     padding: 6px 14px;
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: background .15s;
   }
-  .ai-ask-btn:hover { background: #E0F2FE; }
+  .ai-ask-btn:hover { background: var(--accent-border); }
   .lca-chat {
     margin-top: 12px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--accent-border);
     border-radius: var(--radius-sm);
-    background: var(--bg);
-    padding: 12px;
+    background: var(--card);
+    overflow: hidden;
+  }
+  .lca-chat-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px;
+    background: var(--accent-bg);
+    border-bottom: 1px solid var(--accent-border);
+    color: var(--accent);
+  }
+  .lca-chat-head-title {
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .6px;
+    flex: 1;
+  }
+  /* Mono: es el identificador del modelo. */
+  .lca-chat-model {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    background: var(--card);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-pill);
+    padding: 1px 8px;
   }
   .lca-chat-msgs {
     display: flex;
@@ -2870,7 +3403,7 @@ export default {
     gap: 10px;
     max-height: 360px;
     overflow-y: auto;
-    margin-bottom: 10px;
+    padding: 12px;
   }
   .chat-msg { display: flex; }
   .chat-user { justify-content: flex-end; }
@@ -2883,25 +3416,29 @@ export default {
     line-height: 1.5;
   }
   .chat-user .chat-bubble {
-    background: var(--info);
+    background: var(--accent);
     color: #fff;
     border-bottom-right-radius: 4px;
   }
   .chat-ai .chat-bubble {
-    background: var(--card);
+    background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
     border-bottom-left-radius: 4px;
   }
+  /* Gris, NO rojo. Que el asistente opcional no conteste no es un hallazgo de
+     seguridad, y pintarlo con el color de "crítico" ponía una alarma donde solo
+     hay un servicio caído. */
   .chat-bubble.chat-error {
-    background: var(--critical-bg);
-    color: var(--critical);
-    border: 1px solid var(--critical-border);
+    background: var(--surface);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    font-style: italic;
   }
   .chat-text { word-break: break-word; }
   .chat-text + .command-box { margin-top: 10px; }
   .chat-inline-code {
-    font-family: "SF Mono", "Fira Code", monospace;
+    font-family: var(--font-mono);
     background: rgba(0,0,0,.07);
     padding: 1px 5px;
     border-radius: 4px;
@@ -2917,7 +3454,7 @@ export default {
   .chat-dot:nth-child(2) { animation-delay: .2s; }
   .chat-dot:nth-child(3) { animation-delay: .4s; }
   @keyframes chatBlink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
-  .lca-chat-input { display: flex; gap: 8px; }
+  .lca-chat-input { display: flex; gap: 8px; padding: 0 12px 12px; }
   .lca-chat-input input {
     flex: 1;
     border: 1px solid var(--border);
@@ -2928,10 +3465,10 @@ export default {
     background: var(--card);
     outline: none;
   }
-  .lca-chat-input input:focus { border-color: var(--info); }
+  .lca-chat-input input:focus { border-color: var(--accent); }
   .chat-send-btn {
     flex-shrink: 0;
-    background: var(--info);
+    background: var(--accent);
     color: #fff;
     border: none;
     border-radius: var(--radius-sm);
@@ -2941,28 +3478,68 @@ export default {
     cursor: pointer;
     transition: background .2s;
   }
-  .chat-send-btn:hover:not(:disabled) { background: #0284C7; }
+  .chat-send-btn:hover:not(:disabled) { background: #6D28D9; }
   .chat-send-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .lca-chat-foot {
+    padding: 9px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
 
-  /* ── Filtro por severidad: tarjetas clicables ───────────────────────────── */
-  .counter-card { cursor: pointer; transition: box-shadow .15s, transform .15s; }
-  .counter-card:hover { transform: translateY(-1px); }
-  .counter-card.counter-active { box-shadow: 0 0 0 2px #0EA5E9, 0 6px 16px rgba(14,165,233,.22); }
+  /* ═══ ESTADOS idle / scanning ══════════════════════════════════════════════ */
+  .lca-state-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-secondary);
+  }
+  .lca-state-inline { padding: 40px 0; }
+  .lca-state-ico {
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    animation: lcaPulse 2.2s ease-in-out infinite;
+  }
+  .lca-state-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .lca-state-desc { font-size: .88rem; line-height: 1.4; }
+  .lca-spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: lcaSpin 1s linear infinite;
+    margin-bottom: 16px;
+  }
+  @keyframes lcaPulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+  @keyframes lcaSpin  { to { transform: rotate(360deg); } }
 
-  /* ── Resolución inline: origen + avisos (host · azul #0EA5E9) ────────────── */
-  .cmd-intro { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 10px; }
-  .cmd-origin { color: #0EA5E9; font-weight: 600; margin-left: 4px; }
-  /* Nota explicativa que acompaña a un comando: nunca entra en el portapapeles. */
-  .cmd-note {
-    margin-top: 6px; font-size: 12px; line-height: 1.55; color: #4B5563;
-    white-space: pre-wrap;
+  /* ═══ PIE DEL INFORME ══════════════════════════════════════════════════════ */
+  .report-foot {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 28px;
+    margin-top: 20px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--card);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
   }
-  .cmd-warn {
-    margin-top: 8px; font-size: 12px; line-height: 1.55; color: var(--text);
-    background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 9px 11px;
+  .report-foot-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .report-foot-key {
+    font-size: 9.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .7px; color: var(--text-secondary);
   }
-  .cmd-sudo {
-    margin-top: 8px; font-size: 12px; line-height: 1.55; color: #92400E;
-    background: #FEF3C7; border: 1px solid #FCD34D; border-radius: 8px; padding: 9px 11px;
-  }
+  .report-foot-val { font-size: 11.5px; color: var(--text-secondary); overflow-wrap: anywhere; }
 </style>

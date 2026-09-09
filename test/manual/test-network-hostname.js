@@ -97,9 +97,13 @@ ok(pill("localhost", "localhost") === null,
 ok(pill("192.168.0.40", "") === null && pill("192.168.0.40", undefined) === null,
    "cadena vacía o undefined se tratan como 'sin dato'");
 
-// La píldora usa v-if, como el resto de campos opcionales de la tira
-ok(/v-if="hostnameLabel"[^>]*>[\s\S]{0,120}?pill-label">Nombre/.test(tpl),
-   "la píldora del dashboard va con v-if, igual que Puertos y Duración");
+// El campo es CONDICIONAL, como el resto de los opcionales de la cabecera: sin PTR
+// no se pinta nada, ni un guion ni un placeholder. Lo que se comprueba es eso —que
+// "Nombre" cuelgue de un v-if="hostnameLabel"— y no el nombre del contenedor: la
+// maquetación pasó de píldoras a rejilla clave/valor y la intención no cambió.
+// El hueco de 200 caracteres cubre el <span> intermedio de la rejilla.
+ok(/v-if="hostnameLabel"[\s\S]{0,200}?>\s*Nombre\s*</.test(tpl),
+   "el campo Nombre del dashboard va con v-if, igual que Puertos y Duración");
 
 console.log(`\n${"─".repeat(60)}`);
 console.log(`  ${passed} correctos · ${failed} fallidos`);

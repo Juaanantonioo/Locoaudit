@@ -334,6 +334,10 @@ module.exports = function (RED) {
             imagesFound:       docker.images.length,
             containersFound:   docker.containers.length,
             containersRunning: docker.containers.filter((c) => c.running).length,
+            // Con qué se escaneó. Sin esto el informe no es reproducible: la base de
+            // datos de Trivy cambia y el mismo comando da otro resultado más adelante.
+            trivyVersion:      (trivy && trivy.trivyVersion) || null,
+            engineVersion:     docker.serverVersion || null,
             durationMs,
           },
           // En local el dashboard usa raw.docker.images; en remoto cae a este campo.
