@@ -400,6 +400,10 @@ _already_installed = False
 #   "missing"          no instalada
 _tool_status: dict = {}
 
+# Node-RED es requisito, pero se instala en el mismo lote que las herramientas
+# opcionales cuando Node.js y npm ya están disponibles.
+_node_red_pending_install = False
+
 # "unknown" no es un adorno: sin Node no se puede preguntar a lib/executor.js, y
 # entonces un "no la encuentro" de este proceso NO autoriza a decir que falta.
 # Era justo el error que producía "Lynis no encontrado" sobre un Lynis instalado.
@@ -527,6 +531,11 @@ def check_docker_daemon() -> str | None:
 
 
 def get_auto_install_cmd(tool: str) -> str | None:
+    if tool == "node-red":
+        if OS == "Linux":
+            return "sudo npm install -g node-red"
+        return "npm install -g node-red"
+
     if OS == "Darwin":
         if not shutil.which("brew"):
             return None
@@ -1156,6 +1165,45 @@ def _run_npm(cmd: str, label: str, timeout: int = 120) -> bool:
             return False
 
 
+def _ask_install_node_red(is_tty: bool) -> bool:
+    """Pregunta si se debe instalar Node-RED con el npm ya disponible."""
+    cmd = "npm install -g node-red"
+    if OUTPUT_QUEUE is not None:
+        evt = threading.Event()
+        result = []
+        OUTPUT_QUEUE.put({
+            "type": "ask",
+            "tool": "Node-RED",
+            "desc": cmd,
+            "note": "Si después no aparece el comando, reinicia el equipo para recargar el PATH.",
+            "event": evt,
+            "result": result,
+        })
+        evt.wait()
+        return bool(result and result[0])
+
+    if not is_tty:
+        return False
+
+    tip(f"Comando: {cmd}")
+    tip("Si después no aparece el comando, reinicia el equipo para recargar el PATH.")
+    if RICH:
+        try:
+            return bool(Confirm.ask(
+                "  ¿Deseas instalar [bold]Node-RED[/bold] ahora?",
+                default=False,
+            ))
+        except (EOFError, KeyboardInterrupt):
+            blank()
+            return False
+    print(f"\n  ¿Deseas instalar {BO}Node-RED{RS} ahora? (s/n)")
+    try:
+        return input("  → ").strip().lower() in ("s", "si", "sí", "y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        blank()
+        return False
+
+
 # ─────────────────────────────────────────────
 #  Pantalla de bienvenida
 # ─────────────────────────────────────────────
@@ -1259,8 +1307,10 @@ def _print_summary():
 #  Paso 1 — Dependencias requeridas
 # ─────────────────────────────────────────────
 def step1_required_deps() -> list:
+    global _node_red_pending_install
     step_header(1, "Dependencias requeridas")
     missing = []
+    node_red_missing = False
 
     if RICH and OUTPUT_QUEUE is None:
         table = Table(
@@ -1313,6 +1363,7 @@ def step1_required_deps() -> list:
                 MANUAL_INSTALL["node-red"].get(OS, "npm install -g node-red"),
             )
             missing.append("Node-RED")
+            node_red_missing = True
         else:
             table.add_row("Node-RED", "[bold green]✅  ok[/bold green]", "instalado")
 
@@ -1350,8 +1401,13 @@ def step1_required_deps() -> list:
             err("Node-RED no encontrado")
             tip(f"Instálalo: {MANUAL_INSTALL['node-red'].get(OS)}")
             missing.append("Node-RED")
+            node_red_missing = True
         else:
             ok("Node-RED instalado")
+
+    if node_red_missing and "Node.js" not in missing and "Node.js ≥ v18" not in missing and "npm" not in missing:
+        _node_red_pending_install = True
+        tip("Node-RED se ofrecerá junto con las herramientas opcionales en el paso 2")
 
     return missing
 
@@ -1438,6 +1494,7 @@ def _report_install_result(cmd: str, label: str) -> None:
 
 
 def step2_optional_tools():
+    global _node_red_pending_install
     step_header(2, "Herramientas opcionales")
 
     is_tty = sys.stdin.isatty()
@@ -1458,10 +1515,45 @@ def step2_optional_tools():
         and get_auto_install_cmd(c)
         and _can_run_install(get_auto_install_cmd(c))
     ]
+    if _node_red_pending_install:
+        node_red_cmd = get_auto_install_cmd("node-red")
+        if node_red_cmd and _can_run_install(node_red_cmd):
+            pending.insert(0, ("node-red", "Node-RED"))
     install_all = _ask_install_all(pending, is_tty) if len(pending) >= 2 else False
     if install_all:
         ok(f"Se instalarán sin preguntar: {', '.join(l for _, l in pending)}")
         blank()
+
+        if _node_red_pending_install:
+            node_red_cmd = get_auto_install_cmd("node-red")
+            if node_red_cmd and _run_npm(node_red_cmd, "Instalando Node-RED"):
+                if command_exists("node-red"):
+                    ok("Node-RED instalado correctamente")
+                    _node_red_pending_install = False
+                else:
+                    warn("Node-RED se instaló, pero el comando todavía no aparece en el PATH")
+                    tip("Reinicia el equipo y vuelve a ejecutar el launcher para recargar el PATH")
+            else:
+                err("No se pudo instalar Node-RED automáticamente")
+                tip(f"Instálalo manualmente: {MANUAL_INSTALL['node-red'].get(OS)}")
+
+    elif _node_red_pending_install:
+        node_red_cmd = get_auto_install_cmd("node-red")
+        if node_red_cmd and not _can_run_install(node_red_cmd):
+            tip("Tu usuario no tiene permisos para instalar Node-RED automáticamente")
+            tip(f"Instálalo manualmente: {MANUAL_INSTALL['node-red'].get(OS)}")
+        elif _ask_install_node_red(is_tty):
+            node_red_cmd = get_auto_install_cmd("node-red")
+            if node_red_cmd and _run_npm(node_red_cmd, "Instalando Node-RED"):
+                if command_exists("node-red"):
+                    ok("Node-RED instalado correctamente")
+                    _node_red_pending_install = False
+                else:
+                    warn("Node-RED se instaló, pero el comando todavía no aparece en el PATH")
+                    tip("Reinicia el equipo y vuelve a ejecutar el launcher para recargar el PATH")
+            else:
+                err("No se pudo instalar Node-RED automáticamente")
+                tip(f"Instálalo manualmente: {MANUAL_INSTALL['node-red'].get(OS)}")
 
     for cmd, label in OPTIONAL_TOOLS:
         # Lynis is not available natively on Windows
@@ -1620,6 +1712,8 @@ def step2_optional_tools():
             tip("No se ha podido comprobar su estado desde el asistente. Si están "
                 "instaladas, los nodos las usarán igualmente: LoCoAudit las busca "
                 "también fuera del PATH de esta ventana.")
+
+        return not _node_red_pending_install or command_exists("node-red")
 
     if _installed_this_run:
         blank()
@@ -1846,7 +1940,12 @@ def run_all_steps():
         _gui_flush_card()
         OUTPUT_QUEUE.put({"type": "done"})
         return
-    step2_optional_tools()
+    if not step2_optional_tools():
+        err("Node-RED sigue sin estar disponible")
+        tip("Reinicia el equipo si acabas de instalarlo y vuelve a ejecutar el launcher")
+        _gui_flush_card()
+        OUTPUT_QUEUE.put({"type": "done"})
+        return
     step3_register_package()
     step4_install_dashboard()
     step5_copy_flows()
@@ -1878,7 +1977,12 @@ if __name__ == "__main__":
             blank()
             sys.exit(1)
 
-        step2_optional_tools()
+        if not step2_optional_tools():
+            blank()
+            err("Node-RED sigue sin estar disponible")
+            tip("Reinicia el equipo si acabas de instalarlo y vuelve a ejecutar el launcher")
+            blank()
+            sys.exit(1)
         step3_register_package()
         step4_install_dashboard()
         step5_copy_flows()
