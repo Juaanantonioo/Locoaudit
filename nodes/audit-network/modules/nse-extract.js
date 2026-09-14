@@ -34,6 +34,14 @@ function extractVulns(scripts) {
   const node = findScript(scripts, "vulners");
   if (!node) return [];
 
+  const outputUrls = new Map();
+  const output = String(node.output || "");
+  const outputLine = /(?:^|\n)\s*(\S+)\s+[\d.]+\s+(https?:\/\/\S+)/g;
+  let outputMatch;
+  while ((outputMatch = outputLine.exec(output)) !== null) {
+    outputUrls.set(outputMatch[1].toUpperCase(), outputMatch[2]);
+  }
+
   const grupos = [];
   for (const tabla of node.children.filter((c) => c.type === "table")) {
     const cves = [];
@@ -56,6 +64,7 @@ function extractVulns(scripts) {
         // 'medium' justamente para que no se cuele por la puerta de atrás.
         severity: fromCvss(cvssTxt),
         isExploit: esExploit,
+        sourceUrl: outputUrls.get(String(id).toUpperCase()) || null,
       });
     }
 

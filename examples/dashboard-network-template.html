@@ -267,11 +267,51 @@
           </div>
         </div>
 
-        <!-- 3 · HALLAZGOS -->
-        <section v-if="sortedFindings.length > 0">
+        <!-- 3 · VULNERABILIDADES POR PUERTO -->
+        <section v-if="vulnerabilityGroups.length > 0">
+          <div class="section-title">Vulnerabilidades por puerto</div>
+          <div class="vulnerability-groups">
+            <article v-for="group in vulnerabilityGroups" :key="group.key" class="vulnerability-group">
+              <header class="vulnerability-group-header" @click="toggleVulnerabilityGroup(group.key)">
+                <div class="vulnerability-group-port">
+                  <span class="vulnerability-group-label">Puerto</span>
+                  <code>{{ group.port }}/{{ group.protocol }}</code>
+                </div>
+                <span class="vulnerability-group-service">{{ group.service || 'Servicio desconocido' }}</span>
+                <span class="badge" :class="group.maxSeverity">{{ sevLabel(group.maxSeverity) }}</span>
+                <span class="vulnerability-group-count">{{ group.vulnerabilityCount }} CVE{{ group.vulnerabilityCount === 1 ? '' : 's' }}</span>
+                <svg class="icon icon-sm vulnerability-group-chevron" :class="{ open: isVulnerabilityGroupOpen(group.key) }"><use href="#lca-i-chevron"></use></svg>
+              </header>
+              <div class="vulnerability-group-body" v-show="isVulnerabilityGroupOpen(group.key)">
+                <div v-for="finding in group.findings" :key="finding.id" class="vulnerability-finding">
+                  <div class="vulnerability-finding-title">{{ finding.title }}</div>
+                  <div class="vulnerability-list">
+                    <article v-for="v in finding.vulnerabilities" :key="v.id" class="vulnerability-card">
+                      <code class="vulnerability-id">{{ v.id }}</code>
+                      <span class="vulnerability-card-score">CVSS <strong>{{ v.cvss != null ? Number(v.cvss).toFixed(1) : 'sin nota' }}</strong></span>
+                      <span class="badge" :class="v.severity">{{ sevLabel(v.severity) }}</span>
+                      <a v-if="v.url" class="vulnerability-advisory" :href="v.url" target="_blank" rel="noopener">
+                        {{ v.label || 'Advisory' }} <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg>
+                      </a>
+                      <span v-else class="vulnerability-advisory is-unavailable">Fuente no disponible</span>
+                    </article>
+                  </div>
+                  <div v-if="finding.provenance" class="vulnerability-provenance"><strong>Procedencia</strong> {{ finding.provenance }}</div>
+                  <div class="vulnerability-resolution" v-if="finding.fix">
+                    <div class="detail-col-title">Pasos de resolución</div>
+                    <p>{{ finding.fix }}</p>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- 4 · HALLAZGOS SIN LISTA DE CVE -->
+        <section v-if="ungroupedFindings.length > 0">
           <div class="section-title">Hallazgos</div>
           <div class="findings-list">
-            <div class="finding-item" v-for="(f, fi) in visibleFindings" :key="'f-'+fi">
+            <div class="finding-item" v-for="(f, fi) in ungroupedFindings" :key="'f-'+fi">
               <div class="finding-header" @click="toggleFinding('f-' + fi)">
                 <div class="finding-badges">
                   <span class="badge" :class="(f.severity || 'info').toLowerCase()">{{ sevLabel(f.severity) }}</span>
@@ -407,7 +447,7 @@
         </section>
 
         <!-- Sin hallazgos (nunca si no se ha auditado: eso no es un "todo bien") -->
-        <div v-if="sortedPorts.length === 0 && sortedFindings.length === 0 && !notAudited"
+        <div v-if="sortedPorts.length === 0 && ungroupedFindings.length === 0 && vulnerabilityGroups.length === 0 && !notAudited"
              class="lca-state-center lca-state-inline">
           <svg class="icon icon-xl lca-state-ico"><use href="#lca-i-check-circle"></use></svg>
           <h3 class="lca-state-title">¡Sin hallazgos!</h3>
@@ -446,6 +486,7 @@ export default {
       copiedKey: null,
       // Filtro por severidad: clic en una barra de "Exposición por severidad".
       filterSev: 'all',
+      openVulnerabilityGroups: {},
       // ── Chat con LLM (asistente IA) ──
       chatOpen: {},        // por findingKey: panel abierto/cerrado
       chatMessages: {},    // por findingKey: [{ role, content, error? }]
@@ -659,6 +700,43 @@ export default {
       });
     },
 
+    ungroupedFindings() {
+      return this.visibleFindings.filter(function(f) {
+        return !Array.isArray(f.vulnerabilities) || !f.vulnerabilities.length;
+      });
+    },
+
+    vulnerabilityGroups() {
+      var rank = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+      var groups = {};
+      this.visibleFindings.forEach(function(f) {
+        if (!Array.isArray(f.vulnerabilities) || !f.vulnerabilities.length || !Number.isInteger(f.port)) return;
+        var protocol = f.protocol || 'tcp';
+        var key = f.port + '/' + protocol;
+        if (!groups[key]) {
+          groups[key] = {
+            key: key, port: f.port, protocol: protocol, service: f.service,
+            findings: [], maxSeverity: 'info'
+          };
+        }
+        var group = groups[key];
+        group.findings.push(f);
+        group.vulnerabilityCount = (group.vulnerabilityCount || 0) + f.vulnerabilities.length;
+        if ((rank[f.severity] || 0) > (rank[group.maxSeverity] || 0)) group.maxSeverity = f.severity;
+      });
+      return Object.keys(groups).map(function(key) {
+        var group = groups[key];
+        group.findings.forEach(function(f) {
+          f.vulnerabilities.sort(function(a, b) {
+            return (b.cvss == null ? -1 : b.cvss) - (a.cvss == null ? -1 : a.cvss);
+          });
+        });
+        return group;
+      }).sort(function(a, b) {
+        return (rank[b.maxSeverity] || 0) - (rank[a.maxSeverity] || 0) || a.port - b.port;
+      });
+    },
+
     barCols() {
       var ports = this.sortedPorts;
       // El color va a una cadena de estilo: ningún var() llega ahí, así que se lee
@@ -751,6 +829,14 @@ export default {
 
     toggleFinding(key) {
       this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
+    },
+    isVulnerabilityGroupOpen(key) {
+      return this.openVulnerabilityGroups[key] !== false;
+    },
+    toggleVulnerabilityGroup(key) {
+      this.openVulnerabilityGroups = Object.assign({}, this.openVulnerabilityGroups, {
+        [key]: !this.isVulnerabilityGroupOpen(key)
+      });
     },
     // Filtro por severidad: clic en la barra activa/desactiva ese filtro.
     toggleSevFilter(sev) {
@@ -1809,6 +1895,59 @@ export default {
   /* ── FINDINGS ────────────────────────────────────────────────── */
   .findings-list { display: flex; flex-direction: column; gap: 8px; }
 
+  .vulnerability-groups { display: flex; flex-direction: column; gap: 10px; }
+  .vulnerability-group {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .vulnerability-group-header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 13px 16px; background: var(--surface); border-left: 4px solid var(--medium);
+    cursor: pointer; user-select: none;
+  }
+  .vulnerability-group-header:hover { background: var(--bg); }
+  .vulnerability-group-port { display: flex; flex-direction: column; gap: 2px; }
+  .vulnerability-group-label {
+    color: var(--text-secondary); font-size: 9.5px; font-weight: 700;
+    letter-spacing: .7px; text-transform: uppercase;
+  }
+  .vulnerability-group-port code, .vulnerability-id { font-family: var(--font-mono); }
+  .vulnerability-group-service { flex: 1; color: var(--text); font-size: 13px; font-weight: 600; }
+  .vulnerability-group-count { color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+  .vulnerability-group-chevron { color: var(--text-muted); transition: transform .2s; }
+  .vulnerability-group-chevron.open { transform: rotate(180deg); }
+  .vulnerability-group-body { padding: 12px 16px 16px; }
+  .vulnerability-finding + .vulnerability-finding { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .vulnerability-finding-title { color: var(--text); font-size: 13px; font-weight: 600; }
+  .vulnerability-provenance {
+    margin-top: 8px; padding: 9px 11px; border-left: 3px solid var(--medium);
+    border-radius: var(--radius-sm); background: var(--medium-bg); color: var(--text);
+    font-size: 12px; line-height: 1.55;
+  }
+  .vulnerability-list { max-height: 280px; overflow-y: auto; margin-top: 10px; border-top: 1px solid var(--border); }
+  .vulnerability-card {
+    display: grid; grid-template-columns: minmax(150px, 1fr) auto auto minmax(90px, auto);
+    align-items: center; gap: 12px; padding: 9px 10px;
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .vulnerability-card + .vulnerability-card { margin-top: 6px; }
+  .vulnerability-card-score { color: var(--text-secondary); font-size: 11.5px; white-space: nowrap; }
+  .vulnerability-card-score strong { color: var(--text); font-family: var(--font-mono); font-size: 12px; }
+  .vulnerability-advisory { color: var(--accent); font-size: 12px; font-weight: 600; text-decoration: none; }
+  .vulnerability-advisory:hover { text-decoration: underline; }
+  .vulnerability-advisory.is-unavailable { color: var(--text-secondary); font-weight: 400; }
+  .vulnerability-resolution {
+    margin-top: 12px; padding: 12px 14px; background: var(--card);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    color: var(--text); font-size: 12.5px; line-height: 1.55;
+  }
+  .vulnerability-resolution .detail-col-title { margin-bottom: 6px; }
+  @media (max-width: 640px) {
+    .vulnerability-card { grid-template-columns: 1fr auto; }
+    .vulnerability-card .badge { justify-self: start; }
+    .vulnerability-advisory { grid-column: 1 / -1; }
+  }
+
   .finding-item {
     background: var(--card);
     border: 1px solid var(--border);
@@ -1849,15 +1988,15 @@ export default {
   }
   .finding-body.open { display: block; }
 
-  /* ── Detail grid (two-column, host-style) ── */
+  /* ── Detalle común: impacto arriba, resolución debajo ── */
   .detail-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 12px;
     padding-top: 14px;
   }
   .detail-col {
-    background: var(--bg);
+    background: var(--card);
     border-radius: 8px;
     border: 1px solid var(--border);
     padding: 14px;
@@ -1873,8 +2012,9 @@ export default {
   .detail-evidence {
     font-size: 12px;
     font-family: var(--font-mono);
-    background: var(--text);
-    color: #E2E8F0;   /* texto sobre el bloque oscuro de evidencia */
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 10px;
     line-height: 1.6;

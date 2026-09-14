@@ -3128,24 +3128,17 @@ export default {
   .finding-detail.open { display: block; }
   @keyframes slideDown { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
-  /* Dos columnas: evidencia a la izquierda, pasos de resolución a la derecha.
-     Apilado, había que bajar toda la evidencia para llegar a lo accionable.
-     NO renombrar .detail-stack: no está en la lista de subcadenas que el export
-     selecciona, pero sí lo está su contenedor .finding-detail, y este div tiene
-     que seguir siendo hijo suyo. */
+  /* Detalle común: impacto arriba y resolución debajo, igual que el patrón claro
+     del dashboard de imagen. NO renombrar .detail-stack: el export conserva esta
+     anatomía dentro de .finding-detail. */
   .detail-stack {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 12px;
-    align-items: start;
   }
-  @media (max-width: 900px) { .detail-stack { grid-template-columns: 1fr; } }
-  /* Un hallazgo sin pasos de resolución tiene una sola columna: que ocupe el
-     ancho entero en vez de dejar media ficha vacía. */
-  .detail-stack:has(> .detail-col:only-child) { grid-template-columns: 1fr; }
 
   .detail-col {
-    background: var(--bg);
+    background: var(--card);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
     padding: 14px;
@@ -3161,8 +3154,9 @@ export default {
   .detail-evidence {
     font-size: 12px;
     font-family: var(--font-mono);
-    background: var(--text);
-    color: #E2E8F0;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 10px;
     line-height: 1.6;

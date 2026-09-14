@@ -129,25 +129,17 @@
                 <label for="node-input-nseEnabled" style="font-weight: 600; display: flex; align-items: flex-start; gap: 6px; margin: 0;">
                     <input type="checkbox" id="node-input-nseEnabled" style="width: auto; margin: 3px 0 0 0;">
                     <span>
-                        Buscar vulnerabilidades conocidas y revisar la configuración de los
-                        servicios &mdash; <strong>envía a vulners.com, por internet, el nombre y
-                        la versión de cada servicio detectado</strong>
+                        Buscar vulnerabilidades conocidas y revisar servicios (Nmap NSE; puede
+                        enviar el nombre y la versión a vulners.com)
                     </span>
                 </label>
                 <div style="color: #555; font-size: 0.82em; margin-top: 8px; line-height: 1.5;">
-                    Con esta opción, además de descubrir qué puertos están abiertos, el escáner
-                    dialoga con cada servicio para preguntarle qué cifrado y qué algoritmos acepta,
-                    y consulta una base de datos pública de vulnerabilidades (CVE) por la versión
-                    que ese servicio anuncia.<br><br>
-                    <strong>Qué sale de tu equipo:</strong> el nombre y la versión del software
-                    (por ejemplo, <code>OpenSSH 10.3</code>). <strong>Qué no sale:</strong> tu
-                    dirección IP privada, el nombre del equipo, ni nada de su contenido. La
-                    consulta la hace el propio Nmap, no LoCoAudit.<br><br>
-                    <strong>Audita solo equipos de tu propiedad:</strong> esta opción interroga a
-                    los servicios, no se limita a mirar si el puerto responde.<br><br>
-                    El escaneo tarda bastante más. Si la dejas apagada, el informe lo dirá
-                    claramente: sin buscar vulnerabilidades, que no aparezca ninguna no significa
-                    que no las haya.
+                    Nmap consulta CVE conocidos según la versión anunciada y revisa el cifrado,
+                    los algoritmos SSH y los banners de los servicios. <strong>Solo en equipos
+                    de tu propiedad:</strong> esta opción interroga a los servicios y puede
+                    enviar a Vulners el nombre y la versión detectados; no envía tu IP privada ni
+                    el contenido del equipo. Tarda más y, si está apagada, no se comprueba esta
+                    parte: que no aparezcan vulnerabilidades no significa que no existan.
                 </div>
 
                 <div id="nse-timeout-row" style="margin-top: 10px; border-top: 1px solid #e0e0e0; padding-top: 10px;">

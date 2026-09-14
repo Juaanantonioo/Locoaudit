@@ -500,6 +500,15 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
      "sin comando copiable: el gestor de paquetes del equipo auditado puede no ser el de este");
   ok(vulns[0].target === "127.0.0.1" && vulns[0].isLocalTarget === true,
      "y arrastra target para que el chat no tenga que reinferirlo");
+  ok(vulns[0].port === 22 && vulns[0].protocol === "tcp" && vulns[0].service === "ssh",
+     "el finding conserva el puerto y el servicio como datos estructurados");
+  ok(vulns[0].vulnerabilities.length === 11 && vulns[0].vulnerabilities[0].cvss === 9.4,
+     "los CVE y sus puntuaciones viajan en una lista estructurada");
+  ok(vulns[0].vulnerabilities[0].url === "https://nvd.nist.gov/vuln/detail/CVE-2026-60002" &&
+     vulns[0].vulnerabilities[0].label === "NVD",
+     "los CVE usan el advisory canónico del NVD");
+  ok(vulns[0].provenance && /versión la anuncia el propio servicio/.test(vulns[0].provenance),
+     "la procedencia viaja separada de la evidencia legible");
 
   // --- NET-SVC: el techo de SSH ---
   const svc = fromNseSvc(pSsh, OPTS);
