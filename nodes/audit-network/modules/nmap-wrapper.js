@@ -102,7 +102,12 @@ function parseNmapXml(xml) {
     const state      = stateMatch ? attrValue(stateMatch[1], "state") : "open";
     if (state !== "open") continue;
 
-    const serviceMatch = block.match(/<service\s([^/]*)\/?>/);
+    // `[^>]` y no `[^/]`: cuando -sV no reconoce del todo un servicio mete su huella en
+    // `servicefp`, y esa huella lleva barras dentro ("HTTP/1\\.1", "AirTunes/950\\.7\\.1"). Con
+    // `[^/]` el patrón dejaba de casar en cuanto aparecía la primera, y el servicio caía al
+    // fallback "unknown" perdiendo product, version y extrainfo. Un '>' crudo no puede aparecer
+    // dentro de un atributo —nmap lo escapa como &gt;—, así que cortar en '>' es fiable.
+    const serviceMatch = block.match(/<service\b([^>]*?)\/?>/);
     const service      = serviceMatch ? attrValue(serviceMatch[1], "name")    : "unknown";
     const product      = serviceMatch ? attrValue(serviceMatch[1], "product") : "";
     const version      = serviceMatch ? attrValue(serviceMatch[1], "version") : "";
