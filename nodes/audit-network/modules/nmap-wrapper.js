@@ -13,6 +13,7 @@ const os                             = require("os");
 const { execCommand, commandExists } = require("../../../lib/executor");
 const { PORT_CATALOG }               = require("./port-catalog");
 const { getFixForPort }              = require("./network-utils");
+const { decodeXmlEntities, parseScripts } = require("./nmap-xml");
 
 /**
  * La interfaz local que comparte subred con el objetivo, para el -e. Hace falta en macOS con
@@ -61,21 +62,11 @@ function parseNmapFatalError(xml) {
   return msg || `nmap terminó con exit="${exitAt[1]}"`;
 }
 
-/** Las cinco entidades predefinidas bastan para el errormsg de nmap, que es texto plano. */
-function decodeXmlEntities(s) {
-  return String(s)
-    .replace(/&lt;/g,   "<")
-    .replace(/&gt;/g,   ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g,  "&");
-}
-
 /** attrValue('protocol="tcp" portid="22"', "portid") → "22". */
 function attrValue(tag, attr) {
-  const re = new RegExp(`${attr}="([^"]*)"`, "i");
+  const re = new RegExp(`\\b${attr}="([^"]*)"`, "i");
   const m  = tag.match(re);
-  return m ? m[1] : "";
+  return m ? decodeXmlEntities(m[1]) : "";
 }
 
 /**
@@ -108,12 +99,31 @@ function parseNmapXml(xml) {
     // fallback "unknown" perdiendo product, version y extrainfo. Un '>' crudo no puede aparecer
     // dentro de un atributo —nmap lo escapa como &gt;—, así que cortar en '>' es fiable.
     const serviceMatch = block.match(/<service\b([^>]*?)\/?>/);
-    const service      = serviceMatch ? attrValue(serviceMatch[1], "name")    : "unknown";
-    const product      = serviceMatch ? attrValue(serviceMatch[1], "product") : "";
-    const version      = serviceMatch ? attrValue(serviceMatch[1], "version") : "";
+    const service      = serviceMatch ? attrValue(serviceMatch[1], "name")      : "unknown";
+    const product      = serviceMatch ? attrValue(serviceMatch[1], "product")   : "";
+    const version      = serviceMatch ? attrValue(serviceMatch[1], "version")   : "";
+    const extrainfo    = serviceMatch ? attrValue(serviceMatch[1], "extrainfo") : "";
+    // tunnel="ssl" es lo que dice nmap cuando habló TLS de verdad, y manda sobre cualquier
+    // lista de puertos: un HTTPS en 14443 no está en ninguna tabla y aquí sí se reconoce.
+    const tunnel       = serviceMatch ? attrValue(serviceMatch[1], "tunnel")    : "";
     const versionStr   = [product, version].filter(Boolean).join(" ");
 
-    results.push({ port, protocol, state, service, version: versionStr });
+    // Los <cpe> hijos del <service>. Son la clave con la que vulners agrupa sus resultados, así
+    // que hay que conservarlos para poder casar cada grupo de CVE con su software.
+    const cpes = [];
+    const cpeRe = /<cpe>([^<]*)<\/cpe>/g;
+    let cpeMatch;
+    while ((cpeMatch = cpeRe.exec(block)) !== null) cpes.push(decodeXmlEntities(cpeMatch[1]));
+    // El de aplicación manda sobre el de sistema operativo: vulners pregunta por software.
+    const cpe = cpes.find((c) => c.startsWith("cpe:/a")) || cpes[0] || "";
+
+    // El subárbol NSE del puerto. Vacío cuando el escaneo fue sin --script, que es lo normal.
+    const nse = parseScripts(block);
+
+    results.push({
+      port, protocol, state, service, version: versionStr,
+      extrainfo, tunnel, cpe, cpes, nse,
+    });
   }
 
   return results;
@@ -137,6 +147,25 @@ function applyMeta(parsed) {
     severity: meta ? meta.severity : "low",
     fix:      getFixForPort(parsed.port, process.platform),
   };
+}
+
+/**
+ * La línea de nmap. Se extrae de runNmap() para poder comprobar en un test que, con el análisis
+ * NSE apagado, el comando es EXACTAMENTE el de siempre: byte a byte, incluido el doble espacio
+ * que deja un ifaceFlag vacío. Que activar una función no toque el camino de quien no la activa
+ * es una propiedad que se verifica, no que se promete.
+ *
+ * Lo que NO lleva, y por qué:
+ *   -O               necesita sockets crudos, o sea root. Un panel web que se audita a sí mismo
+ *                    no corre como root, y además dio un SO equivocado en las pruebas reales.
+ *   -f               fragmentar es evadir cortafuegos: impropio de una auditoría autorizada.
+ *   --script-timeout un script matado por timeout desaparece del XML igual que si no hubiera
+ *                    encontrado nada, así que añadiría una cuarta causa de silencio que el
+ *                    canario no puede cerrar. Se prefiere el presupuesto global de tiempo.
+ */
+function buildScanCommand({ target, portSpec, ifaceFlag = "", nseScripts = [] }) {
+  const scriptFlag = nseScripts.length ? ` --script ${nseScripts.join(",")}` : "";
+  return `nmap -sV -T4 -Pn --max-retries 2 ${ifaceFlag}${scriptFlag} -p ${portSpec} -oX - ${target}`.trim();
 }
 
 /** Los puertos abiertos del target, o { skipped: true } si nmap no está instalado. */
@@ -171,12 +200,15 @@ async function runNmap(options = {}) {
 
   const iface = findInterfaceForTarget(target);
   const ifaceFlag = iface ? `-e ${iface}` : "";
+  // Lista ya podada por nse-scripts.js: aquí no se comprueba nada, solo se escribe. Vacía
+  // cuando el análisis NSE está apagado, que es el defecto.
+  const nseScripts = Array.isArray(options.nseScripts) ? options.nseScripts.filter(Boolean) : [];
   // --max-retries 2 recorta los reintentos por puerto filtrado sin perder puertos abiertos.
   // Sin --open, que es un filtro de salida y no cambia el sondeo: medido, 45,92 s con él y
   // 45,95 s sin él sobre -p 1-200, y el XML solo crece ~300 bytes porque nmap colapsa lo no
   // abierto en un <extraports>. A cambio vuelven el recuento de filtrados, que es la evidencia
   // de cortafuegos, y su motivo. Con --open, un host sin puertos abiertos no emitía ni <host>.
-  const cmd = `nmap -sV -T4 -Pn --max-retries 2 ${ifaceFlag} -p ${portSpec} -oX - ${target}`.trim();
+  const cmd = buildScanCommand({ target, portSpec, ifaceFlag, nseScripts });
 
   let stdout;
   let inconclusive = false;
@@ -236,4 +268,7 @@ async function runNmap(options = {}) {
 
 // findInterfaceForTarget se exporta para que el descubrimiento salga por la misma interfaz que
 // el escaneo: por otra, el -sn podría decir "no alcanzable" sobre una ruta que el escaneo sí tiene.
-module.exports = { runNmap, parseNmapXml, parsePtrHostname, findInterfaceForTarget, parseNmapFatalError };
+module.exports = {
+  runNmap, parseNmapXml, parsePtrHostname, findInterfaceForTarget, parseNmapFatalError,
+  buildScanCommand,
+};

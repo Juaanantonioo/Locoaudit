@@ -33,20 +33,27 @@ function ok(cond, label, detail) {
   else { failed++; console.log(`  ✗ ${label}`); if (detail) console.log(`      ${detail}`); }
 }
 
-console.log("\n── 1 · Los seis kinds de límite estructural ──────────────────────\n");
+console.log("\n── 1 · Los cinco kinds de límite estructural ─────────────────────\n");
 
 // La lista se comprueba entera, no por muestreo: es la única fuente y un olvido aquí se traduce
 // en un aviso ámbar sobre algo que nadie puede arreglar.
-for (const k of ["unsupported", "os-unsupported", "nothing-to-scan"]) {
+// Los dos últimos los aporta el análisis NSE de red: un puerto que no es TLS y un servicio que
+// no anuncia versión son el alcance real del método, no un hueco que se cierre reintentando.
+for (const k of ["unsupported", "os-unsupported", "nothing-to-scan",
+                 "not-applicable", "no-version"]) {
   ok(esNoAplica(k), `'${k}' es límite del sistema, no fallo`);
 }
 // Y lo que NO puede colarse: instalar una herramienta que falta SÍ es una acción posible.
+// Los cuatro de NSE se quedan FUERA por ese mismo motivo: la fuente de CVE caída, un script sin
+// instalar o el análisis apagado son huecos de esta ejecución, y pintarlos de "no aplica" los
+// escondería detrás de un texto que dice que no hay nada que hacer.
 for (const k of ["error", "timeout", "not-installed", "output-too-large", "invalid-json",
-                 "empty-output", "daemon-down", "disabled"]) {
+                 "empty-output", "daemon-down", "disabled",
+                 "source-unavailable", "script-missing", "nse-unavailable", "nse-disabled"]) {
   ok(!esNoAplica(k), `'${k}' NO cuenta como límite del sistema`);
 }
-ok(SKIP_KINDS_NO_APLICA.size === 3,
-   "la lista tiene exactamente 3 kinds", `tiene ${SKIP_KINDS_NO_APLICA.size}`);
+ok(SKIP_KINDS_NO_APLICA.size === 5,
+   "la lista tiene exactamente 5 kinds", `tiene ${SKIP_KINDS_NO_APLICA.size}`);
 
 console.log("\n── 2 · El registro del texto cambia con el motivo ────────────────\n");
 

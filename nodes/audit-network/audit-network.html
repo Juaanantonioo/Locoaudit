@@ -9,6 +9,11 @@
             scanTarget:   { value: "localhost" },
             customTarget: { value: "" },
             forceScan:    { value: false },
+            // Apagado de fábrica: activarlo manda a un servidor de internet las versiones de
+            // servicio detectadas. Un defecto distinto sería ceder datos sin que nadie lo lea.
+            nseEnabled:   { value: false },
+            // Tiempo EXTRA para los scripts, encima del presupuesto del modo de escaneo.
+            nseTimeout:   { value: 180000, validate: RED.validators.number() },
             llmConfig:    { value: "", type: "llm-config", required: false }
         },
         inputs: 1,
@@ -40,11 +45,23 @@
                 }
             }
 
+            // El tiempo extra solo tiene sentido si hay análisis: con la casilla apagada, ese
+            // campo invita a configurar algo que no se va a ejecutar.
+            function updateNseVisibility() {
+                if ($("#node-input-nseEnabled").is(":checked")) {
+                    $("#nse-timeout-row").show();
+                } else {
+                    $("#nse-timeout-row").hide();
+                }
+            }
+
             $("#node-input-scanMode").on("change", updateCustomPortsVisibility);
             $("#node-input-scanTarget").on("change", updateCustomTargetVisibility);
+            $("#node-input-nseEnabled").on("change", updateNseVisibility);
 
             updateCustomPortsVisibility();
             updateCustomTargetVisibility();
+            updateNseVisibility();
         }
     });
 </script>
@@ -89,6 +106,63 @@
                 <div style="color: #555; font-size: 0.82em; margin-top: 6px; line-height: 1.5;">
                     Separa puertos con comas. Puedes usar rangos (1-1024).<br>
                     Máximo recomendado: 500 puertos para no ralentizar el análisis.
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <hr style="margin: 12px 0;">
+
+    <div class="form-row">
+        <label style="width: 100%; font-weight: 600; margin-bottom: 8px;">
+            <i class="fa fa-flask"></i> Análisis de vulnerabilidades y configuración
+        </label>
+
+        <div style="padding-left: 8px; display: flex; flex-direction: column; gap: 10px;">
+
+            <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
+                <!-- La cesión de datos va DENTRO del texto que se marca, no en una nota debajo.
+                     Quien activa una casilla lee la casilla; una advertencia en un párrafo aparte
+                     se salta, y aquí lo que se acepta es mandar las versiones detectadas a un
+                     tercero. -->
+                <label for="node-input-nseEnabled" style="font-weight: 600; display: flex; align-items: flex-start; gap: 6px; margin: 0;">
+                    <input type="checkbox" id="node-input-nseEnabled" style="width: auto; margin: 3px 0 0 0;">
+                    <span>
+                        Buscar vulnerabilidades conocidas y revisar la configuración de los
+                        servicios &mdash; <strong>envía a vulners.com, por internet, el nombre y
+                        la versión de cada servicio detectado</strong>
+                    </span>
+                </label>
+                <div style="color: #555; font-size: 0.82em; margin-top: 8px; line-height: 1.5;">
+                    Con esta opción, además de descubrir qué puertos están abiertos, el escáner
+                    dialoga con cada servicio para preguntarle qué cifrado y qué algoritmos acepta,
+                    y consulta una base de datos pública de vulnerabilidades (CVE) por la versión
+                    que ese servicio anuncia.<br><br>
+                    <strong>Qué sale de tu equipo:</strong> el nombre y la versión del software
+                    (por ejemplo, <code>OpenSSH 10.3</code>). <strong>Qué no sale:</strong> tu
+                    dirección IP privada, el nombre del equipo, ni nada de su contenido. La
+                    consulta la hace el propio Nmap, no LoCoAudit.<br><br>
+                    <strong>Audita solo equipos de tu propiedad:</strong> esta opción interroga a
+                    los servicios, no se limita a mirar si el puerto responde.<br><br>
+                    El escaneo tarda bastante más. Si la dejas apagada, el informe lo dirá
+                    claramente: sin buscar vulnerabilidades, que no aparezca ninguna no significa
+                    que no las haya.
+                </div>
+
+                <div id="nse-timeout-row" style="margin-top: 10px; border-top: 1px solid #e0e0e0; padding-top: 10px;">
+                    <label for="node-input-nseTimeout" style="font-weight: 600; margin-bottom: 6px; display: block;">
+                        Tiempo extra para el análisis (ms)
+                    </label>
+                    <input type="text" id="node-input-nseTimeout"
+                        placeholder="180000"
+                        style="width: 100%; box-sizing: border-box;">
+                    <div style="color: #555; font-size: 0.82em; margin-top: 6px; line-height: 1.5;">
+                        Se <strong>suma</strong> al tiempo del modo de escaneo, no lo sustituye:
+                        el análisis no le quita margen al descubrimiento de puertos. Por defecto
+                        180000 ms (3 minutos). Súbelo si el informe avisa de que el escaneo no
+                        terminó.
+                    </div>
                 </div>
             </div>
 
@@ -232,6 +306,35 @@
         <li><strong>Completo 1-1024</strong> — todos los puertos privilegiados. Más lento.</li>
         <li><strong>Personalizado</strong> — define exactamente qué puertos auditar. Formato: <code>22,80,443</code> o rangos <code>1-500</code>.</li>
     </ul>
+
+    <h3>Análisis de vulnerabilidades y configuración (opcional, apagado)</h3>
+    <p>
+        Añade al escaneo cinco scripts de Nmap (NSE), nombrados uno a uno y nunca por categoría:
+        <code>vulners</code>, <code>ssl-cert</code>, <code>ssl-enum-ciphers</code>,
+        <code>ssh2-enum-algos</code> y <code>banner</code>. Producen tres familias de hallazgos:
+        <code>NET-VULN-*</code> (CVE conocidos de la versión anunciada),
+        <code>NET-TLS-*</code> (nota A-F del cifrado y datos del certificado) y
+        <code>NET-SVC-*</code> (algoritmos que ofrece el servidor SSH).
+    </p>
+    <p>
+        <strong>Cede datos a un tercero:</strong> <code>vulners</code> manda a vulners.com el
+        nombre y la versión de cada servicio detectado. Por eso viene apagado y por eso la casilla
+        lo dice en su propio texto. No se ejecuta con privilegios: nada de <code>-O</code>, nada de
+        <code>sudo</code>.
+    </p>
+    <p>
+        <strong>Lo que no se puede comprobar se dice.</strong> Un script que no está instalado, una
+        versión que el servicio no anuncia o una base de CVE que no consta que respondiera generan
+        hallazgos <code>NET-NSE-SKIP-*</code>, y el detalle estructurado viaja en
+        <code>scanMeta.nse</code>. En particular, en un equipo bien mantenido los puertos saldrán
+        como <em>sin comprobar</em> y no como <em>limpios</em>: <code>vulners</code> solo deja
+        rastro cuando encuentra algo, así que su silencio no distingue "no hay CVE" de "no se pudo
+        preguntar", y LoCoAudit no da por limpio lo que no consta.
+    </p>
+    <p>
+        El tiempo configurado se <strong>suma</strong> al del modo de escaneo, para que el análisis
+        no le reste margen al descubrimiento de puertos.
+    </p>
 
     <h3>Severidades</h3>
     <ul>

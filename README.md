@@ -257,6 +257,12 @@ Conviene tenerlas presentes para interpretar correctamente los resultados.
 
 **El análisis de red examina un único equipo por ejecución.** Los rangos CIDR no están soportados.
 
+**La búsqueda de CVE por versión depende de que vulners.com siga atendiendo al script de nmap.** El script `vulners` de NSE consulta la API de vulners.com identificándose con una cadena de User-Agent concreta que ese servicio mantiene en una lista de clientes permitidos. No es un acuerdo público ni una garantía: el día que esa cadena deje de estar en la lista, el script dejará de recibir datos y **morirá en silencio**, sin devolver ningún error. LoCoAudit no suplanta a otros programas para esquivar ese control, así que tampoco puede comprobar la fuente por su cuenta. La dependencia real no es solo "requiere conexión a internet", es "requiere seguir estando en la lista de un tercero".
+
+**Un equipo bien mantenido aparecerá como «sin comprobar», no como «limpio».** Es consecuencia de lo anterior y conviene entenderlo antes de leer un informe. El script solo deja rastro en el resultado cuando **encuentra** CVE; si ninguna de las versiones detectadas tiene vulnerabilidades publicadas, no deja rastro ninguno, y ese silencio es indistinguible del de una consulta que nunca llegó a hacerse. Ante esa duda LoCoAudit no da nada por limpio: marca esos puertos como *no se pudo comprobar*. Dicho al revés, el mensaje **no** significa que el equipo esté mal: en un equipo actualizado es el resultado esperado. La alternativa —leer el silencio como «sin vulnerabilidades»— sería un falso verde, y esa es exactamente la lectura que la herramienta se niega a hacer.
+
+**La versión que se consulta es la que el servicio anuncia.** No se verifica contra el equipo. Debian, Ubuntu y Red Hat corrigen fallos sin cambiar el número de versión (*backporting*), así que un servicio ya parcheado puede aparecer con todos sus CVE. Cada hallazgo lo advierte en su evidencia, y la comprobación definitiva es el registro de cambios del paquete en el propio equipo.
+
 ### Trabajo futuro
 
 - Escaneo de múltiples dispositivos mediante rangos de red

@@ -16,6 +16,11 @@ const { runNmap }                 = require("./modules/nmap-wrapper");
 const { checkHostReachable, deriveTargetState } = require("./modules/host-discovery");
 const { enrichPorts, detectFirewall } = require("./modules/service-detect");
 const { isLocalTarget }           = require("./modules/network-utils");
+const { commandExists }           = require("../../lib/executor");
+const { scriptExists, scriptStates } = require("./modules/nse-scripts");
+const { runCanary, canaryIsOk }   = require("./modules/vulners-canary");
+const { summarizePort }           = require("./modules/nse-extract");
+const { hasVersion }              = require("./modules/nse-catalog");
 const { normalizeNetwork }        = require("../../lib/normalizer");
 const { summarize }               = require("../../lib/severity-map");
 const { createFinding }           = require("../../lib/finding-schema");
@@ -62,6 +67,25 @@ module.exports = function (RED) {
       // Para el caso legítimo: equipo encendido que filtra ICMP y las sondas TCP del -sn.
       const forceScan      = config.forceScan === true || config.forceScan === "true";
 
+      /**
+       * Análisis NSE: APAGADO por defecto, y el defecto se decide aquí una vez.
+       *
+       * Apagado porque cambia lo que la auditoría le hace a un tercero. El escaneo de puertos
+       * pregunta "¿estás abierto?"; los scripts dialogan con el servicio y, en el caso de
+       * vulners, mandan la versión detectada a un servidor de internet. Eso es una cesión de
+       * datos y una interacción más larga con el equipo auditado, y ninguna de las dos se activa
+       * sin que alguien lo haya leído y marcado.
+       *
+       * Apagado también porque el escaneo tarda bastante más, y quien solo quiere saber qué
+       * puertos tiene abiertos no debería pagarlo.
+       */
+      const nseEnabled = config.nseEnabled === true || config.nseEnabled === "true";
+      // Tiempo EXTRA para los scripts, no el total. Se suma al presupuesto del modo en vez de
+      // sustituirlo: los 90/240/620 s están calibrados para lo que tarda `-sV` sobre puertos
+      // filtrados, y meter los scripts dentro de ese mismo margen recortaría el escaneo de
+      // puertos —que es la función principal— para pagar una opcional.
+      const nseTimeout = Math.max(0, parseInt(config.nseTimeout, 10) || 180000);
+
       const startTime = Date.now();
 
       try {
@@ -102,6 +126,12 @@ module.exports = function (RED) {
         let nmapMissing = false;
         let nmapError   = null;
 
+        // Lo que se sabrá del análisis NSE al final. Se declara aquí, con el resto del estado del
+        // escaneo, porque el informe tiene que poder decir "no se hizo" con la misma seguridad
+        // con la que dice "se hizo": null sería un cuarto estado sin significado.
+        let nseAvailability = null;   // { checked, available:Set, missing:[], reason }
+        let nseCanary       = null;   // { state, detail, probed, evidence }
+
         // Única fuente sobre si el objetivo existe: el escaneo va con -Pn y siempre responde
         // "host up (user-set)". Sin esto, una IP inexistente daba 0 puertos abiertos y el
         // dashboard lo pintaba verde. Y ahorra tiempo: medido contra una IP muerta, 3 s de
@@ -131,8 +161,42 @@ module.exports = function (RED) {
             // filtrado añade espera. No se usa --host-timeout de nmap: cortaría antes de sondear
             // los puertos altos y daría un falso 0. Pasado este límite, "no concluyente".
             const NMAP_TIMEOUT_BY_MODE = { rapido: 90000, standard: 240000, full: 620000, custom: 90000 };
-            const nmapTimeout = NMAP_TIMEOUT_BY_MODE[scanMode] || 240000;
-            const nmapResult = await runNmap({ target, scanMode, customPorts, timeout: nmapTimeout });
+            // Presupuesto del modo MÁS el de los scripts. Quien no activa NSE suma 0 y escanea
+            // exactamente con el mismo límite de siempre.
+            const nmapTimeout = (NMAP_TIMEOUT_BY_MODE[scanMode] || 240000) + (nseEnabled ? nseTimeout : 0);
+
+            /**
+             * Qué scripts pedirle a ESTE nmap.
+             *
+             * No se pasa la lista a ciegas: `nmap --script a,b,c` con un solo nombre que no
+             * existe aborta la ejecución entera y devuelve cero puertos. O sea que un nmap
+             * recortado —el `nmap-common` de Debian, sin la colección de scripts— convertiría
+             * activar esta opción en perder el escaneo completo. Se pregunta antes y se manda
+             * solo lo que hay.
+             *
+             * Y si no se puede ni preguntar, se escanea SIN scripts: el escaneo de puertos es la
+             * función principal y no se arriesga por una opcional. Lo que no se hace es callarlo:
+             * `nseAvailability.checked === false` llega al informe como omisión.
+             */
+            let nseScripts = [];
+            if (nseEnabled) {
+              node.status({ fill: "blue", shape: "dot", text: "Comprobando scripts..." });
+              const nmapPath = await commandExists("nmap");
+              if (nmapPath) {
+                nseAvailability = await scriptExists(nmapPath);
+                nseScripts = [...nseAvailability.available];
+                if (nseAvailability.missing.length) {
+                  node.warn(`[audit-network] scripts NSE no instalados: ${nseAvailability.missing.join(", ")}`);
+                }
+                node.log(`[audit-network] NSE: ${nseScripts.length} script(s) disponibles`);
+              } else {
+                nseAvailability = { checked: false, available: new Set(), missing: [],
+                                    reason: "no se encontró el comando nmap para preguntarle" };
+              }
+            }
+
+            node.status({ fill: "blue", shape: "dot", text: "Escaneando..." });
+            const nmapResult = await runNmap({ target, scanMode, customPorts, timeout: nmapTimeout, nseScripts });
             if (!nmapResult.skipped) {
               openPorts  = nmapResult.ports;
               portSource = "nmap";
@@ -175,7 +239,43 @@ module.exports = function (RED) {
           } catch (_) { /* detectar el firewall no puede tumbar la auditoría */ }
         }
 
-        const findings = normalizeNetwork(ports, "nmap", { firewall, targetIsLocal, target });
+        /**
+         * El veredicto sobre la fuente de CVE, y con él el resumen NSE de cada puerto.
+         *
+         * ORDEN OBLIGADO: primero el canario sobre TODOS los puertos, después el resumen de cada
+         * uno. El canario es una propiedad del escaneo entero —si un solo puerto recibió datos de
+         * vulners, la fuente respondió para todos—, así que resolverlo puerto a puerto daría
+         * "limpio" a unos y "sin comprobar" a otros dentro de la misma ejecución, según el orden
+         * del bucle.
+         */
+        if (nseEnabled) {
+          // `!skipScan` en el estado del canario: con el objetivo no alcanzable no se escaneó
+          // nada, y decir "no hacía falta comprobar la fuente" sobre cero puertos daría por
+          // resuelto lo que ni se intentó. El estado correcto ahí es 'not-run'.
+          nseCanary = runCanary(ports, { hasVersion, nseEnabled: !skipScan });
+          const canaryOk = canaryIsOk(nseCanary.state);
+          for (const p of ports) {
+            p.nseSummary = summarizePort(p, { canaryOk, states: scriptStates(p, nseAvailability) });
+          }
+          node.log(`[audit-network] canario de vulners: ${nseCanary.state}`);
+        }
+
+        const findings = normalizeNetwork(ports, "nmap", {
+          firewall, targetIsLocal, target,
+          // Solo viaja cuando el análisis se pidió. Sin esta clave el normalizador devuelve
+          // exactamente los hallazgos de siempre, sin una línea de más.
+          nse: nseEnabled
+            ? {
+                enabled: true,
+                availability: nseAvailability && {
+                  checked: nseAvailability.checked,
+                  missing: nseAvailability.missing,
+                  reason:  nseAvailability.reason || null,
+                },
+                canary: nseCanary,
+              }
+            : { enabled: false },
+        });
 
         // Sin nmap no hay forma de escanear, así que el resultado vacío no es "sin puertos
         // abiertos". El finding va delante para que el dashboard no pinte verde.
@@ -308,6 +408,36 @@ module.exports = function (RED) {
                 ? customPorts.trim()
                 : `1-1024 + catálogo (${Object.keys(PORT_CATALOG).length} puertos conocidos)`,
             customTarget: target !== "127.0.0.1" ? target : null,
+            /**
+             * El estado del análisis NSE, en estructurado.
+             *
+             * Duplica lo que ya dicen los hallazgos de omisión, y a propósito: son dos lectores
+             * distintos. Los hallazgos los lee una persona en el panel y en el informe; esto lo
+             * lee el dashboard para decidir si puede pintar verde, y el JSON exportado para que
+             * otra herramienta sepa qué cubrió esta ejecución. La regla del proyecto es que el
+             * estado de la comprobación viaje aparte del resultado de la comprobación.
+             *
+             * `available` sale como array ordenado y no como Set: un Set se serializa a {} y el
+             * campo llegaría vacío al informe sin que falle nada.
+             */
+            nse: {
+              enabled: nseEnabled,
+              // Qué se le llegó a pedir a nmap. Con la lista vacía y enabled=true, el escaneo se
+              // lanzó sin scripts: eso es un hueco, no un "sin hallazgos".
+              scriptsRequested: nseAvailability ? [...nseAvailability.available].sort() : [],
+              scriptsMissing:   nseAvailability ? nseAvailability.missing : [],
+              // false = ni siquiera se pudo preguntar qué hay instalado.
+              availabilityChecked: nseAvailability ? nseAvailability.checked : null,
+              availabilityReason:  (nseAvailability && nseAvailability.reason) || null,
+              // El estado de la fuente de CVE y su explicación para el informe. `probed` vale
+              // siempre false: LoCoAudit no consulta vulners.com por su cuenta, y poder afirmarlo
+              // vale más que dejarlo implícito.
+              canary: nseCanary
+                ? { state: nseCanary.state, probed: nseCanary.probed, detail: nseCanary.detail }
+                : null,
+              // Tiempo EXTRA concedido a los scripts, para poder explicar un timeout.
+              timeoutMs: nseEnabled ? nseTimeout : 0,
+            },
           },
           raw: { ports },
           timestamp: new Date().toISOString(),

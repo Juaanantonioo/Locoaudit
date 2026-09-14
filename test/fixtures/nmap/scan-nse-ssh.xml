@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///opt/homebrew/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.99 scan initiated Sun Sep 13 12:06:10 2026 as: nmap -sV -Pn -T4 -p 22 -&#45;host-timeout 100s -&#45;script vulners,ssl-cert,ssh2-enum-algos,banner -oX /private/tmp/claude-501/-Users-juanantonio-Desktop-TFG-Locoaudit/4189d41d-7c6d-4d6a-b76b-b5c821283ee3/scratchpad/p22.xml 127.0.0.1 -->
+<nmaprun scanner="nmap" args="nmap -sV -Pn -T4 -p 22 -&#45;host-timeout 100s -&#45;script vulners,ssl-cert,ssh2-enum-algos,banner -oX /private/tmp/claude-501/-Users-juanantonio-Desktop-TFG-Locoaudit/4189d41d-7c6d-4d6a-b76b-b5c821283ee3/scratchpad/p22.xml 127.0.0.1" start="1789293970" startstr="Sun Sep 13 12:06:10 2026" version="7.99" xmloutputversion="1.05">
+<scaninfo type="connect" protocol="tcp" numservices="1" services="22"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<host starttime="1789293971" endtime="1789293971"><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="127.0.0.1" addrtype="ipv4"/>
+<hostnames>
+<hostname name="localhost" type="PTR"/>
+</hostnames>
+<ports><port protocol="tcp" portid="22"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="ssh" product="OpenSSH" version="10.3" extrainfo="protocol 2.0" method="probed" conf="10"><cpe>cpe:/a:openbsd:openssh:10.3</cpe></service><script id="vulners" output="&#xa;  cpe:/a:openbsd:openssh:10.3: &#xa;    &#x9;CVE-2026-60002&#x9;9.4&#x9;https://vulners.com/cve/CVE-2026-60002&#xa;    &#x9;CVE-2026-60000&#x9;7.5&#x9;https://vulners.com/cve/CVE-2026-60000&#xa;    &#x9;CVE-2026-59999&#x9;7.5&#x9;https://vulners.com/cve/CVE-2026-59999&#xa;    &#x9;CVE-2026-60001&#x9;6.5&#x9;https://vulners.com/cve/CVE-2026-60001&#xa;    &#x9;CVE-2026-59998&#x9;6.5&#x9;https://vulners.com/cve/CVE-2026-59998&#xa;    &#x9;CVE-2026-59997&#x9;5.4&#x9;https://vulners.com/cve/CVE-2026-59997&#xa;    &#x9;CVE-2026-59996&#x9;5.4&#x9;https://vulners.com/cve/CVE-2026-59996&#xa;    &#x9;CVE-2026-59995&#x9;5.4&#x9;https://vulners.com/cve/CVE-2026-59995&#xa;    &#x9;CVE-2026-73282&#x9;4.8&#x9;https://vulners.com/cve/CVE-2026-73282&#xa;    &#x9;CVE-2026-73281&#x9;3.5&#x9;https://vulners.com/cve/CVE-2026-73281&#xa;    &#x9;CVE-2026-73283&#x9;2.5&#x9;https://vulners.com/cve/CVE-2026-73283"><table key="cpe:/a:openbsd:openssh:10.3">
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-60002</elem>
+<elem key="cvss">9.4</elem>
+<elem key="is_exploit">false</elem>
+</table>
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-60000</elem>
+<elem key="cvss">7.5</elem>
+<elem key="is_exploit">false</elem>
+</table>
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-59999</elem>
+<elem key="cvss">7.5</elem>
+<elem key="is_exploit">false</elem>
+</table>
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-60001</elem>
+<elem key="cvss">6.5</elem>
+<elem key="is_exploit">false</elem>
+</table>
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-59998</elem>
+<elem key="cvss">6.5</elem>
+<elem key="is_exploit">false</elem>
+</table>
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-59997</elem>
+<elem key="cvss">5.4</elem>
+<elem key="is_exploit">false</elem>
+</table>
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-59996</elem>
+<elem key="cvss">5.4</elem>
+<elem key="is_exploit">false</elem>
+</table>
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-59995</elem>
+<elem key="cvss">5.4</elem>
+<elem key="is_exploit">false</elem>
+</table>
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-73282</elem>
+<elem key="cvss">4.8</elem>
+<elem key="is_exploit">false</elem>
+</table>
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-73281</elem>
+<elem key="cvss">3.5</elem>
+<elem key="is_exploit">false</elem>
+</table>
+<table>
+<elem key="type">cve</elem>
+<elem key="id">CVE-2026-73283</elem>
+<elem key="cvss">2.5</elem>
+<elem key="is_exploit">false</elem>
+</table>
+</table>
+</script><script id="ssh2-enum-algos" output="&#xa;  kex_algorithms: (10)&#xa;      ecdh-sha2-nistp256&#xa;      mlkem768x25519-sha256&#xa;      sntrup761x25519-sha512&#xa;      sntrup761x25519-sha512@openssh.com&#xa;      curve25519-sha256&#xa;      curve25519-sha256@libssh.org&#xa;      ecdh-sha2-nistp384&#xa;      ecdh-sha2-nistp521&#xa;      ext-info-s&#xa;      kex-strict-s-v00@openssh.com&#xa;  server_host_key_algorithms: (4)&#xa;      rsa-sha2-512&#xa;      rsa-sha2-256&#xa;      ecdsa-sha2-nistp256&#xa;      ssh-ed25519&#xa;  encryption_algorithms: (6)&#xa;      aes128-gcm@openssh.com&#xa;      aes256-gcm@openssh.com&#xa;      chacha20-poly1305@openssh.com&#xa;      aes128-ctr&#xa;      aes192-ctr&#xa;      aes256-ctr&#xa;  mac_algorithms: (10)&#xa;      hmac-sha2-256-etm@openssh.com&#xa;      hmac-sha2-256&#xa;      umac-64-etm@openssh.com&#xa;      umac-128-etm@openssh.com&#xa;      hmac-sha2-512-etm@openssh.com&#xa;      hmac-sha1-etm@openssh.com&#xa;      umac-64@openssh.com&#xa;      umac-128@openssh.com&#xa;      hmac-sha2-512&#xa;      hmac-sha1&#xa;  compression_algorithms: (2)&#xa;      none&#xa;      zlib@openssh.com"><table key="kex_algorithms">
+<elem>ecdh-sha2-nistp256</elem>
+<elem>mlkem768x25519-sha256</elem>
+<elem>sntrup761x25519-sha512</elem>
+<elem>sntrup761x25519-sha512@openssh.com</elem>
+<elem>curve25519-sha256</elem>
+<elem>curve25519-sha256@libssh.org</elem>
+<elem>ecdh-sha2-nistp384</elem>
+<elem>ecdh-sha2-nistp521</elem>
+<elem>ext-info-s</elem>
+<elem>kex-strict-s-v00@openssh.com</elem>
+</table>
+<table key="server_host_key_algorithms">
+<elem>rsa-sha2-512</elem>
+<elem>rsa-sha2-256</elem>
+<elem>ecdsa-sha2-nistp256</elem>
+<elem>ssh-ed25519</elem>
+</table>
+<table key="encryption_algorithms">
+<elem>aes128-gcm@openssh.com</elem>
+<elem>aes256-gcm@openssh.com</elem>
+<elem>chacha20-poly1305@openssh.com</elem>
+<elem>aes128-ctr</elem>
+<elem>aes192-ctr</elem>
+<elem>aes256-ctr</elem>
+</table>
+<table key="mac_algorithms">
+<elem>hmac-sha2-256-etm@openssh.com</elem>
+<elem>hmac-sha2-256</elem>
+<elem>umac-64-etm@openssh.com</elem>
+<elem>umac-128-etm@openssh.com</elem>
+<elem>hmac-sha2-512-etm@openssh.com</elem>
+<elem>hmac-sha1-etm@openssh.com</elem>
+<elem>umac-64@openssh.com</elem>
+<elem>umac-128@openssh.com</elem>
+<elem>hmac-sha2-512</elem>
+<elem>hmac-sha1</elem>
+</table>
+<table key="compression_algorithms">
+<elem>none</elem>
+<elem>zlib@openssh.com</elem>
+</table>
+</script><script id="banner" output="SSH-2.0-OpenSSH_10.3"/></port>
+</ports>
+<times srtt="163" rttvar="5000" to="100000"/>
+</host>
+<runstats><finished time="1789293971" timestr="Sun Sep 13 12:06:11 2026" summary="Nmap done at Sun Sep 13 12:06:11 2026; 1 IP address (1 host up) scanned in 0.81 seconds" elapsed="0.81" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>
