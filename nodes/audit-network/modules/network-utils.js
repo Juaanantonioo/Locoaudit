@@ -52,104 +52,177 @@ function toBaseUrl(protocol, host, port) {
   return `${protocol}://${host}${showPort ? ":" + port : ""}`;
 }
 
-/** Fix por puerto conocido y plataforma; null si no hay uno específico. */
+/**
+ * Las entradas de FTP y telnet para macOS de lib/process-fix.js —fichero que no se edita desde
+ * aquí— tienen esta forma exacta: comando en la primera línea y explicación detrás del salto.
+ * Se traducen a "paso + $ comando + > nota" sin adivinar nada: el troceo es por \n, no por
+ * el aspecto del texto.
+ */
+function comandoYNota(texto) {
+  const [cmd, ...resto] = String(texto || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const out = ["Identifica el servicio real y deshabilítalo:", `$ ${cmd}`];
+  resto.forEach((l) => out.push(`> ${l}`));
+  return out.join("\n");
+}
+
+/**
+ * Fix por puerto conocido y plataforma; null si no hay uno específico.
+ *
+ * Gramática (la misma que el resto de los `fix`, y la que lee el dashboard):
+ *   "## " abre una rama excluyente · "$ " es el comando del paso anterior · "> " es una nota
+ *   que no se numera · el resto son pasos. Nunca "1)" ni "2)": el orden lo pone la lista.
+ *
+ * Los subtítulos llevan delante el servicio ("SSH: …") porque buildPortFix() concatena este
+ * texto DETRÁS de su propia pareja "Si no lo necesitas / Si lo necesitas": sin el prefijo se
+ * leerían como la misma rama repetida.
+ *
+ * LÍMITE CONOCIDO, no corregido aquí: para 80, 443, 3306, 5432, 6379 y 27017 solo win32 tiene
+ * rama propia, así que macOS recibe los comandos de Linux (systemctl, rutas de /etc). Estaba
+ * así antes de migrar los textos y arreglarlo es otro trabajo.
+ */
 function getFixForPort(port, platform) {
   const plat = platform || process.platform;
 
   switch (port) {
     case 22: // SSH
       if (plat === "win32") {
-        return "Desactiva el servicio OpenSSH en Servicios del sistema (services.msc → OpenSSH Server → Detener y deshabilitar).";
+        return "## SSH: si no necesitas el acceso remoto\n" +
+               "Desactiva el servicio OpenSSH en Servicios del sistema (services.msc → OpenSSH " +
+               "Server → Detener y deshabilitar).";
       }
       if (plat === "darwin") {
         return (
-          "Para deshabilitar: sudo systemsetup -setremotelogin off\n" +
-          "Para asegurar: edita /etc/ssh/sshd_config → PermitRootLogin no, PasswordAuthentication no.\n" +
-          "Luego reactiva con: sudo systemsetup -setremotelogin on"
+          "## SSH: si no necesitas el acceso remoto\n" +
+          "Desactiva la sesión remota:\n" +
+          "$ sudo systemsetup -setremotelogin off\n" +
+          "## SSH: si lo necesitas, asegúralo\n" +
+          "Edita /etc/ssh/sshd_config → PermitRootLogin no, PasswordAuthentication no.\n" +
+          "Vuelve a activar la sesión remota:\n" +
+          "$ sudo systemsetup -setremotelogin on"
         );
       }
       return (
-        "Para deshabilitar: " + systemdDisable("ssh") + "\n" +
-        "Para asegurar: edita /etc/ssh/sshd_config → PermitRootLogin no, PasswordAuthentication no.\n" +
-        "Luego: sudo systemctl restart ssh"
+        "## SSH: si no necesitas el acceso remoto\n" +
+        "Deshabilita el servicio:\n" +
+        "$ " + systemdDisable("ssh") + "\n" +
+        "## SSH: si lo necesitas, asegúralo\n" +
+        "Edita /etc/ssh/sshd_config → PermitRootLogin no, PasswordAuthentication no.\n" +
+        "Reinicia el servicio:\n" +
+        "$ sudo systemctl restart ssh"
       );
 
     case 21: // FTP
       if (plat === "win32") {
-        return "Desactiva el servicio FTP en Panel de control → Características de Windows → IIS → Servidor FTP.";
+        return "## FTP: si no lo necesitas\n" +
+               "Desactiva el servicio FTP en Panel de control → Características de Windows → " +
+               "IIS → Servidor FTP.";
       }
       if (plat === "darwin") {
         // macOS no trae servidor FTP, así que el label real se desconoce: ver process-fix.js.
-        return getFixForProcess("vsftpd", "darwin");
+        // Ese texto tiene el comando en la 1ª línea y la explicación detrás del salto.
+        return "## FTP: si no lo necesitas\n" + comandoYNota(getFixForProcess("vsftpd", "darwin"));
       }
-      return systemdDisable("vsftpd");
+      return "## FTP: si no lo necesitas\n" +
+             "Deshabilita el servicio:\n" +
+             "$ " + systemdDisable("vsftpd");
 
     case 23: // Telnet
       if (plat === "win32") {
-        return "Desactiva el cliente Telnet en Panel de control → Características de Windows → Cliente Telnet.";
+        return "## Telnet: si no lo necesitas\n" +
+               "Desactiva el cliente Telnet en Panel de control → Características de Windows → " +
+               "Cliente Telnet.";
       }
       if (plat === "darwin") {
-        return getFixForProcess("telnetd", "darwin");
+        return "## Telnet: si no lo necesitas\n" + comandoYNota(getFixForProcess("telnetd", "darwin"));
       }
-      return systemdDisable("telnet") + "\nSi no lo usas, desinstálalo: sudo apt remove telnetd";
+      return (
+        "## Telnet: si no lo necesitas\n" +
+        "Deshabilita el servicio:\n" +
+        "$ " + systemdDisable("telnet") + "\n" +
+        "Si no lo usas, desinstálalo:\n" +
+        "$ sudo apt remove telnetd"
+      );
 
     case 80:  // HTTP
     case 443: // HTTPS
       if (plat === "win32") {
         return (
-          "Si no necesitas servidor web: net stop w3svc\n" +
-          "Si lo necesitas: asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
+          "## Servidor web: si no lo necesitas\n" +
+          "Detén el servicio web de Windows:\n" +
+          "$ net stop w3svc\n" +
+          "## Servidor web: si lo necesitas\n" +
+          "Asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
         );
       }
       return (
-        "Si no necesitas servidor web: " + systemdDisable("nginx") + " (o apache2 en vez de nginx)\n" +
-        "Si lo necesitas: asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
+        "## Servidor web: si no lo necesitas\n" +
+        "Deshabilita el servidor web:\n" +
+        "$ " + systemdDisable("nginx") + "\n" +
+        "> Si el servidor es Apache, usa apache2 en vez de nginx en ese comando.\n" +
+        "## Servidor web: si lo necesitas\n" +
+        "Asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
       );
 
     case 3306: // MySQL
       if (plat === "win32") {
         return (
-          "Limita acceso: en my.ini añade bind-address = 127.0.0.1 bajo [mysqld].\n" +
-          "Luego reinicia el servicio MySQL desde services.msc."
+          "## MySQL: limita el acceso\n" +
+          "En my.ini añade bind-address = 127.0.0.1 bajo [mysqld].\n" +
+          "Reinicia el servicio MySQL desde services.msc."
         );
       }
       return (
-        "Limita acceso: edita /etc/mysql/mysql.conf.d/mysqld.cnf → bind-address = 127.0.0.1\n" +
-        "Luego: sudo systemctl restart mysql"
+        "## MySQL: limita el acceso\n" +
+        "Edita /etc/mysql/mysql.conf.d/mysqld.cnf → bind-address = 127.0.0.1\n" +
+        "Reinicia el servicio:\n" +
+        "$ sudo systemctl restart mysql"
       );
 
     case 5432: // PostgreSQL
       if (plat === "win32") {
         return (
-          "Limita acceso: edita postgresql.conf → listen_addresses = 'localhost'\n" +
-          "y pg_hba.conf para restringir IPs. Luego reinicia el servicio PostgreSQL desde services.msc."
+          "## PostgreSQL: limita el acceso\n" +
+          "Edita postgresql.conf → listen_addresses = 'localhost'\n" +
+          "Edita pg_hba.conf para restringir IPs.\n" +
+          "Reinicia el servicio PostgreSQL desde services.msc."
         );
       }
       return (
-        "Limita acceso: edita postgresql.conf → listen_addresses = 'localhost'\n" +
-        "y pg_hba.conf para restringir IPs. Luego: sudo systemctl restart postgresql"
+        "## PostgreSQL: limita el acceso\n" +
+        "Edita postgresql.conf → listen_addresses = 'localhost'\n" +
+        "Edita pg_hba.conf para restringir IPs.\n" +
+        "Reinicia el servicio:\n" +
+        "$ sudo systemctl restart postgresql"
       );
 
     case 6379: // Redis
       if (plat === "win32") {
         return (
+          "## Redis: limita el acceso\n" +
           "Edita redis.windows.conf → bind 127.0.0.1\n" +
-          "Añade requirepass con contraseña fuerte. Luego reinicia el servicio Redis desde services.msc."
+          "Añade requirepass con contraseña fuerte.\n" +
+          "Reinicia el servicio Redis desde services.msc."
         );
       }
       return (
+        "## Redis: limita el acceso\n" +
         "Edita /etc/redis/redis.conf → bind 127.0.0.1\n" +
-        "Añade requirepass con contraseña fuerte. Luego: sudo systemctl restart redis"
+        "Añade requirepass con contraseña fuerte.\n" +
+        "Reinicia el servicio:\n" +
+        "$ sudo systemctl restart redis"
       );
 
     case 27017: // MongoDB
       if (plat === "win32") {
         return (
+          "## MongoDB: limita el acceso\n" +
           "Edita mongod.cfg → bindIp: 127.0.0.1\n" +
-          "Habilita autenticación: security.authorization: enabled. Luego reinicia el servicio MongoDB."
+          "Habilita autenticación: security.authorization: enabled\n" +
+          "Reinicia el servicio MongoDB."
         );
       }
       return (
+        "## MongoDB: limita el acceso\n" +
         "Edita /etc/mongod.conf → bindIp: 127.0.0.1\n" +
         "Habilita autenticación: security.authorization: enabled"
       );

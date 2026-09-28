@@ -74,7 +74,11 @@ async function auditContainer(container, idx) {
       title:    `Contenedor ${name} ejecutándose como root`,
       severity: "high",
       evidence: `Usuario del contenedor: ${user === "" ? "(no definido — default root)" : user}`,
-      fix:      "Añadir USER <usuario> no root en el Dockerfile.",
+      // Gramática del fix, la misma que ya usan host y network: "## " abre rama,
+      // "$ " comando copiable, "> " nota, el resto es un paso.
+      fix:      "Crea un usuario sin privilegios en el Dockerfile y declara USER antes del CMD.\n" +
+                "Reconstruye la imagen y vuelve a arrancar el contenedor.\n" +
+                "> El usuario tiene que existir dentro de la imagen: un USER que no está creado hace fallar el arranque.",
       category: "image",
       source:   "native",
     }));
@@ -87,7 +91,15 @@ async function auditContainer(container, idx) {
       title:    `Variables de entorno sensibles en ${name}: ${sensitiveVars.join(", ")}`,
       severity: "high",
       evidence: `Variables con nombres sensibles detectadas: ${sensitiveVars.join(", ")}`,
-      fix:      "Usar Docker secrets o variables de entorno en tiempo de ejecución en lugar de valores en el Dockerfile o docker run -e.",
+      // Dos caminos EXCLUYENTES según lo que haya dentro de la variable: encadenarlos
+      // en una lista los hacía pasar por pasos consecutivos.
+      fix:      "## Si el valor es un secreto\n" +
+                "Móntalo con Docker secrets o con un gestor de secretos, y retíralo del Dockerfile.\n" +
+                "Rota el valor: el anterior ya está expuesto.\n" +
+                "## Si el valor es configuración no sensible\n" +
+                "Pásalo en tiempo de ejecución desde un fichero de entorno que no se versione.\n" +
+                "$ docker run --env-file .env <imagen>\n" +
+                "> Un valor puesto con ENV en el Dockerfile queda grabado en la capa: borrarlo después no lo quita del historial de la imagen.",
       category: "image",
       source:   "native",
     }));
@@ -97,8 +109,13 @@ async function auditContainer(container, idx) {
     // El binding se cambia al arrancar el contenedor, en `docker run` o en Compose, no con
     // comandos del host: por eso aquí no se anexa el fix de proceso.
     const portsFix =
-      "Limitar el binding a 127.0.0.1 si el servicio es solo local: " +
-      "-p 127.0.0.1:<puerto>:<puerto> en docker run, o el mapeo de puertos equivalente en Docker Compose.";
+      "## Si el servicio solo se usa desde el propio equipo\n" +
+      "Publica el puerto únicamente en el bucle local y vuelve a arrancar el contenedor.\n" +
+      "$ docker run -p 127.0.0.1:<puerto>:<puerto> <imagen>\n" +
+      "En Docker Compose, el mapeo equivalente: ports: [\"127.0.0.1:<puerto>:<puerto>\"].\n" +
+      "## Si tiene que ser accesible desde fuera\n" +
+      "Déjalo publicado y protege el acceso con un cortafuegos o un proxy inverso con autenticación.\n" +
+      "> El binding se fija al arrancar el contenedor: no hay comando que lo corrija sobre uno ya en marcha.";
     findings.push(createFinding({
       id:       findingId("IMG-CFG-003", idx),
       title:    `Contenedor ${name} expone puertos en todas las interfaces`,
@@ -121,7 +138,9 @@ async function auditContainer(container, idx) {
       title:    `Contenedor ${name} monta el socket de Docker`,
       severity: "medium",
       evidence: `Bind mounts: ${binds.join(", ")}`,
-      fix:      "Evitar montar docker.sock salvo en herramientas de CI/CD controladas. Equivale a dar privilegios de root en el host.",
+      fix:      "Quita el montaje de /var/run/docker.sock del docker run o del Compose y vuelve a arrancar el contenedor.\n" +
+                "Si el contenedor necesita hablar con Docker, ponle delante un proxy de socket que limite la API a lo imprescindible.\n" +
+                "> Montar el socket equivale a dar privilegios de root en el host: quien controle el contenedor controla el demonio.",
       category: "image",
       source:   "native",
     }));

@@ -317,14 +317,17 @@ module.exports = function (RED) {
                         : "Se ha escaneado de todas formas porque está activada la opción " +
                           "\"Escanear aunque el equipo no responda\", pero el resultado puede " +
                           "estar incompleto."),
-            fix:      "1. Comprueba que el equipo está encendido y conectado a la red.\n" +
-                      `2. Verifica que la dirección IP es correcta: ${target}\n` +
-                      "3. Si usas VPN, confirma que el túnel está activo y enruta esa subred.\n" +
-                      `4. Prueba a contactarlo desde una terminal: ping ${target}\n` +
+            // Sin "1." … "5.": la numeración la pone la lista del dashboard, y escribirla
+            // aquí producía dos numeraciones superpuestas. El ping va en su línea "$ ".
+            fix:      "Comprueba que el equipo está encendido y conectado a la red.\n" +
+                      `Verifica que la dirección IP es correcta: ${target}\n` +
+                      "Si usas VPN, confirma que el túnel está activo y enruta esa subred.\n" +
+                      "Prueba a contactarlo desde una terminal:\n" +
+                      `$ ping ${target}\n` +
                       (skipScan
-                        ? "5. Si sabes que está encendido y solo filtra el descubrimiento, activa " +
+                        ? "Si sabes que está encendido y solo filtra el descubrimiento, activa " +
                           "\"Escanear aunque el equipo no responda\" en el nodo audit-network."
-                        : "5. Si el equipo está encendido, revisa su cortafuegos: está filtrando " +
+                        : "Si el equipo está encendido, revisa su cortafuegos: está filtrando " +
                           "tanto el descubrimiento como el escaneo."),
             category: "network",
             source:   "nmap",

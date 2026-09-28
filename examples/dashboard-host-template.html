@@ -725,7 +725,7 @@
                     <!-- La evidencia no depende del fix: un hallazgo informativo sin pasos que dar
                          sigue teniendo algo que contar, y colgarla del mismo v-if la escondía. -->
                     <div class="detail-col" v-if="f.evidence">
-                      <div class="detail-col-title">Impacto (Evidencia)</div>
+                      <div class="detail-col-title">Evidencia</div>
                       <pre class="detail-evidence">{{ fmtEvidence(f.evidence) }}</pre>
 
                       <!-- Tira de metadatos: datos estructurados de Trivy (findings CVE) -->
@@ -799,26 +799,40 @@
                       </div>
                     </div>
                     <div class="detail-col" v-if="f.fix">
-                      <div class="detail-col-title">Pasos de Resolución</div>
-                      <div class="fix-steps" v-if="!f.isCommand">
-                        <div class="fix-step" v-for="(st, si) in parseFixStepsRich(f.fix)" :key="si">
-                          <span class="fix-num">{{ si + 1 }}</span>
-                          <template v-if="st.cmd">
-                            <span class="fix-step-body">
-                              <span v-if="st.label" class="fix-step-label">{{ st.label }}</span>
-                              <span class="command-box command-inline">
-                                <code class="command-text">{{ st.cmd }}</code>
-                                <button @click.stop="copyCommand(st.cmd)"
-                                        :class="{ copied: copiedKey === st.cmd }"
-                                        class="command-btn">
-                                  <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg>{{ copiedKey === st.cmd ? ' Copiado' : 'Copiar' }}
-                                </button>
-                              </span>
-                            </span>
-                          </template>
-                          <template v-else>{{ st.text }}</template>
+                      <div class="detail-col-title">Resolución</div>
+                      <!-- Una rama por alternativa ("si no lo necesitas" / "si lo necesitas"):
+                           son caminos EXCLUYENTES, y encadenarlos en una sola lista los hacía
+                           pasar por pasos consecutivos. Dentro de cada rama sí hay orden, y por
+                           eso es un <ol>: el número lo pone el navegador, no un <span>. -->
+                      <template v-if="!f.isCommand">
+                        <!-- Un solo parseo por ficha: el v-for sobre un array de un
+                             elemento evita repetir la llamada en cada bloque. -->
+                        <div class="fix-plan" v-for="(fx, xi) in [parseFixSteps(f.fix)]" :key="xi">
+                          <!-- Lo anterior a la primera rama describe el servicio: va sin
+                               numerar, porque no es un paso que nadie tenga que dar. -->
+                          <p v-for="(ln, ii) in fx.intro" :key="'i' + ii" class="fix-intro">{{ ln }}</p>
+                          <p v-for="(nt, ni) in fx.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
+                          <div class="fix-branch" v-for="(br, bi) in fx.branches" :key="bi">
+                            <div v-if="br.heading" class="fix-branch-title">{{ br.heading }}</div>
+                            <ol class="fix-steps" v-if="br.steps.length"
+                                :class="{ 'fix-steps-single': br.steps.length === 1 && !br.heading }">
+                              <li class="fix-step" v-for="(st, si) in br.steps" :key="si">
+                                <span v-if="st.label" class="fix-step-label">{{ st.label }}</span>
+                                <!-- El comando va DENTRO del paso que lo usa, no como paso aparte. -->
+                                <span v-if="st.cmd" class="command-box command-inline">
+                                  <code class="command-text">{{ st.cmd }}</code>
+                                  <button @click.stop="copyCommand(st.cmd)"
+                                          :class="{ copied: copiedKey === st.cmd }"
+                                          class="command-btn">
+                                    <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg>{{ copiedKey === st.cmd ? ' Copiado' : 'Copiar' }}
+                                  </button>
+                                </span>
+                              </li>
+                            </ol>
+                            <p v-for="(nt, ni) in br.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
+                          </div>
                         </div>
-                      </div>
+                      </template>
                       <p v-if="f.isCommand" class="cmd-intro">
                         Comando sugerido<span class="cmd-origin">{{ originLabel(f.source) }}</span>:
                       </p>
@@ -831,13 +845,12 @@
                         </button>
                       </div>
                       <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
-                      <div v-if="fixHasCmd(f)" class="cmd-warn">
-                        <strong>LoCoAudit no ejecuta este comando por ti.</strong>
-                        Cópialo y ejecútalo en tu terminal después de revisarlo.
-                      </div>
-                      <div v-if="/(^|\s)sudo(\s|$)/.test(f.fix || '')" class="cmd-sudo">
+                      <!-- UNA nota por ficha, neutra. Antes eran dos cajas ámbar —"no lo
+                           ejecuto" y "pide sudo"— que pintaban de aviso lo que solo es cómo
+                           funciona la herramienta. El ámbar queda para la severidad Media. -->
+                      <div v-if="fixHasCmd(f)" class="cmd-note cmd-note-safety">
                         <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
-                        Requiere privilegios de administrador: pedirá tu contraseña de usuario. Revísalo bien antes de ejecutarlo.
+                        <span>LoCoAudit no ejecuta estos comandos: cópialos y revísalos antes de ejecutarlos.<template v-if="fixNeedsSudo(f)"> Requieren privilegios de administrador.</template></span>
                       </div>
                     </div>
                   </div>
@@ -1762,13 +1775,16 @@ export default {
     // Origen HONESTO del comando: lo genera LoCoAudit; si el hallazgo vino de una
     // herramienta, se indica a partir de qué análisis (Trivy/Lynis/Nmap).
     originLabel(source) {
+      // Sin el "· " delante: el separador es cosa de quien compone la línea, no del dato.
+      // Esta etiqueta también se pinta sola en la celda "Fuente" de la tira de metadatos,
+      // donde el punto quedaba huérfano.
       var M = {
-        trivy: '· a partir del análisis de Trivy',
-        lynis: '· a partir de Lynis',
-        nmap:  '· a partir de la detección de Nmap',
-        native: '· recomendación de LoCoAudit',
+        trivy: 'a partir del análisis de Trivy',
+        lynis: 'a partir de Lynis',
+        nmap:  'a partir de la detección de Nmap',
+        native: 'recomendación de LoCoAudit',
       };
-      return M[source] || '· recomendación de LoCoAudit';
+      return M[source] || 'recomendación de LoCoAudit';
     },
 
     // ── Descarga de reporte (HTML imprimible + JSON) ──────────────────────────
@@ -1926,35 +1942,69 @@ export default {
         '</body></html>';
     },
 
+    // Gramática de `fix`. Se lee LÍNEA a línea y los marcadores los pone el ORIGEN
+    // (lib/normalizer.js), nunca se deducen aquí:
+    //
+    //   "## "  abre una rama alternativa; el resto de la línea es su subtítulo.
+    //   "$ "   comando del ÚLTIMO paso de la rama abierta. No genera paso propio:
+    //          el comando pertenece al paso que lo usa.
+    //   "> "   nota: párrafo neutro que se pinta TRAS la lista de su rama (o tras el
+    //          bloque introductorio). Nunca se numera, porque no es algo que hacer.
+    //   resto  paso nuevo de la rama abierta.
+    //
+    // Regla de intro: si el texto trae al menos una "## ", las líneas anteriores a la
+    // primera forman un párrafo introductorio SIN numerar —describen el servicio, no
+    // piden nada—. Sin ninguna "## ", todo son pasos, como hasta ahora.
+    //
+    // Devuelve { intro: [], notes: [], branches: [{ heading, steps: [{label, cmd}], notes: [] }] }.
+    // Un fix sin marcadores da una sola rama sin subtítulo y un paso por línea, que es
+    // como sigue viéndose todo lo que no se ha migrado.
+    //
+    // Lo que había antes y NO vuelve: trocear por ". " un fix de una sola línea
+    // —convertía cualquier párrafo en una secuencia numerada que nadie había escrito—
+    // y adivinar comandos con una lista de verbos. Medido sobre los 63 fix reales de
+    // Lynis, los de Trivy y los de eventos de Windows: cero aciertos de esa heurística.
     parseFixSteps(fix) {
-      if (!fix) return [];
-      if (fix.indexOf('\n') >= 0) {
-        return fix.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      var res = { intro: [], notes: [], branches: [] };
+      if (!fix) return res;
+      var lineas = String(fix).split('\n')
+        .map(function (l) { return l.trim(); })
+        .filter(function (l) { return l; });
+      var hayRamas = lineas.some(function (l) { return l.indexOf('## ') === 0; });
+      var actual = null;
+      function abrir(heading) {
+        actual = { heading: heading, steps: [], notes: [] };
+        res.branches.push(actual);
       }
-      if (fix.indexOf('. ') >= 0) {
-        var parts = fix.split('. ').map(function(s) { return s.trim(); }).filter(Boolean);
-        return parts.map(function(s, i) { return i < parts.length - 1 ? s + '.' : s; });
-      }
-      return [fix];
+      lineas.forEach(function (s) {
+        if (s.indexOf('## ') === 0) { abrir(s.slice(3).trim()); return; }
+        if (s.indexOf('> ') === 0) {
+          var nota = s.slice(2).trim();
+          // Antes de la primera rama la nota cuelga del bloque introductorio.
+          if (nota) (actual ? actual.notes : res.notes).push(nota);
+          return;
+        }
+        if (s.indexOf('$ ') === 0) {
+          var cmd = s.slice(2).trim();
+          if (!cmd) return;
+          if (!actual) abrir(null);
+          var ultimo = actual.steps[actual.steps.length - 1];
+          // Comando sin paso al que colgarse (o con el paso ya ocupado): sale igual, con
+          // la etiqueta vacía. Es un fix mal formado en el origen, no un motivo para perderlo.
+          if (!ultimo || ultimo.cmd) actual.steps.push({ label: '', cmd: cmd });
+          else ultimo.cmd = cmd;
+          return;
+        }
+        if (hayRamas && !actual) { res.intro.push(s); return; }
+        if (!actual) abrir(null);
+        actual.steps.push({ label: s, cmd: null });
+      });
+      res.branches = res.branches.filter(function (r) {
+        return r.heading || r.steps.length || r.notes.length;
+      });
+      return res;
     },
 
-    // Detecta si un paso de resolución es (o contiene) un comando ejecutable.
-    // Soporta dos formas: la línea entera es comando, o "Etiqueta: comando".
-    // Devuelve { label, cmd } o null. Mismo criterio que finding-schema::_isCmd
-    // más los verbos que aparecen embebidos en prosa (ufw/netstat/apachectl…).
-    stepCmd(step) {
-      var s = (step || '').trim();
-      var CMD = /^(sudo|brew|npm|yarn|pip|composer|go|apt|dnf|yum|winget|choco|lsof|nslookup|kill|systemctl|launchctl|bundle|cargo|rabbitmqctl|jupyter|auditpol|nginx|netsh|net\s+stop|netstat|ufw|apachectl|systemsetup)\b/i;
-      if (CMD.test(s)) return { label: '', cmd: s };
-      var idx = s.indexOf(': ');
-      if (idx >= 0) {
-        var after = s.slice(idx + 2).trim();
-        if (CMD.test(after)) return { label: s.slice(0, idx + 1), cmd: after };
-      }
-      return null;
-    },
-
-    // Pasos enriquecidos: cada paso es { label, cmd } (comando copiable) o { text }.
     // El fix puede traer el comando en la 1ª línea y una nota explicativa debajo.
     // El botón copia SOLO el comando (finding.command); la nota se muestra aparte,
     // para que un pegado en terminal nunca arrastre texto no ejecutable.
@@ -1962,20 +2012,26 @@ export default {
       if (!f || !f.command || !f.fix) return "";
       return String(f.fix).split("\n").slice(1).join("\n").trim();
     },
+    // Todos los comandos de la ficha: el directo (findings con `command`) y los que
+    // los pasos marcan con "$ ". Una sola fuente para la nota y para el aviso de sudo.
+    fixCommands(f) {
+      if (!f || !f.fix) return [];
+      var cmds = f.command ? [String(f.command)] : [];
+      try {
+        this.parseFixSteps(f.fix).branches.forEach(function (r) {
+          r.steps.forEach(function (st) { if (st.cmd) cmds.push(st.cmd); });
+        });
+      } catch (e) { /* fix ilegible: queda el comando directo, si lo hay */ }
+      return cmds;
+    },
     // ¿El paso de resolución contiene algún comando (directo o dentro de un paso)?
     fixHasCmd(f) {
-      if (!f || !f.fix) return false;
-      if (f.command) return true;
-      try { return this.parseFixStepsRich(f.fix).some(function (s) { return !!s.cmd; }); }
-      catch (e) { return false; }
+      return this.fixCommands(f).length > 0;
     },
-    parseFixStepsRich(fix) {
-      var self = this;
-      return this.parseFixSteps(fix).map(function(step) {
-        var c = self.stepCmd(step);
-        return c ? { label: c.label, cmd: c.cmd, text: null }
-                 : { label: null, cmd: null, text: step };
-      });
+    // ¿Alguno PIDE privilegios? Se mira el comando, no la prosa: el fix que solo
+    // menciona sudo de pasada no debe disparar el aviso.
+    fixNeedsSudo(f) {
+      return this.fixCommands(f).some(function (c) { return /^sudo(\s|$)/.test(String(c).trim()); });
     },
 
     sevClass(sev) {
@@ -2562,7 +2618,10 @@ export default {
     position: relative;
   }
   .sev-cell:first-child { border-left: none; }
-  .sev-cell:hover { background: var(--surface); }
+  /* --bg y no --surface: sobre #F1F5F9 el .sev-cell-sub da 4,34:1 y el label/num de
+     un Medio 4,49:1; sobre #F8FAFC, 4,55:1 y 4,71:1. Estados latentes —solo se ven al
+     pasar el ratón o al filtrar—, que ninguna auditoría llegó a medir. */
+  .sev-cell:hover { background: var(--bg); }
   .sev-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .sev-cell-label {
     font-size: 11.5px;
@@ -2609,7 +2668,7 @@ export default {
     height: 3px;
     background: var(--accent);
   }
-  .sev-cell.active { background: var(--surface); }
+  .sev-cell.active { background: var(--bg); }
 
   /* ═══ AVISOS ═══════════════════════════════════════════════════════════════
      UN solo componente en tres niveles. Antes había tres anatomías distintas
@@ -3105,6 +3164,7 @@ export default {
 
   .finding-title {
     font-size: 13px;
+    font-weight: 500;
     color: var(--text);
     flex: 1;
     min-width: 0;
@@ -3128,20 +3188,23 @@ export default {
   .finding-detail.open { display: block; }
   @keyframes slideDown { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
-  /* Detalle común: impacto arriba y resolución debajo, igual que el patrón claro
-     del dashboard de imagen. NO renombrar .detail-stack: el export conserva esta
+  /* Detalle común: UN panel plano con secciones, no dos tarjetas apiladas dentro de
+     otra tarjeta. Tres bordes concéntricos para decir "aquí hay dos bloques" cuando
+     basta una línea entre ellos. NO renombrar .detail-stack: el export conserva esta
      anatomía dentro de .finding-detail. */
   .detail-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
   }
 
-  .detail-col {
-    background: var(--card);
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    padding: 14px;
+  /* Sin caja propia: la sección se delimita por su título y, a partir de la segunda,
+     por una línea discontinua. */
+  .detail-col + .detail-col {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
   }
   .detail-col-title {
     font-size: 11px;
@@ -3151,9 +3214,13 @@ export default {
     color: var(--text-secondary);
     margin-bottom: 8px;
   }
+  /* Sans, no mono: la evidencia es una frase, no un valor técnico. La mono se queda
+     donde hay algo que comparar carácter a carácter (.meta-value.meta-mono) y en los
+     comandos (.command-text). */
   .detail-evidence {
-    font-size: 12px;
-    font-family: var(--font-mono);
+    /* Es un <pre>: sin `inherit` explícito se cae a la monoespaciada del navegador. */
+    font-family: inherit;
+    font-size: 13px;
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--border);
@@ -3206,25 +3273,46 @@ export default {
   .meta-link:hover { text-decoration: underline; }
 
   /* ── Pasos de resolución ── */
-  .fix-steps { display: flex; flex-direction: column; gap: 8px; }
-  .fix-step  { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--text); line-height: 1.5; }
-  .fix-num {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--text);
-    color: #fff;
+  /* Rama = alternativa excluyente. Su subtítulo es el mismo gris que .detail-col-title,
+     sin mayúsculas: está un nivel por debajo. */
+  .fix-branch + .fix-branch { margin-top: 14px; }
+  .fix-branch-title {
     font-size: 11px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    margin-top: 1px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
   }
-  .fix-step-body   { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .fix-steps {
+    list-style: decimal;
+    /* El número lo pone el navegador. Tabular para que la coma quede alineada al pasar
+       de 9 a 10, y en gris para que no compita con el texto del paso. */
+    padding-left: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+  .fix-steps::marker, .fix-step::marker { color: var(--text-secondary); }
+  /* Un párrafo suelto no es una secuencia: sin marcador y sin sangría. */
+  .fix-steps-single { list-style: none; padding-left: 0; }
+  .fix-step {
+    font-size: 12.5px;
+    color: var(--text);
+    line-height: 1.5;
+    padding-left: 2px;
+  }
+  .fix-step + .fix-step { margin-top: 8px; }
   .fix-step-label  { color: var(--text); }
-  .command-inline  { margin-top: 0; }
+  .command-inline  { margin-top: 6px; }
+  /* Contexto, no acción: ni marcador ni sangría. La intro va antes de las ramas; la
+     nota, detrás de la lista a la que pertenece. Gris secundario para que ninguna de
+     las dos se lea como un paso pendiente. */
+  .fix-intro { font-size: 12.5px; line-height: 1.5; color: var(--text); }
+  .fix-intro + .fix-intro { margin-top: 6px; }
+  .fix-intro + .fix-branch, .fix-note-line + .fix-branch { margin-top: 12px; }
+  .fix-note-line {
+    margin-top: 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
 
   /* Sin pasos de resolución: informa de qué falta, sin fingir un veredicto. */
   .nofix-note {
@@ -3278,21 +3366,17 @@ export default {
     margin-top: 6px; font-size: 12px; line-height: 1.55; color: var(--text-secondary);
     white-space: pre-wrap;
   }
-  .cmd-warn {
-    margin-top: 8px; font-size: 12px; line-height: 1.55; color: var(--text);
-    background: var(--medium-bg); border: 1px solid var(--medium-border);
-    border-left: 3px solid var(--medium);
-    border-radius: var(--radius-sm); padding: 9px 11px;
-  }
-  .cmd-sudo {
+  /* Cómo funciona la herramienta, no un riesgo del hallazgo: neutra. Las dos cajas
+     ámbar que había aquí (.cmd-warn y .cmd-sudo) competían en color con un Medio real.
+     Fondo --bg y no --surface: el secundario sobre #F1F5F9 da 4,34:1 y sobre #F8FAFC
+     4,55:1. Medido, no deducido del nombre del token. */
+  .cmd-note-safety {
     display: flex; align-items: flex-start; gap: 7px;
-    margin-top: 8px; font-size: 12px; line-height: 1.55; color: #92400E;
-    /* Un ámbar más saturado que .cmd-warn: pide la contraseña del usuario. */
-    background: #FEF3C7; border: 1px solid #FCD34D;
-    border-left: 3px solid #D97706;
+    background: var(--bg); color: var(--text-secondary);
     border-radius: var(--radius-sm); padding: 9px 11px;
+    white-space: normal;
   }
-  .cmd-sudo .icon { margin-top: 2px; }
+  .cmd-note-safety .icon { flex-shrink: 0; margin-top: 2px; }
 
   /* ── Logs del sistema: tabla de eventos ── */
   .seclog { padding: 12px 18px 16px; border-top: 1px dashed var(--border); }
@@ -3308,8 +3392,11 @@ export default {
   .seclog-empty { font-size: 12.5px; font-style: italic; color: var(--text-secondary); }
   .seclog-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
   .seclog-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  /* Mismo motivo que en .cmd-note-safety: el secundario sobre --surface da 4,34:1.
+     Esta cabecera solo se pinta cuando hay eventos de seguridad, que macOS no aporta,
+     así que la medición sobre la auditoría real de esta máquina no la veía. */
   .seclog-table th {
-    background: var(--surface);
+    background: var(--bg);
     color: var(--text-secondary);
     text-align: left;
     padding: 6px 10px;
@@ -3422,9 +3509,11 @@ export default {
   }
   /* Gris, NO rojo. Que el asistente opcional no conteste no es un hallazgo de
      seguridad, y pintarlo con el color de "crítico" ponía una alarma donde solo
-     hay un servicio caído. */
+     hay un servicio caído. Fondo --bg y no --surface por contraste (4,34:1 frente a
+     4,55:1); la burbuja solo aparece si el asistente no contesta, y ninguna medición
+     sobre datos reales llegó a pintarla. */
   .chat-bubble.chat-error {
-    background: var(--surface);
+    background: var(--bg);
     color: var(--text-secondary);
     border: 1px solid var(--border);
     font-style: italic;

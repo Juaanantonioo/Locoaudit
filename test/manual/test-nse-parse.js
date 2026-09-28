@@ -481,11 +481,21 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
      "y su severidad es la del peor CVE (9.4), no la media de los once", vulns[0].severity);
   ok(vulns[0].id === "NET-VULN-001" && vulns[0].category === "network" && vulns[0].source === "nmap",
      "con id, categoría y fuente del esquema canónico");
-  ok(/CVE-2026-60002 \(9\.4\)/.test(vulns[0].evidence),
-     "el peor CVE va primero y con su nota");
-  ok((vulns[0].evidence.match(/CVE-\d{4}-\d+/g) || []).length === 11,
-     "y los ONCE están listados: recortar a los peores fue el bug que ya hubo que deshacer en Trivy",
-     String((vulns[0].evidence.match(/CVE-\d{4}-\d+/g) || []).length));
+  // La evidencia ya NO vuelca los CVE uno a uno: los pinta la tabla del hallazgo desde
+  // `vulnerabilities`, y repetirlos obligaba a leer la misma lista dos veces. Lo que la
+  // frase sigue teniendo que decir: cuántos son, cuánto puntúa el peor, y que de cada
+  // uno no hay descripción —sin esa última frase, una tabla de identificadores sin
+  // texto se lee como un dato que falta por cargar—.
+  ok(/vulners\.com devuelve 11 CVE para la versión anunciada/.test(vulns[0].evidence),
+     "la evidencia dice cuántos CVE son y quién los devuelve");
+  ok(/el más grave puntúa 9\.4/.test(vulns[0].evidence),
+     "y cuánto puntúa el peor");
+  ok(/vulners no aporta una descripción por CVE/.test(vulns[0].evidence),
+     "y que vulners no describe cada CVE: de cada uno solo hay id, nota y si tiene exploit");
+  ok(vulns[0].vulnerabilities.length === 11 &&
+     vulns[0].vulnerabilities.every((v) => /^CVE-\d{4}-\d+$/.test(v.id)),
+     "y los ONCE viajan enteros en la lista: recortar a los peores fue el bug que ya hubo que deshacer en Trivy",
+     String(vulns[0].vulnerabilities.length));
 
   // Criterio de aceptación 1: el crítico NUNCA viaja sin las cuatro advertencias.
   for (const [frase, re] of [

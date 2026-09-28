@@ -267,187 +267,247 @@
           </div>
         </div>
 
-        <!-- 3 · VULNERABILIDADES POR PUERTO -->
-        <section v-if="vulnerabilityGroups.length > 0">
-          <div class="section-title">Vulnerabilidades por puerto</div>
-          <div class="vulnerability-groups">
-            <article v-for="group in vulnerabilityGroups" :key="group.key" class="vulnerability-group">
-              <header class="vulnerability-group-header" @click="toggleVulnerabilityGroup(group.key)">
-                <div class="vulnerability-group-port">
-                  <span class="vulnerability-group-label">Puerto</span>
-                  <code>{{ group.port }}/{{ group.protocol }}</code>
-                </div>
-                <span class="vulnerability-group-service">{{ group.service || 'Servicio desconocido' }}</span>
-                <span class="badge" :class="group.maxSeverity">{{ sevLabel(group.maxSeverity) }}</span>
-                <span class="vulnerability-group-count">{{ group.vulnerabilityCount }} CVE{{ group.vulnerabilityCount === 1 ? '' : 's' }}</span>
-                <svg class="icon icon-sm vulnerability-group-chevron" :class="{ open: isVulnerabilityGroupOpen(group.key) }"><use href="#lca-i-chevron"></use></svg>
-              </header>
-              <div class="vulnerability-group-body" v-show="isVulnerabilityGroupOpen(group.key)">
-                <div v-for="finding in group.findings" :key="finding.id" class="vulnerability-finding">
-                  <div class="vulnerability-finding-title">{{ finding.title }}</div>
-                  <div class="vulnerability-list">
-                    <article v-for="v in finding.vulnerabilities" :key="v.id" class="vulnerability-card">
-                      <code class="vulnerability-id">{{ v.id }}</code>
-                      <span class="vulnerability-card-score">CVSS <strong>{{ v.cvss != null ? Number(v.cvss).toFixed(1) : 'sin nota' }}</strong></span>
-                      <span class="badge" :class="v.severity">{{ sevLabel(v.severity) }}</span>
-                      <a v-if="v.url" class="vulnerability-advisory" :href="v.url" target="_blank" rel="noopener">
-                        {{ v.label || 'Advisory' }} <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg>
-                      </a>
-                      <span v-else class="vulnerability-advisory is-unavailable">Fuente no disponible</span>
-                    </article>
-                  </div>
-                  <div v-if="finding.provenance" class="vulnerability-provenance"><strong>Procedencia</strong> {{ finding.provenance }}</div>
-                  <div class="vulnerability-resolution" v-if="finding.fix">
-                    <div class="detail-col-title">Pasos de resolución</div>
-                    <p>{{ finding.fix }}</p>
-                  </div>
-                </div>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <!-- 4 · HALLAZGOS SIN LISTA DE CVE -->
-        <section v-if="ungroupedFindings.length > 0">
+        <!-- 3 · HALLAZGOS, AGRUPADOS POR PUERTO -->
+        <!-- UNA lista. Antes había dos —"Vulnerabilidades por puerto" con anatomía
+             propia y "Hallazgos" con otra—, y el mismo puerto aparecía en las dos sin
+             que nada dijera que era el mismo. El grupo agrupa; NO fusiona: un NET-VULN
+             y el NET-PORT de su puerto siguen siendo dos fichas con su severidad. -->
+        <section v-if="findingGroups.length > 0">
           <div class="section-title">Hallazgos</div>
           <div class="findings-list">
-            <div class="finding-item" v-for="(f, fi) in ungroupedFindings" :key="'f-'+fi">
-              <div class="finding-header" @click="toggleFinding('f-' + fi)">
-                <div class="finding-badges">
-                  <span class="badge" :class="(f.severity || 'info').toLowerCase()">{{ sevLabel(f.severity) }}</span>
-                  <span class="badge cat" v-if="f.category">{{ f.category }}</span>
+            <template v-for="g in findingGroups" :key="g.key">
+              <!-- NO renombrar .group-header ni .group-body: el informe exportado los
+                   busca por subcadena y el cuerpo tiene que seguir siendo el hermano
+                   siguiente de la cabecera. El envoltorio .findings-group los deja
+                   hermanos: la tarjeta la pone él, igual que en host. -->
+              <div class="findings-group">
+                <div class="group-header" @click="toggleGroup(g.key)">
+                  <code v-if="g.port != null" class="group-port">{{ g.port }}/{{ g.protocol }}</code>
+                  <span v-else class="group-port group-port-general">General</span>
+                  <span class="group-service">{{ g.port == null ? 'Estado del escaneo' : (g.service || 'servicio no identificado') }}</span>
+                  <code v-if="g.version" class="group-version">{{ g.version }}</code>
+                  <span class="group-sevs">
+                    <span v-if="g.sev.critical" class="gsev critical">{{ g.sev.critical }}</span>
+                    <span v-if="g.sev.high"     class="gsev high">{{ g.sev.high }}</span>
+                    <span v-if="g.sev.medium"   class="gsev medium">{{ g.sev.medium }}</span>
+                    <span v-if="g.sev.low"      class="gsev low">{{ g.sev.low }}</span>
+                    <span v-if="g.sev.info"     class="gsev info">{{ g.sev.info }}</span>
+                  </span>
+                  <svg class="icon icon-sm group-chevron" :class="{ open: isGroupOpen(g.key) }"><use href="#lca-i-chevron"></use></svg>
                 </div>
-                <div class="finding-title">{{ f.title }}</div>
-                <svg class="icon icon-sm finding-chevron" :class="{ open: openFindings['f-' + fi] }"><use href="#lca-i-chevron"></use></svg>
-              </div>
-              <div class="finding-body" :class="{ open: openFindings['f-' + fi] }">
-                <div class="detail-grid" v-if="f.evidence || f.fix">
-                  <!-- La evidencia no depende del fix: un hallazgo informativo sin pasos que dar
-                       sigue teniendo algo que contar, y colgarla del mismo v-if la escondía. -->
-                  <div class="detail-col" v-if="f.evidence">
-                    <div class="detail-col-title">Impacto (Evidencia)</div>
-                    <pre class="detail-evidence">{{ f.evidence }}</pre>
-                  </div>
-                  <div class="detail-col" v-if="f.fix">
-                    <div class="detail-col-title">Pasos de Resolución</div>
-                    <div class="fix-steps" v-if="!f.isCommand">
-                      <div class="fix-step" v-for="(st, si) in parseFixStepsRich(f.fix)" :key="si">
-                        <span class="fix-num">{{ si + 1 }}</span>
-                        <template v-if="st.cmd">
-                          <span class="fix-step-body">
-                            <span v-if="st.label" class="fix-step-label">{{ st.label }}</span>
-                            <span class="command-box command-inline">
-                              <code class="command-text">{{ st.cmd }}</code>
-                              <button @click.stop="copyCommand(st.cmd)"
-                                      :class="{ copied: copiedKey === st.cmd }"
-                                      class="command-btn">
-                                <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg>{{ copiedKey === st.cmd ? ' Copiado' : 'Copiar' }}
-                              </button>
-                            </span>
-                          </span>
-                        </template>
-                        <template v-else>{{ st.text }}</template>
-                      </div>
+                <div class="group-body" v-show="isGroupOpen(g.key)">
+                  <div class="finding-item" v-for="(f, fi) in g.findings" :key="g.key + '-' + fi">
+                    <div class="finding-header" @click="toggleFinding(g.key + '-' + fi)">
+                      <span class="badge" :class="(f.severity || 'info').toLowerCase()">{{ sevLabel(f.severity) }}</span>
+                      <!-- Tipo, no categoría: "network" era la misma palabra en todas las
+                           fichas. La etiqueta sale del prefijo del id (ver typeLabel). -->
+                      <span class="badge cat" v-if="typeLabel(f)">{{ typeLabel(f) }}</span>
+                      <div class="finding-title">{{ f.title }}</div>
+                      <code class="finding-id" v-if="f.id">{{ f.id }}</code>
+                      <svg class="icon icon-sm finding-chevron" :class="{ open: openFindings[g.key + '-' + fi] }"><use href="#lca-i-chevron"></use></svg>
                     </div>
-                    <p v-if="f.isCommand" class="cmd-intro">
-                      Comando sugerido<span class="cmd-origin">{{ originLabel(f.source) }}</span>:
-                    </p>
-                    <div v-if="f.isCommand" class="command-box">
-                      <code class="command-text">{{ f.command || f.fix }}</code>
-                      <button @click.stop="copyCommand(f.command || f.fix)"
-                              :class="{ copied: copiedKey === (f.command || f.fix) }"
-                              class="command-btn">
-                        <svg class="icon icon-sm" v-if="copiedKey === (f.command || f.fix)"><use href="#lca-i-check"></use></svg>{{ copiedKey === (f.command || f.fix) ? ' Copiado' : 'Copiar' }}
-                      </button>
-                    </div>
-                    <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
-                    <div v-if="fixHasCmd(f)" class="cmd-warn">
-                      <strong>LoCoAudit no ejecuta este comando por ti.</strong>
-                      Cópialo y ejecútalo en tu terminal después de revisarlo.
-                    </div>
-                    <div v-if="/(^|\s)sudo(\s|$)/.test(f.fix || '')" class="cmd-sudo">
-                      <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
-                      Requiere privilegios de administrador: pedirá tu contraseña de usuario. Revísalo bien antes de ejecutarlo.
-                    </div>
-                  </div>
-                </div>
-                <!-- Mismos tres textos que en el dashboard de host: sin pasos que dar, lo
-                     honesto es decir si es que no hacen falta o es que no los tenemos. -->
-                <div v-if="!f.fix" class="nofix-note">
-                  <template v-if="f.noAction">
-                    Este hallazgo es informativo. No requiere acción inmediata.
-                  </template>
-                  <template v-else-if="f.primaryUrl">
-                    LoCoAudit no tiene un paso concreto para este hallazgo.
-                    <a :href="f.primaryUrl" target="_blank" rel="noopener">Más información <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg></a>
-                  </template>
-                  <template v-else>
-                    Este hallazgo es informativo. No requiere acción inmediata.
-                  </template>
-                </div>
+                    <div class="finding-body" :class="{ open: openFindings[g.key + '-' + fi] }">
+                      <div class="detail-stack" v-if="f.evidence || f.fix || cveRows(f).length">
+                        <!-- La evidencia no depende del fix: un hallazgo informativo sin pasos que dar
+                             sigue teniendo algo que contar, y colgarla del mismo v-if la escondía. -->
+                        <div class="detail-col" v-if="f.evidence">
+                          <div class="detail-col-title">Evidencia</div>
+                          <pre class="detail-evidence">{{ f.evidence }}</pre>
 
-                <!-- ── Chat con IA ── -->
-                <div class="lca-chat-wrap" v-if="llmAvailable === true">
-                  <button class="ai-ask-btn" @click.stop="toggleChat(chatKey(f, fi), f)">
-                    <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
-                    {{ chatOpen[chatKey(f, fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
-                  </button>
-                  <div class="lca-chat" v-if="chatOpen[chatKey(f, fi)]">
-                    <!-- Cabecera con el modelo: /locoaudit/chat/status YA devuelve
-                         `model` (llm-config.js) y hasta ahora se tiraba. Quien lee la
-                         respuesta necesita saber quién la ha escrito. -->
-                    <div class="lca-chat-head">
-                      <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
-                      <span class="lca-chat-head-title">Asistente</span>
-                      <span class="lca-chat-model" v-if="llmModel">{{ llmModel }}</span>
-                    </div>
-                    <div class="lca-chat-msgs">
-                      <div v-for="(cm, ci) in (chatMessages[chatKey(f, fi)] || [])" :key="ci"
-                           class="chat-msg" :class="cm.role === 'user' ? 'chat-user' : 'chat-ai'">
-                        <div class="chat-bubble" :class="{ 'chat-error': cm.error }">
-                          <template v-for="(seg, si) in parseChatContent(cm.content)" :key="si">
-                            <div v-if="seg.type === 'text'" class="chat-text" v-html="seg.html"></div>
-                            <div v-else class="command-box">
-                              <code class="command-text">{{ seg.code }}</code>
-                              <button @click.stop="copyCommand(seg.code)"
-                                      :class="{ copied: copiedKey === seg.code }"
-                                      class="command-btn">
-                                <svg class="icon icon-sm" v-if="copiedKey === seg.code"><use href="#lca-i-check"></use></svg>{{ copiedKey === seg.code ? ' Copiado' : 'Copiar' }}
-                              </button>
+                          <!-- Tira de metadatos: solo los NET-VULN-*, que son los únicos con
+                               datos estructurados detrás (vulners vía NSE). -->
+                          <div v-if="hasMeta(f)" class="meta-strip">
+                            <div v-if="f.service" class="meta-cell">
+                              <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-antenna"></use></svg> Servicio</span>
+                              <span class="meta-value">{{ f.service }}</span>
+                            </div>
+                            <div v-if="f.version" class="meta-cell">
+                              <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-info"></use></svg> Versión anunciada</span>
+                              <span class="meta-value meta-mono">{{ f.version }}</span>
+                            </div>
+                            <div v-if="maxCvss(f) != null" class="meta-cell">
+                              <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-alert"></use></svg> CVSS máximo</span>
+                              <span class="meta-value">
+                                {{ Number(maxCvss(f)).toFixed(1) }}
+                                <span class="cvss-chip" :class="(f.severity || 'info').toLowerCase()">{{ sevLabel(f.severity) }}</span>
+                              </span>
+                            </div>
+                            <div class="meta-cell">
+                              <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg> CVE</span>
+                              <span class="meta-value">{{ cveRows(f).length }}</span>
+                            </div>
+                            <div class="meta-cell">
+                              <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-search"></use></svg> Fuente</span>
+                              <span class="meta-value">Nmap + vulners</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <!-- CVE publicados: TODOS, ordenados por nota. Sin recorte y sin scroll
+                             interno, para que el informe impreso los traiga enteros. -->
+                        <div class="detail-col" v-if="cveRows(f).length">
+                          <div class="detail-col-title">CVE publicados</div>
+                          <table class="cve-table">
+                            <thead>
+                              <tr><th>CVE</th><th>CVSS</th><th>Severidad</th><th>Ficha</th></tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="v in cveRows(f)" :key="v.id">
+                                <td><code class="cve-id">{{ v.id }}</code></td>
+                                <td><span class="cve-score">{{ v.cvss != null ? Number(v.cvss).toFixed(1) : '—' }}</span></td>
+                                <td>
+                                  <span class="cvss-chip" :class="(v.severity || 'info').toLowerCase()">{{ sevLabel(v.severity) }}</span>
+                                  <span v-if="v.isExploit" class="cve-exploit">exploit público</span>
+                                </td>
+                                <td>
+                                  <a v-if="v.url" class="meta-link" :href="v.url" target="_blank" rel="noopener">{{ v.label || 'Ver' }} <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg></a>
+                                  <span v-else class="meta-muted">no disponible</span>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          <p v-if="f.provenance" class="cve-origin">
+                            <svg class="icon icon-sm"><use href="#lca-i-info"></use></svg>
+                            <span><strong>Procedencia.</strong> {{ f.provenance }}</span>
+                          </p>
+                        </div>
+
+                        <div class="detail-col" v-if="f.fix">
+                          <div class="detail-col-title">Resolución</div>
+                          <!-- Una rama por alternativa ("si no lo necesitas" / "si lo necesitas"):
+                               son caminos EXCLUYENTES, y encadenarlos en una sola lista los hacía
+                               pasar por pasos consecutivos. Dentro de cada rama sí hay orden, y por
+                               eso es un <ol>: el número lo pone el navegador, no un <span>. -->
+                          <template v-if="!f.isCommand">
+                            <!-- Un solo parseo por ficha: el v-for sobre un array de un
+                                 elemento evita repetir la llamada en cada bloque. -->
+                            <div class="fix-plan" v-for="(fx, xi) in [parseFixSteps(f.fix)]" :key="xi">
+                              <!-- Lo anterior a la primera rama describe el servicio: va sin
+                                   numerar, porque no es un paso que nadie tenga que dar. -->
+                              <p v-for="(ln, ii) in fx.intro" :key="'i' + ii" class="fix-intro">{{ ln }}</p>
+                              <p v-for="(nt, ni) in fx.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
+                              <div class="fix-branch" v-for="(br, bi) in fx.branches" :key="bi">
+                                <div v-if="br.heading" class="fix-branch-title">{{ br.heading }}</div>
+                                <ol class="fix-steps" v-if="br.steps.length"
+                                    :class="{ 'fix-steps-single': br.steps.length === 1 && !br.heading }">
+                                  <li class="fix-step" v-for="(st, si) in br.steps" :key="si">
+                                    <span v-if="st.label" class="fix-step-label">{{ st.label }}</span>
+                                    <!-- El comando va DENTRO del paso que lo usa, no como paso aparte. -->
+                                    <span v-if="st.cmd" class="command-box command-inline">
+                                      <code class="command-text">{{ st.cmd }}</code>
+                                      <button @click.stop="copyCommand(st.cmd)"
+                                              :class="{ copied: copiedKey === st.cmd }"
+                                              class="command-btn">
+                                        <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg>{{ copiedKey === st.cmd ? ' Copiado' : 'Copiar' }}
+                                      </button>
+                                    </span>
+                                  </li>
+                                </ol>
+                                <p v-for="(nt, ni) in br.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
+                              </div>
                             </div>
                           </template>
+                          <p v-if="f.isCommand" class="cmd-intro">
+                            Comando sugerido<span class="cmd-origin">{{ originLabel(f.source) }}</span>:
+                          </p>
+                          <div v-if="f.isCommand" class="command-box">
+                            <code class="command-text">{{ f.command || f.fix }}</code>
+                            <button @click.stop="copyCommand(f.command || f.fix)"
+                                    :class="{ copied: copiedKey === (f.command || f.fix) }"
+                                    class="command-btn">
+                              <svg class="icon icon-sm" v-if="copiedKey === (f.command || f.fix)"><use href="#lca-i-check"></use></svg>{{ copiedKey === (f.command || f.fix) ? ' Copiado' : 'Copiar' }}
+                            </button>
+                          </div>
+                          <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
+                          <!-- UNA nota por ficha, neutra. Antes eran dos cajas ámbar —"no lo
+                               ejecuto" y "pide sudo"— que pintaban de aviso lo que solo es cómo
+                               funciona la herramienta. El ámbar queda para la severidad Media. -->
+                          <div v-if="fixHasCmd(f)" class="cmd-note cmd-note-safety">
+                            <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
+                            <span>LoCoAudit no ejecuta estos comandos: cópialos y revísalos antes de ejecutarlos.<template v-if="fixNeedsSudo(f)"> Requieren privilegios de administrador.</template></span>
+                          </div>
                         </div>
                       </div>
-                      <div v-if="chatLoading[chatKey(f, fi)]" class="chat-msg chat-ai">
-                        <div class="chat-bubble chat-loading">
-                          <span class="chat-dot"></span><span class="chat-dot"></span><span class="chat-dot"></span>
+                      <!-- Mismos tres textos que en el dashboard de host: sin pasos que dar, lo
+                           honesto es decir si es que no hacen falta o es que no los tenemos. -->
+                      <div v-if="!f.fix" class="nofix-note">
+                        <template v-if="f.noAction">
+                          Este hallazgo es informativo. No requiere acción inmediata.
+                        </template>
+                        <template v-else-if="f.primaryUrl">
+                          LoCoAudit no tiene un paso concreto para este hallazgo.
+                          <a :href="f.primaryUrl" target="_blank" rel="noopener">Más información <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg></a>
+                        </template>
+                        <template v-else>
+                          Este hallazgo es informativo. No requiere acción inmediata.
+                        </template>
+                      </div>
+
+                      <!-- ── Chat con IA ── -->
+                      <div class="lca-chat-wrap" v-if="llmAvailable === true">
+                        <button class="ai-ask-btn" @click.stop="toggleChat(chatKey(f, g.key + '-' + fi), f)">
+                          <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
+                          {{ chatOpen[chatKey(f, g.key + '-' + fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
+                        </button>
+                        <div class="lca-chat" v-if="chatOpen[chatKey(f, g.key + '-' + fi)]">
+                          <!-- Cabecera con el modelo: /locoaudit/chat/status YA devuelve
+                               `model` (llm-config.js) y hasta ahora se tiraba. Quien lee la
+                               respuesta necesita saber quién la ha escrito. -->
+                          <div class="lca-chat-head">
+                            <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
+                            <span class="lca-chat-head-title">Asistente</span>
+                            <span class="lca-chat-model" v-if="llmModel">{{ llmModel }}</span>
+                          </div>
+                          <div class="lca-chat-msgs">
+                            <div v-for="(cm, ci) in (chatMessages[chatKey(f, g.key + '-' + fi)] || [])" :key="ci"
+                                 class="chat-msg" :class="cm.role === 'user' ? 'chat-user' : 'chat-ai'">
+                              <div class="chat-bubble" :class="{ 'chat-error': cm.error }">
+                                <template v-for="(seg, si) in parseChatContent(cm.content)" :key="si">
+                                  <div v-if="seg.type === 'text'" class="chat-text" v-html="seg.html"></div>
+                                  <div v-else class="command-box">
+                                    <code class="command-text">{{ seg.code }}</code>
+                                    <button @click.stop="copyCommand(seg.code)"
+                                            :class="{ copied: copiedKey === seg.code }"
+                                            class="command-btn">
+                                      <svg class="icon icon-sm" v-if="copiedKey === seg.code"><use href="#lca-i-check"></use></svg>{{ copiedKey === seg.code ? ' Copiado' : 'Copiar' }}
+                                    </button>
+                                  </div>
+                                </template>
+                              </div>
+                            </div>
+                            <div v-if="chatLoading[chatKey(f, g.key + '-' + fi)]" class="chat-msg chat-ai">
+                              <div class="chat-bubble chat-loading">
+                                <span class="chat-dot"></span><span class="chat-dot"></span><span class="chat-dot"></span>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="lca-chat-input">
+                            <input type="text" v-model="chatInput[chatKey(f, g.key + '-' + fi)]"
+                                   placeholder="Escribe tu pregunta…"
+                                   :disabled="chatLoading[chatKey(f, g.key + '-' + fi)]"
+                                   @keydown.enter.prevent="sendChat(chatKey(f, g.key + '-' + fi), f)">
+                            <button class="chat-send-btn"
+                                    :disabled="chatLoading[chatKey(f, g.key + '-' + fi)]"
+                                    @click.stop="sendChat(chatKey(f, g.key + '-' + fi), f)">Enviar</button>
+                          </div>
+                          <!-- El aviso va al pie y no en un modal: se lee después de la
+                               respuesta, que es cuando el usuario decide si actuar. -->
+                          <div class="lca-chat-foot">
+                            Un modelo de lenguaje puede equivocarse. Contrasta lo que te diga
+                            con la evidencia del hallazgo antes de ejecutar nada.
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div class="lca-chat-input">
-                      <input type="text" v-model="chatInput[chatKey(f, fi)]"
-                             placeholder="Escribe tu pregunta…"
-                             :disabled="chatLoading[chatKey(f, fi)]"
-                             @keydown.enter.prevent="sendChat(chatKey(f, fi), f)">
-                      <button class="chat-send-btn"
-                              :disabled="chatLoading[chatKey(f, fi)]"
-                              @click.stop="sendChat(chatKey(f, fi), f)">Enviar</button>
-                    </div>
-                    <!-- El aviso va al pie y no en un modal: se lee después de la
-                         respuesta, que es cuando el usuario decide si actuar. -->
-                    <div class="lca-chat-foot">
-                      Un modelo de lenguaje puede equivocarse. Contrasta lo que te diga
-                      con la evidencia del hallazgo antes de ejecutar nada.
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
+            </template>
           </div>
         </section>
 
         <!-- Sin hallazgos (nunca si no se ha auditado: eso no es un "todo bien") -->
-        <div v-if="sortedPorts.length === 0 && ungroupedFindings.length === 0 && vulnerabilityGroups.length === 0 && !notAudited"
+        <div v-if="sortedPorts.length === 0 && findingGroups.length === 0 && !notAudited"
              class="lca-state-center lca-state-inline">
           <svg class="icon icon-xl lca-state-ico"><use href="#lca-i-check-circle"></use></svg>
           <h3 class="lca-state-title">¡Sin hallazgos!</h3>
@@ -486,7 +546,9 @@ export default {
       copiedKey: null,
       // Filtro por severidad: clic en una barra de "Exposición por severidad".
       filterSev: 'all',
-      openVulnerabilityGroups: {},
+      // Grupos plegables de la lista de hallazgos. Nacen ABIERTOS: aquí solo se
+      // guarda lo que el usuario ha cerrado (ver isGroupOpen).
+      openGroups: {},
       // ── Chat con LLM (asistente IA) ──
       chatOpen: {},        // por findingKey: panel abierto/cerrado
       chatMessages: {},    // por findingKey: [{ role, content, error? }]
@@ -700,40 +762,59 @@ export default {
       });
     },
 
-    ungroupedFindings() {
-      return this.visibleFindings.filter(function(f) {
-        return !Array.isArray(f.vulnerabilities) || !f.vulnerabilities.length;
-      });
-    },
-
-    vulnerabilityGroups() {
+    // UNA lista de grupos, clave puerto+protocolo. AGRUPA, no fusiona: el NET-VULN
+    // y el NET-PORT de un mismo puerto siguen siendo dos fichas con su severidad y su
+    // resolución; lo único que comparten es la cabecera. Fusionarlos habría convertido
+    // "puerto abierto" (lo que se ve) y "CVE del servicio" (lo que se deduce de una
+    // versión anunciada) en un solo veredicto, que son cosas distintas.
+    //
+    // Los hallazgos SIN puerto —NET-SCAN-WARN, NET-DEP-NMAP, NET-CFG-ERR,
+    // NET-HOST-UNREACHABLE, NET-NSE-SKIP— no cuelgan de ningún servicio: van a un
+    // grupo "General" que abre la lista, porque hablan de si se llegó a mirar.
+    findingGroups() {
       var rank = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
-      var groups = {};
-      this.visibleFindings.forEach(function(f) {
-        if (!Array.isArray(f.vulnerabilities) || !f.vulnerabilities.length || !Number.isInteger(f.port)) return;
+      var grupos = {};
+      var orden = [];
+      this.visibleFindings.forEach(function (f) {
+        var conPuerto = Number.isInteger(f.port);
         var protocol = f.protocol || 'tcp';
-        var key = f.port + '/' + protocol;
-        if (!groups[key]) {
-          groups[key] = {
-            key: key, port: f.port, protocol: protocol, service: f.service,
-            findings: [], maxSeverity: 'info'
+        var key = conPuerto ? f.port + '/' + protocol : 'general';
+        if (!grupos[key]) {
+          grupos[key] = {
+            key: key,
+            port: conPuerto ? f.port : null,
+            protocol: conPuerto ? protocol : null,
+            service: null,
+            version: null,
+            findings: [],
+            maxSeverity: 'info',
+            sev: { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
           };
+          orden.push(key);
         }
-        var group = groups[key];
-        group.findings.push(f);
-        group.vulnerabilityCount = (group.vulnerabilityCount || 0) + f.vulnerabilities.length;
-        if ((rank[f.severity] || 0) > (rank[group.maxSeverity] || 0)) group.maxSeverity = f.severity;
+        var g = grupos[key];
+        g.findings.push(f);
+        // Servicio y versión los trae el primer hallazgo que los tenga: los NET-VULN y
+        // NET-SVC los llevan, los NET-PORT no siempre.
+        if (!g.service && f.service) g.service = f.service;
+        if (!g.version && f.version) g.version = f.version;
+        var sev = (f.severity || 'info').toLowerCase();
+        if (g.sev[sev] != null) g.sev[sev]++;
+        if ((rank[sev] || 0) > (rank[g.maxSeverity] || 0)) g.maxSeverity = sev;
       });
-      return Object.keys(groups).map(function(key) {
-        var group = groups[key];
-        group.findings.forEach(function(f) {
-          f.vulnerabilities.sort(function(a, b) {
-            return (b.cvss == null ? -1 : b.cvss) - (a.cvss == null ? -1 : a.cvss);
-          });
+      return orden.map(function (k) {
+        var g = grupos[k];
+        g.findings.sort(function (a, b) {
+          return (rank[(b.severity || 'info').toLowerCase()] || 0) -
+                 (rank[(a.severity || 'info').toLowerCase()] || 0);
         });
-        return group;
-      }).sort(function(a, b) {
-        return (rank[b.maxSeverity] || 0) - (rank[a.maxSeverity] || 0) || a.port - b.port;
+        return g;
+      }).sort(function (a, b) {
+        // "General" primero: si el escaneo no llegó a mirar algo, eso se lee ANTES que
+        // cualquier recuento, que es la regla de "fallo de herramienta ≠ dato negativo".
+        if ((a.port == null) !== (b.port == null)) return a.port == null ? -1 : 1;
+        return (rank[b.maxSeverity] || 0) - (rank[a.maxSeverity] || 0) ||
+               (a.port || 0) - (b.port || 0);
       });
     },
 
@@ -830,13 +911,60 @@ export default {
     toggleFinding(key) {
       this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
     },
-    isVulnerabilityGroupOpen(key) {
-      return this.openVulnerabilityGroups[key] !== false;
+    // Los grupos nacen abiertos: plegados por defecto esconderían el único contenido
+    // de la página. El estado guarda solo lo que se ha cerrado.
+    isGroupOpen(key) {
+      return this.openGroups[key] !== false;
     },
-    toggleVulnerabilityGroup(key) {
-      this.openVulnerabilityGroups = Object.assign({}, this.openVulnerabilityGroups, {
-        [key]: !this.isVulnerabilityGroupOpen(key)
+    toggleGroup(key) {
+      this.openGroups = Object.assign({}, this.openGroups, {
+        [key]: !this.isGroupOpen(key)
       });
+    },
+    // Etiqueta de TIPO, derivada del prefijo del id. Mapeo completo:
+    //   NET-PORT-* → Exposición     · un puerto abierto
+    //   NET-VULN-* → CVE            · CVE publicados del servicio (vulners)
+    //   NET-SVC-*  → Configuración  · cómo está configurado el servicio (NSE)
+    //   NET-TLS-*  → TLS            · nota de ssl-enum-ciphers
+    //   NET-CFG-*  → Configuración  · error de configuración del propio nodo
+    //   NET-SCAN-*, NET-DEP-*, NET-HOST-*, NET-NSE-* → Estado · qué se pudo mirar
+    // Un id que no esté en la tabla NO recibe etiqueta inventada: devuelve cadena vacía
+    // y el v-if no pinta la píldora. Un tipo adivinado informa menos que ninguno.
+    typeLabel(f) {
+      var M = {
+        'NET-PORT': 'Exposición',
+        'NET-VULN': 'CVE',
+        'NET-SVC':  'Configuración',
+        'NET-TLS':  'TLS',
+        'NET-CFG':  'Configuración',
+        'NET-SCAN': 'Estado',
+        'NET-DEP':  'Estado',
+        'NET-HOST': 'Estado',
+        'NET-NSE':  'Estado'
+      };
+      return M[String((f && f.id) || '').split('-').slice(0, 2).join('-')] || '';
+    },
+    // Las filas de la tabla de CVE: TODAS, ordenadas por nota descendente. Sin recorte
+    // a los N peores —fue lo que hubo que corregir en Trivy cuando el usuario no
+    // encontraba el CVE que le habían citado— y sin scroll interno, para que el PDF
+    // no se coma la mitad de la lista.
+    cveRows(f) {
+      var v = f && f.vulnerabilities;
+      if (!Array.isArray(v) || !v.length) return [];
+      return v.slice().sort(function (a, b) {
+        return (b.cvss == null ? -1 : b.cvss) - (a.cvss == null ? -1 : a.cvss);
+      });
+    },
+    maxCvss(f) {
+      var max = null;
+      this.cveRows(f).forEach(function (v) {
+        if (v.cvss != null && (max == null || v.cvss > max)) max = v.cvss;
+      });
+      return max;
+    },
+    // La tira de metadatos solo tiene sentido donde hay datos estructurados detrás.
+    hasMeta(f) {
+      return this.cveRows(f).length > 0;
     },
     // Filtro por severidad: clic en la barra activa/desactiva ese filtro.
     toggleSevFilter(sev) {
@@ -1022,33 +1150,70 @@ export default {
         '</body></html>';
     },
 
+    // Gramática de `fix`. Se lee LÍNEA a línea y los marcadores los pone el ORIGEN
+    // (lib/normalizer.js, nodes/audit-network/…), nunca se deducen aquí:
+    //
+    //   "## "  abre una rama alternativa; el resto de la línea es su subtítulo.
+    //   "$ "   comando del ÚLTIMO paso de la rama abierta. No genera paso propio:
+    //          el comando pertenece al paso que lo usa.
+    //   "> "   nota: párrafo neutro que se pinta TRAS la lista de su rama (o tras el
+    //          bloque introductorio). Nunca se numera, porque no es algo que hacer.
+    //   resto  paso nuevo de la rama abierta.
+    //
+    // Regla de intro: si el texto trae al menos una "## ", las líneas anteriores a la
+    // primera forman un párrafo introductorio SIN numerar —describen el servicio, no
+    // piden nada—. Sin ninguna "## ", todo son pasos, como hasta ahora.
+    //
+    // Devuelve { intro: [], notes: [], branches: [{ heading, steps: [{label, cmd}], notes: [] }] }.
+    //
+    // Es una COPIA literal del parser de host: los tres dashboards se editan en su
+    // propio fichero y no comparten código (decisión cerrada), pero la gramática es la
+    // misma porque el origen de los textos es el mismo.
+    //
+    // Lo que había antes y NO vuelve: trocear por ". " un fix de una sola línea
+    // —convertía cualquier párrafo en una secuencia numerada que nadie había escrito—
+    // y adivinar comandos con una lista de verbos (stepCmd).
     parseFixSteps(fix) {
-      if (!fix) return [];
-      if (fix.indexOf('\n') >= 0) {
-        return fix.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      var res = { intro: [], notes: [], branches: [] };
+      if (!fix) return res;
+      var lineas = String(fix).split('\n')
+        .map(function (l) { return l.trim(); })
+        .filter(function (l) { return l; });
+      var hayRamas = lineas.some(function (l) { return l.indexOf('## ') === 0; });
+      var actual = null;
+      function abrir(heading) {
+        actual = { heading: heading, steps: [], notes: [] };
+        res.branches.push(actual);
       }
-      if (fix.indexOf('. ') >= 0) {
-        var parts = fix.split('. ').map(function(s) { return s.trim(); }).filter(Boolean);
-        return parts.map(function(s, i) { return i < parts.length - 1 ? s + '.' : s; });
-      }
-      return [fix];
+      lineas.forEach(function (s) {
+        if (s.indexOf('## ') === 0) { abrir(s.slice(3).trim()); return; }
+        if (s.indexOf('> ') === 0) {
+          var nota = s.slice(2).trim();
+          // Antes de la primera rama la nota cuelga del bloque introductorio.
+          if (nota) (actual ? actual.notes : res.notes).push(nota);
+          return;
+        }
+        if (s.indexOf('$ ') === 0) {
+          var cmd = s.slice(2).trim();
+          if (!cmd) return;
+          if (!actual) abrir(null);
+          var ultimo = actual.steps[actual.steps.length - 1];
+          // Comando sin paso al que colgarse (o con el paso ya ocupado): sale igual, con
+          // la etiqueta vacía. Es un fix mal formado en el origen, no un motivo para perderlo.
+          if (!ultimo || ultimo.cmd) actual.steps.push({ label: '', cmd: cmd });
+          else ultimo.cmd = cmd;
+          return;
+        }
+        if (hayRamas && !actual) { res.intro.push(s); return; }
+        if (!actual) abrir(null);
+        actual.steps.push({ label: s, cmd: null });
+      });
+      res.branches = res.branches.filter(function (r) {
+        return r.heading || r.steps.length || r.notes.length;
+      });
+      return res;
     },
 
-    // Detecta si un paso de resolución es (o contiene) un comando ejecutable.
-    // Soporta dos formas: la línea entera es comando, o "Etiqueta: comando".
-    stepCmd(step) {
-      var s = (step || '').trim();
-      var CMD = /^(sudo|brew|npm|yarn|pip|composer|go|apt|dnf|yum|winget|choco|lsof|nslookup|kill|systemctl|launchctl|bundle|cargo|rabbitmqctl|jupyter|auditpol|nginx|netsh|net\s+stop|netstat|ufw|apachectl|systemsetup)\b/i;
-      if (CMD.test(s)) return { label: '', cmd: s };
-      var idx = s.indexOf(': ');
-      if (idx >= 0) {
-        var after = s.slice(idx + 2).trim();
-        if (CMD.test(after)) return { label: s.slice(0, idx + 1), cmd: after };
-      }
-      return null;
-    },
-
-    // Pasos enriquecidos: cada paso es { label, cmd } (comando copiable) o { text }.
     // El fix puede traer el comando en la 1ª línea y una nota explicativa debajo.
     // El botón copia SOLO el comando (finding.command); la nota se muestra aparte,
     // para que un pegado en terminal nunca arrastre texto no ejecutable.
@@ -1056,20 +1221,26 @@ export default {
       if (!f || !f.command || !f.fix) return "";
       return String(f.fix).split("\n").slice(1).join("\n").trim();
     },
+    // Todos los comandos de la ficha: el directo (findings con `command`) y los que
+    // los pasos marcan con "$ ". Una sola fuente para la nota y para el aviso de sudo.
+    fixCommands(f) {
+      if (!f || !f.fix) return [];
+      var cmds = f.command ? [String(f.command)] : [];
+      try {
+        this.parseFixSteps(f.fix).branches.forEach(function (r) {
+          r.steps.forEach(function (st) { if (st.cmd) cmds.push(st.cmd); });
+        });
+      } catch (e) { /* fix ilegible: queda el comando directo, si lo hay */ }
+      return cmds;
+    },
     // ¿El paso de resolución contiene algún comando (directo o dentro de un paso)?
     fixHasCmd(f) {
-      if (!f || !f.fix) return false;
-      if (f.command) return true;
-      try { return this.parseFixStepsRich(f.fix).some(function (s) { return !!s.cmd; }); }
-      catch (e) { return false; }
+      return this.fixCommands(f).length > 0;
     },
-    parseFixStepsRich(fix) {
-      var self = this;
-      return this.parseFixSteps(fix).map(function(step) {
-        var c = self.stepCmd(step);
-        return c ? { label: c.label, cmd: c.cmd, text: null }
-                 : { label: null, cmd: null, text: step };
-      });
+    // ¿Alguno PIDE privilegios? Se mira el comando, no la prosa: el fix que solo
+    // menciona sudo de pasada no debe disparar el aviso.
+    fixNeedsSudo(f) {
+      return this.fixCommands(f).some(function (c) { return /^sudo(\s|$)/.test(String(c).trim()); });
     },
 
     sevLabel(sev) {
@@ -1890,62 +2061,91 @@ export default {
   .badge.info     { background: var(--info-bg);     color: var(--info-text);     border: 1px solid var(--info-border); }
   .badge.low      { background: var(--low-bg);      color: var(--low-text);      border: 1px solid var(--low-border); }
   .badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
-  .badge.cat      { background: var(--accent-bg); color: var(--accent); }
+  /* Etiqueta de TIPO, no de severidad ni acción: gris con borde. En violeta
+     competía con el badge de severidad y con lo único que sí se pulsa.
+     Fondo --card (no --surface): el secundario sobre #F1F5F9 da 4,34:1. */
+  .badge.cat      { background: var(--card); color: var(--text-secondary); border: 1px solid var(--border); }
 
   /* ── FINDINGS ────────────────────────────────────────────────── */
-  .findings-list { display: flex; flex-direction: column; gap: 8px; }
+  .findings-list { display: flex; flex-direction: column; gap: 10px; }
 
-  .vulnerability-groups { display: flex; flex-direction: column; gap: 10px; }
-  .vulnerability-group {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: var(--radius); overflow: hidden;
+  /* ── Grupos por puerto ───────────────────────────────────────────────────
+     Cabecera NEUTRA y sin barra lateral de color: en esta lista el color es la
+     severidad, y un tinte por grupo la ahogaba. El violeta queda para lo que se
+     pulsa (Copiar, enlaces, asistente).
+     Fondo de tarjeta y no --surface: sobre el gris #F1F5F9 el texto secundario
+     —la versión— da 4,34:1 y el mínimo es 4,5. Medido, no supuesto.
+     NO renombrar .group-header ni .group-body: lib/snapshot-body.txt los busca por
+     subcadena y el cuerpo tiene que seguir siendo el hermano siguiente.
+     El envoltorio .findings-group es el MISMO de host: la tarjeta la pone él, no
+     la cabecera, y por eso .group-header ya no lleva fondo, borde ni radio propios.
+     Envolver no rompe el informe exportado —cabecera y cuerpo siguen siendo
+     hermanos dentro del envoltorio—, que es la restricción estructural real. */
+  .findings-group {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
   }
-  .vulnerability-group-header {
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-    padding: 13px 16px; background: var(--surface); border-left: 4px solid var(--medium);
-    cursor: pointer; user-select: none;
+  .group-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+    cursor: pointer;
+    user-select: none;
+    transition: background .15s;
   }
-  .vulnerability-group-header:hover { background: var(--bg); }
-  .vulnerability-group-port { display: flex; flex-direction: column; gap: 2px; }
-  .vulnerability-group-label {
-    color: var(--text-secondary); font-size: 9.5px; font-weight: 700;
-    letter-spacing: .7px; text-transform: uppercase;
+  .group-header:hover { background: var(--bg); }
+  /* Mono: un número de puerto es un valor técnico. */
+  .group-port {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text);
   }
-  .vulnerability-group-port code, .vulnerability-id { font-family: var(--font-mono); }
-  .vulnerability-group-service { flex: 1; color: var(--text); font-size: 13px; font-weight: 600; }
-  .vulnerability-group-count { color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
-  .vulnerability-group-chevron { color: var(--text-muted); transition: transform .2s; }
-  .vulnerability-group-chevron.open { transform: rotate(180deg); }
-  .vulnerability-group-body { padding: 12px 16px 16px; }
-  .vulnerability-finding + .vulnerability-finding { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
-  .vulnerability-finding-title { color: var(--text); font-size: 13px; font-weight: 600; }
-  .vulnerability-provenance {
-    margin-top: 8px; padding: 9px 11px; border-left: 3px solid var(--medium);
-    border-radius: var(--radius-sm); background: var(--medium-bg); color: var(--text);
-    font-size: 12px; line-height: 1.55;
+  .group-port-general { font-family: var(--font-sans); }
+  .group-service { font-size: 12.5px; font-weight: 600; color: var(--text); }
+  /* Mono y gris: se compara carácter a carácter, pero es dato secundario. */
+  .group-version {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-secondary);
   }
-  .vulnerability-list { max-height: 280px; overflow-y: auto; margin-top: 10px; border-top: 1px solid var(--border); }
-  .vulnerability-card {
-    display: grid; grid-template-columns: minmax(150px, 1fr) auto auto minmax(90px, auto);
-    align-items: center; gap: 12px; padding: 9px 10px;
-    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  .group-sevs { margin-left: auto; display: flex; gap: 4px; }
+  /* Misma píldora que .sev-badge de host: fondo, texto Y borde de la misma
+     familia. El borde es lo que la separa del fondo de la cabecera ahora que
+     la cabecera ya no tiene tarjeta propia. */
+  .gsev {
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: var(--radius-pill);
+    padding: 0 6px;
+    line-height: 16px;
   }
-  .vulnerability-card + .vulnerability-card { margin-top: 6px; }
-  .vulnerability-card-score { color: var(--text-secondary); font-size: 11.5px; white-space: nowrap; }
-  .vulnerability-card-score strong { color: var(--text); font-family: var(--font-mono); font-size: 12px; }
-  .vulnerability-advisory { color: var(--accent); font-size: 12px; font-weight: 600; text-decoration: none; }
-  .vulnerability-advisory:hover { text-decoration: underline; }
-  .vulnerability-advisory.is-unavailable { color: var(--text-secondary); font-weight: 400; }
-  .vulnerability-resolution {
-    margin-top: 12px; padding: 12px 14px; background: var(--card);
-    border: 1px solid var(--border); border-radius: var(--radius-sm);
-    color: var(--text); font-size: 12.5px; line-height: 1.55;
+  .gsev.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+  .gsev.high     { background: var(--high-bg);     color: var(--high-text);     border: 1px solid var(--high-border); }
+  .gsev.medium   { background: var(--medium-bg);   color: var(--medium-text);   border: 1px solid var(--medium-border); }
+  .gsev.low      { background: var(--low-bg);      color: var(--low-text);      border: 1px solid var(--low-border); }
+  .gsev.info     { background: var(--info-bg);     color: var(--info-text);     border: 1px solid var(--info-border); }
+  .group-chevron {
+    width: 16px; height: 16px;
+    color: var(--text-muted);
+    transition: transform .2s;
+    flex: 0 0 auto;
   }
-  .vulnerability-resolution .detail-col-title { margin-bottom: 6px; }
-  @media (max-width: 640px) {
-    .vulnerability-card { grid-template-columns: 1fr auto; }
-    .vulnerability-card .badge { justify-self: start; }
-    .vulnerability-advisory { grid-column: 1 / -1; }
+  .group-chevron.open { transform: rotate(180deg); }
+  /* Separado de la cabecera por el mismo borde que usa .group-findings en host.
+     El padding evita que el borde de cada .finding-item choque con el del
+     envoltorio y se lea como un borde doble. */
+  .group-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid var(--border);
   }
 
   .finding-item {
@@ -1979,6 +2179,13 @@ export default {
     transition: transform .2s;
     flex-shrink: 0;
   }
+  /* Mono atenuado y al final: es un identificador, solo importa al citarlo. */
+  .finding-id {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
   .finding-chevron.open { transform: rotate(180deg); }
 
   .finding-body {
@@ -1988,18 +2195,22 @@ export default {
   }
   .finding-body.open { display: block; }
 
-  /* ── Detalle común: impacto arriba, resolución debajo ── */
-  .detail-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding-top: 14px;
-  }
-  .detail-col {
+  /* ── Detalle: UN panel plano con secciones ───────────────────────────────
+     Misma anatomía que host: no dos tarjetas dentro de otra tarjeta, sino un
+     panel con un título por sección y una línea discontinua entre ellas. */
+  .detail-stack {
     background: var(--card);
-    border-radius: 8px;
     border: 1px solid var(--border);
-    padding: 14px;
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    margin-top: 14px;
+  }
+  /* Sin caja propia: la sección se delimita por su título y, a partir de la segunda,
+     por una línea discontinua. */
+  .detail-col + .detail-col {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
   }
   .detail-col-title {
     font-size: 11px;
@@ -2009,9 +2220,13 @@ export default {
     color: var(--text-secondary);
     margin-bottom: 8px;
   }
+  /* Sans, no mono: la evidencia es una frase, no un valor técnico. La mono se queda
+     donde hay algo que comparar carácter a carácter (puerto, versión, CVE) y en los
+     comandos (.command-text). */
   .detail-evidence {
-    font-size: 12px;
-    font-family: var(--font-mono);
+    /* Es un <pre>: sin `inherit` explícito se cae a la monoespaciada del navegador. */
+    font-family: inherit;
+    font-size: 13px;
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--border);
@@ -2021,24 +2236,122 @@ export default {
     white-space: pre-wrap;
     word-break: break-word;
     overflow-x: auto;
-    max-height: 160px;
+    max-height: 200px;
     overflow-y: auto;
   }
-  .fix-steps { display: flex; flex-direction: column; gap: 8px; }
-  .fix-step  { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--text); line-height: 1.5; }
-  .fix-num {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--accent);
-    color: white;
-    font-size: 11px;
+
+  /* ── Metadatos del hallazgo: lista clave/valor ── */
+  .meta-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px 18px;
+    margin-top: 14px; padding-top: 14px;
+    border-top: 1px dashed var(--border);
+  }
+  .meta-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .meta-label {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+    color: var(--text-secondary);
+  }
+  .meta-value {
+    font-size: 12.5px; font-weight: 600; color: var(--text);
+    display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    word-break: break-word;
+  }
+  /* Mono: versiones e identificadores. */
+  .meta-value.meta-mono { font-family: var(--font-mono); font-weight: 500; font-size: 11.5px; }
+  .meta-muted { color: var(--text-secondary); font-style: italic; font-weight: 500; }
+  .cvss-chip {
+    font-size: 9.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .03em;
+    padding: 1px 6px; border-radius: var(--radius-pill);
+    white-space: nowrap;
+  }
+  .cvss-chip.critical { background: var(--critical-bg); color: var(--critical-text); }
+  .cvss-chip.high     { background: var(--high-bg);     color: var(--high-text); }
+  .cvss-chip.medium   { background: var(--medium-bg);   color: var(--medium-text); }
+  .cvss-chip.low      { background: var(--low-bg);      color: var(--low-text); }
+  .cvss-chip.info     { background: var(--info-bg);     color: var(--info-text); }
+  .meta-link { color: var(--accent); text-decoration: none; font-weight: 600; white-space: nowrap; }
+  .meta-link:hover { text-decoration: underline; }
+
+  /* ── Tabla de CVE ────────────────────────────────────────────────────────
+     TODAS las filas, sin max-height y sin scroll interno: un recorte aquí deja
+     la mitad de los CVE fuera del PDF. Sin zebra: el gris secundario de
+     "exploit público" sobre #F8FAFC queda en 4,55:1 y sobre blanco en 4,76. */
+  .cve-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .cve-table th {
+    text-align: left;
+    padding: 4px 10px 6px;
+    font-size: 10.5px;
     font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    margin-top: 1px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+  }
+  .cve-table td { padding: 6px 10px; border-top: 1px solid var(--border); vertical-align: middle; }
+  /* Mono: identificador y nota son valores técnicos. */
+  .cve-id { font-family: var(--font-mono); font-size: 11.5px; color: var(--text); }
+  .cve-score {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--text);
+  }
+  /* Un dato más, no una alarma: el color de la fila ya lo pone el CVSS. */
+  .cve-exploit { margin-left: 6px; font-size: 10.5px; color: var(--text-secondary); }
+  /* Nota neutra: de dónde sale el dato y qué NO afirma. */
+  .cve-origin {
+    display: flex; align-items: flex-start; gap: 7px;
+    margin-top: 12px; padding: 9px 11px;
+    background: var(--bg); color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    font-size: 12px; line-height: 1.55;
+  }
+  .cve-origin .icon { flex-shrink: 0; margin-top: 2px; }
+
+  /* ── Pasos de resolución ── */
+  /* Rama = alternativa excluyente. Su subtítulo es el mismo gris que .detail-col-title,
+     sin mayúsculas: está un nivel por debajo. */
+  .fix-branch + .fix-branch { margin-top: 14px; }
+  .fix-branch-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+  .fix-steps {
+    /* El número lo pone el navegador, no un <span>. Tabular para que quede alineado al
+       pasar de 9 a 10, y en gris para que no compita con el texto del paso. */
+    list-style: decimal;
+    padding-left: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+  .fix-steps::marker, .fix-step::marker { color: var(--text-secondary); }
+  /* Un párrafo suelto no es una secuencia: sin marcador y sin sangría. */
+  .fix-steps-single { list-style: none; padding-left: 0; }
+  .fix-step {
+    font-size: 12.5px;
+    color: var(--text);
+    line-height: 1.5;
+    padding-left: 2px;
+  }
+  .fix-step + .fix-step { margin-top: 8px; }
+  /* Contexto, no acción: ni marcador ni sangría. La intro va antes de las ramas; la
+     nota, detrás de la lista a la que pertenece. Gris secundario para que ninguna de
+     las dos se lea como un paso pendiente. */
+  .fix-intro { font-size: 12.5px; line-height: 1.5; color: var(--text); }
+  .fix-intro + .fix-intro { margin-top: 6px; }
+  .fix-intro + .fix-branch, .fix-note-line + .fix-branch { margin-top: 12px; }
+  .fix-note-line {
+    margin-top: 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text-secondary);
   }
 
   /* ── Estados idle / scanning ── */
@@ -2097,6 +2410,7 @@ export default {
   }
   .command-btn {
     flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 5px;
     background: var(--accent);
     color: #fff;
     border: none;
@@ -2110,10 +2424,9 @@ export default {
   .command-btn:hover  { background: #6D28D9; }
   .command-btn.copied { background: var(--low); }
 
-  /* Paso de resolución con comando embebido (template híbrido) */
-  .fix-step-body   { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  /* El comando va DENTRO del <li> del paso que lo usa. */
   .fix-step-label  { color: var(--text); }
-  .command-inline  { margin-top: 0; }
+  .command-inline  { margin-top: 6px; }
 
   /* ── Chat con IA ── */
   .lca-chat-head {
@@ -2250,7 +2563,7 @@ export default {
   .chat-send-btn:hover:not(:disabled) { background: #6D28D9; }
   .chat-send-btn:disabled { opacity: .5; cursor: not-allowed; }
 
-  /* ── Resolución inline: origen + avisos (network · cyan #06B6D4) ─────────── */
+  /* ── Resolución inline: origen + nota de seguridad ───────────────────────── */
   .cmd-intro { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 10px; }
   .cmd-origin { color: var(--accent); font-weight: 600; margin-left: 4px; }
   /* Nota explicativa que acompaña a un comando: nunca entra en el portapapeles. */
@@ -2258,14 +2571,15 @@ export default {
     margin-top: 6px; font-size: 12px; line-height: 1.55; color: var(--text-secondary);
     white-space: pre-wrap;
   }
-  .cmd-warn {
-    margin-top: 8px; font-size: 12px; line-height: 1.55; color: var(--text);
-    background: var(--medium-bg); border: 1px solid var(--medium-border);
-    border-left: 3px solid var(--medium);
+  /* Cómo funciona la herramienta, no un riesgo del hallazgo: neutra. Las dos cajas
+     ámbar que había aquí (.cmd-warn y .cmd-sudo, esta última con #92400E, #FEF3C7 y
+     #FCD34D escritos a mano) competían en color con un Medio real, y el ámbar es de
+     la severidad. Fondo --bg y no --surface: el secundario sobre #F1F5F9 da 4,34:1. */
+  .cmd-note-safety {
+    display: flex; align-items: flex-start; gap: 7px;
+    background: var(--bg); color: var(--text-secondary);
     border-radius: var(--radius-sm); padding: 9px 11px;
+    white-space: normal;
   }
-  .cmd-sudo {
-    margin-top: 8px; font-size: 12px; line-height: 1.55; color: #92400E;
-    background: #FEF3C7; border: 1px solid #FCD34D; border-radius: 8px; padding: 9px 11px;
-  }
+  .cmd-note-safety .icon { flex-shrink: 0; margin-top: 2px; }
 </style>

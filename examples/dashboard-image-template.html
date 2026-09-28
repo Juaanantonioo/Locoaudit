@@ -121,7 +121,7 @@
             <span class="stat-num">{{ (auditData.scanMeta && auditData.scanMeta.containersFound) || 0 }}</span>
             <span class="stat-label">contenedores</span>
           </div>
-          <div class="stat-row is-accent">
+          <div class="stat-row">
             <svg class="icon icon-sm"><use href="#lca-i-play"></use></svg>
             <span class="stat-num">{{ (auditData.scanMeta && auditData.scanMeta.containersRunning) || 0 }}</span>
             <span class="stat-label">activos</span>
@@ -410,7 +410,8 @@
             <div v-for="(f, fi) in grp.findings" :key="f.id || fi" class="finding-item"
                  :class="{ 'finding-open': openFindings[f.id || fi] }">
               <button class="finding-row" @click="toggleFinding(f.id || fi)">
-                <span class="type-badge" :class="findingIsCVE(f) ? 'type-cve' : 'type-config'">
+                <!-- Sin modificador de color: el tipo lo dice la palabra, no el tinte. -->
+                <span class="type-badge">
                   {{ findingIsCVE(f) ? 'CVE' : 'Config' }}
                 </span>
                 <span class="sev-badge" :class="f.severity || 'info'">
@@ -423,69 +424,114 @@
               </button>
 
               <div class="finding-detail" :class="{ open: openFindings[f.id || fi] }">
-                <div class="detail-body">
-                  <div class="detail-col-title">Impacto</div>
-                  <p class="detail-evidence">{{ f.evidence }}</p>
-
-                  <!-- Tira de metadatos: datos estructurados de Trivy (findings CVE) -->
-                  <div v-if="hasMeta(f)" class="meta-strip">
-                    <div v-if="f.pkg" class="meta-cell">
-                      <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-box"></use></svg> Paquete</span>
-                      <span class="meta-value">{{ f.pkg }}</span>
-                    </div>
-                    <div v-if="f.installedVersion" class="meta-cell">
-                      <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-tag"></use></svg> Instalada</span>
-                      <span class="meta-value is-mono">{{ f.installedVersion }}</span>
-                    </div>
-                    <div v-if="f.fixedVersion" class="meta-cell">
-                      <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-check"></use></svg> Corregida</span>
-                      <span class="meta-value is-mono meta-fixed">{{ f.fixedVersion }}</span>
-                    </div>
-                    <div v-else-if="f.pkg" class="meta-cell">
-                      <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-check"></use></svg> Corregida</span>
-                      <span class="meta-value meta-nofix">sin parche</span>
-                    </div>
-                    <div v-if="f.cvss != null" class="meta-cell">
-                      <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-gauge"></use></svg> CVSS</span>
-                      <span class="meta-value">
-                        {{ f.cvss }}
-                        <span class="cvss-chip" :class="f.severity || 'info'">{{ sevLabel(f.severity) }}</span>
-                      </span>
-                    </div>
-                    <div v-if="f.cveCount > 1" class="meta-cell">
-                      <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-puzzle"></use></svg> CVEs</span>
-                      <span class="meta-value">{{ f.cveCount }}</span>
-                    </div>
-                    <div class="meta-cell">
-                      <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-search"></use></svg> Fuente</span>
-                      <span class="meta-value">{{ originLabel(f.source) }}</span>
-                    </div>
-                    <div class="meta-cell">
-                      <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-link"></use></svg> Advisory</span>
-                      <a v-if="f.primaryUrl" class="meta-value meta-link" :href="f.primaryUrl" target="_blank" rel="noopener">{{ f.advisoryLabel || 'Ver' }} <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg></a>
-                      <span v-else class="meta-value meta-muted" title="Trivy no aporta una URL pública fiable para este hallazgo">no disponible</span>
+                <!-- UN panel plano con secciones, la misma anatomía de host y network:
+                     no dos tarjetas apiladas dentro de otra tarjeta. NO renombrar
+                     .detail-stack: el export conserva esta anatomía dentro de
+                     .finding-detail. -->
+                <div class="detail-stack" v-if="f.evidence || f.fix">
+                  <!-- La evidencia no depende del fix: un hallazgo informativo sin pasos que dar
+                       sigue teniendo algo que contar, y colgarla del mismo v-if la escondía. -->
+                  <div class="detail-col" v-if="f.evidence">
+                    <div class="detail-col-title">Evidencia</div>
+                    <p class="detail-evidence">{{ f.evidence }}</p>
+                    <!-- Tira de metadatos: datos estructurados de Trivy (findings CVE) -->
+                    <div v-if="hasMeta(f)" class="meta-strip">
+                      <div v-if="f.pkg" class="meta-cell">
+                        <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-box"></use></svg> Paquete</span>
+                        <span class="meta-value">{{ f.pkg }}</span>
+                      </div>
+                      <div v-if="f.installedVersion" class="meta-cell">
+                        <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-tag"></use></svg> Instalada</span>
+                        <span class="meta-value is-mono">{{ f.installedVersion }}</span>
+                      </div>
+                      <div v-if="f.fixedVersion" class="meta-cell">
+                        <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-check"></use></svg> Corregida</span>
+                        <span class="meta-value is-mono meta-fixed">{{ f.fixedVersion }}</span>
+                      </div>
+                      <div v-else-if="f.pkg" class="meta-cell">
+                        <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-check"></use></svg> Corregida</span>
+                        <span class="meta-value meta-nofix">sin parche</span>
+                      </div>
+                      <div v-if="f.cvss != null" class="meta-cell">
+                        <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-gauge"></use></svg> CVSS</span>
+                        <span class="meta-value">
+                          {{ f.cvss }}
+                          <span class="cvss-chip" :class="f.severity || 'info'">{{ sevLabel(f.severity) }}</span>
+                        </span>
+                      </div>
+                      <div v-if="f.cveCount > 1" class="meta-cell">
+                        <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-puzzle"></use></svg> CVEs</span>
+                        <span class="meta-value">{{ f.cveCount }}</span>
+                      </div>
+                      <div class="meta-cell">
+                        <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-search"></use></svg> Fuente</span>
+                        <span class="meta-value">{{ originLabel(f.source) }}</span>
+                      </div>
+                      <div class="meta-cell">
+                        <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-link"></use></svg> Advisory</span>
+                        <a v-if="f.primaryUrl" class="meta-value meta-link" :href="f.primaryUrl" target="_blank" rel="noopener">{{ f.advisoryLabel || 'Ver' }} <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg></a>
+                        <span v-else class="meta-value meta-muted" title="Trivy no aporta una URL pública fiable para este hallazgo">no disponible</span>
+                      </div>
                     </div>
                   </div>
-
-                  <!-- Findings de configuración (no CVE): recomendación específica -->
-                  <!-- Sin pasos que dar. No existía esta rama: la tarjeta se quedaba muda y
-                       parecía que faltaba contenido por cargar. -->
-                  <div v-else-if="!findingIsCVE(f) && !f.fix" class="nofix-note">
-                    <template v-if="f.noAction">
-                      Este hallazgo es informativo. No requiere acción inmediata.
-                    </template>
-                    <template v-else-if="f.primaryUrl">
-                      LoCoAudit no tiene un paso concreto para este hallazgo.
-                      <a :href="f.primaryUrl" target="_blank" rel="noopener">Más información <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg></a>
-                    </template>
-                    <template v-else>
-                      Este hallazgo es informativo. No requiere acción inmediata.
-                    </template>
+                  <!-- Resolución para CUALQUIER hallazgo con fix, no solo los de config:
+                       el fix de un CVE (buildImageFix) existía y no se pintaba en ninguna
+                       parte, así que la ficha se quedaba sin decir qué hacer. -->
+                  <div class="detail-col" v-if="f.fix">
+                    <div class="detail-col-title">Resolución</div>
+                    <!-- Una rama por alternativa: son caminos EXCLUYENTES, y encadenarlos en
+                         una sola lista los hacía pasar por pasos consecutivos. Dentro de cada
+                         rama sí hay orden, y por eso es un <ol>: el número lo pone el
+                         navegador, no un <span>. -->
+                    <!-- Un solo parseo por ficha: el v-for sobre un array de un
+                         elemento evita repetir la llamada en cada bloque. -->
+                    <div class="fix-plan" v-for="(fx, xi) in [parseFixSteps(f.fix)]" :key="xi">
+                      <!-- Lo anterior a la primera rama describe el contexto: va sin numerar,
+                           porque no es un paso que nadie tenga que dar. -->
+                      <p v-for="(ln, ii) in fx.intro" :key="'i' + ii" class="fix-intro">{{ ln }}</p>
+                      <p v-for="(nt, ni) in fx.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
+                      <div class="fix-branch" v-for="(br, bi) in fx.branches" :key="bi">
+                        <div v-if="br.heading" class="fix-branch-title">{{ br.heading }}</div>
+                        <ol class="fix-steps" v-if="br.steps.length"
+                            :class="{ 'fix-steps-single': br.steps.length === 1 && !br.heading }">
+                          <li class="fix-step" v-for="(st, si) in br.steps" :key="si">
+                            <span v-if="st.label" class="fix-step-label">{{ st.label }}</span>
+                            <!-- El comando va DENTRO del paso que lo usa, no como paso aparte. -->
+                            <span v-if="st.cmd" class="command-box command-inline">
+                              <code class="command-text">{{ st.cmd }}</code>
+                              <button @click.stop="copyCommand(st.cmd)"
+                                      :class="{ copied: copiedKey === st.cmd }"
+                                      class="command-btn">
+                                <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg>{{ copiedKey === st.cmd ? ' Copiado' : 'Copiar' }}
+                              </button>
+                            </span>
+                          </li>
+                        </ol>
+                        <p v-for="(nt, ni) in br.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
+                      </div>
+                    </div>
+                    <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
+                    <!-- UNA nota por ficha, neutra, con el añadido de sudo solo si aplica.
+                         El ámbar queda para la severidad Media. -->
+                    <div v-if="fixHasCmd(f)" class="cmd-note cmd-note-safety">
+                      <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
+                      <span>LoCoAudit no ejecuta estos comandos: cópialos y revísalos antes de ejecutarlos.<template v-if="fixNeedsSudo(f)"> Requieren privilegios de administrador.</template></span>
+                    </div>
                   </div>
-                  <div v-else-if="!findingIsCVE(f) && f.fix" class="reco">
-                    <span class="reco-label">Recomendación</span>
-                    <p class="reco-text">{{ f.fix }}</p>
-                  </div>
+                </div>
+                <!-- Sin pasos de resolución: los MISMOS tres textos de host, porque "no
+                     requiere acción inmediata" es falso cuando lo que falta es el paso. -->
+                <div v-if="!f.fix" class="nofix-note">
+                  <template v-if="f.noAction">
+                    Este hallazgo es informativo. No requiere acción inmediata.
+                  </template>
+                  <template v-else-if="f.primaryUrl">
+                    LoCoAudit no tiene un paso concreto para este hallazgo.
+                    <a :href="f.primaryUrl" target="_blank" rel="noopener">Más información <svg class="icon icon-sm"><use href="#lca-i-external"></use></svg></a>
+                  </template>
+                  <template v-else>
+                    Este hallazgo es informativo. No requiere acción inmediata.
+                  </template>
                 </div>
 
                 <!-- ── Chat con IA ── -->
@@ -1147,33 +1193,58 @@ export default {
       return this.alfa(T.accent, (0.5 - i * 0.15).toFixed(2));
     },
 
+    // Gramática del `fix`, la MISMA de host y network (copiada, no compartida: cada
+    // plantilla es un fichero autónomo). Cuatro marcadores al principio de línea:
+    //   "## " abre una rama (alternativa excluyente)
+    //   "$ "  es un comando copiable, y cuelga del paso anterior
+    //   "> "  es una nota que no es un paso
+    //   el resto es un paso.
+    // Un fix sin marcadores da una sola rama sin subtítulo y un paso por línea.
+    //
+    // Lo que había aquí antes y NO vuelve: trocear por ". " un fix de una sola línea
+    // —convertía cualquier párrafo en una secuencia numerada que nadie había escrito—
+    // y adivinar comandos con una lista de verbos (el viejo stepCmd/parseFixStepsRich).
     parseFixSteps(fix) {
-      if (!fix) return [];
-      if (fix.indexOf('\n') >= 0) {
-        return fix.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      var res = { intro: [], notes: [], branches: [] };
+      if (!fix) return res;
+      var lineas = String(fix).split('\n')
+        .map(function (l) { return l.trim(); })
+        .filter(function (l) { return l; });
+      var hayRamas = lineas.some(function (l) { return l.indexOf('## ') === 0; });
+      var actual = null;
+      function abrir(heading) {
+        actual = { heading: heading, steps: [], notes: [] };
+        res.branches.push(actual);
       }
-      if (fix.indexOf('. ') >= 0) {
-        var parts = fix.split('. ').map(function(s) { return s.trim(); }).filter(Boolean);
-        return parts.map(function(s, i) { return i < parts.length - 1 ? s + '.' : s; });
-      }
-      return [fix];
+      lineas.forEach(function (s) {
+        if (s.indexOf('## ') === 0) { abrir(s.slice(3).trim()); return; }
+        if (s.indexOf('> ') === 0) {
+          var nota = s.slice(2).trim();
+          // Antes de la primera rama la nota cuelga del bloque introductorio.
+          if (nota) (actual ? actual.notes : res.notes).push(nota);
+          return;
+        }
+        if (s.indexOf('$ ') === 0) {
+          var cmd = s.slice(2).trim();
+          if (!cmd) return;
+          if (!actual) abrir(null);
+          var ultimo = actual.steps[actual.steps.length - 1];
+          // Comando sin paso al que colgarse (o con el paso ya ocupado): sale igual, con
+          // la etiqueta vacía. Es un fix mal formado en el origen, no un motivo para perderlo.
+          if (!ultimo || ultimo.cmd) actual.steps.push({ label: '', cmd: cmd });
+          else ultimo.cmd = cmd;
+          return;
+        }
+        if (hayRamas && !actual) { res.intro.push(s); return; }
+        if (!actual) abrir(null);
+        actual.steps.push({ label: s, cmd: null });
+      });
+      res.branches = res.branches.filter(function (r) {
+        return r.heading || r.steps.length || r.notes.length;
+      });
+      return res;
     },
 
-    // Detecta si un paso de resolución es (o contiene) un comando ejecutable.
-    // Soporta dos formas: la línea entera es comando, o "Etiqueta: comando".
-    stepCmd(step) {
-      var s = (step || '').trim();
-      var CMD = /^(sudo|brew|npm|yarn|pip|composer|go|apt|dnf|yum|winget|choco|lsof|nslookup|kill|systemctl|launchctl|bundle|cargo|rabbitmqctl|jupyter|auditpol|nginx|netsh|net\s+stop|netstat|ufw|apachectl|systemsetup|docker)\b/i;
-      if (CMD.test(s)) return { label: '', cmd: s };
-      var idx = s.indexOf(': ');
-      if (idx >= 0) {
-        var after = s.slice(idx + 2).trim();
-        if (CMD.test(after)) return { label: s.slice(0, idx + 1), cmd: after };
-      }
-      return null;
-    },
-
-    // Pasos enriquecidos: cada paso es { label, cmd } (comando copiable) o { text }.
     // El fix puede traer el comando en la 1ª línea y una nota explicativa debajo.
     // El botón copia SOLO el comando (finding.command); la nota se muestra aparte,
     // para que un pegado en terminal nunca arrastre texto no ejecutable.
@@ -1181,20 +1252,26 @@ export default {
       if (!f || !f.command || !f.fix) return "";
       return String(f.fix).split("\n").slice(1).join("\n").trim();
     },
+    // Todos los comandos de la ficha: el directo (findings con `command`) y los que
+    // los pasos marcan con "$ ". Una sola fuente para la nota y para el aviso de sudo.
+    fixCommands(f) {
+      if (!f || !f.fix) return [];
+      var cmds = f.command ? [String(f.command)] : [];
+      try {
+        this.parseFixSteps(f.fix).branches.forEach(function (r) {
+          r.steps.forEach(function (st) { if (st.cmd) cmds.push(st.cmd); });
+        });
+      } catch (e) { /* fix ilegible: queda el comando directo, si lo hay */ }
+      return cmds;
+    },
     // ¿El paso de resolución contiene algún comando (directo o dentro de un paso)?
     fixHasCmd(f) {
-      if (!f || !f.fix) return false;
-      if (f.command) return true;
-      try { return this.parseFixStepsRich(f.fix).some(function (s) { return !!s.cmd; }); }
-      catch (e) { return false; }
+      return this.fixCommands(f).length > 0;
     },
-    parseFixStepsRich(fix) {
-      var self = this;
-      return this.parseFixSteps(fix).map(function(step) {
-        var c = self.stepCmd(step);
-        return c ? { label: c.label, cmd: c.cmd, text: null }
-                 : { label: null, cmd: null, text: step };
-      });
+    // ¿Alguno PIDE privilegios? Se mira el comando, no la prosa: el fix que solo
+    // menciona sudo de pasada no debe disparar el aviso.
+    fixNeedsSudo(f) {
+      return this.fixCommands(f).some(function (c) { return /^sudo(\s|$)/.test(String(c).trim()); });
     },
 
     sevLabel(sev) {
@@ -1606,14 +1683,12 @@ export default {
   }
   .stat-row { display: flex; align-items: baseline; gap: 8px; width: 100%; }
   .stat-row .icon { color: var(--text-secondary); align-self: center; }
-  .stat-row.is-accent .icon { color: var(--accent); }
   .stat-num {
     font-family: var(--font-mono);
     font-size: 26px; font-weight: 700; line-height: 1;
     letter-spacing: -1px; color: var(--text);
     min-width: 2ch;
   }
-  .stat-row.is-accent .stat-num { color: var(--accent); }
   .stat-label { font-size: 12px; color: var(--text-secondary); }
 
   @media (max-width: 820px) {
@@ -1640,16 +1715,19 @@ export default {
   .lca-report-root > .main > * { width: 100%; max-width: none; }
 
   /* ── SECTION LABEL ────────────────────────────────────────── */
+  /* El equivalente en host es .section-title: gris secundario, no acento. Un título
+     no es clicable, así que no lleva el violeta que marca lo que sí lo es. La barra
+     se queda —es estructura del marcado— pero en gris: decora, no señala. */
   .section-label {
     display: flex; align-items: center; gap: 8px;
     font-size: 12px; font-weight: 700;
-    color: var(--accent);
+    color: var(--text-secondary);
     text-transform: uppercase; letter-spacing: .1em;
     margin-bottom: 10px;
   }
   .title-bar {
     width: 3px; height: 16px;
-    background: var(--accent); border-radius: 2px;
+    background: var(--text-muted); border-radius: 2px;
     display: inline-block; flex-shrink: 0;
   }
   .section-count {
@@ -1804,7 +1882,7 @@ export default {
   /* ── CONTAINER CARDS ──────────────────────────────────────── */
   .empty-dashed {
     background: #fff;
-    border: 1px dashed var(--accent-border);
+    border: 1px dashed var(--border);
     border-radius: 10px;
     padding: 32px; text-align: center; color: var(--text-secondary);
   }
@@ -1817,11 +1895,11 @@ export default {
 
   .container-card {
     background: #fff;
-    border: 2px solid var(--accent-border);
+    border: 2px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
     position: relative;
-    box-shadow: 0 4px 16px rgba(124,58,237,.06);
+    box-shadow: var(--shadow);
   }
   .container-card.crisk-critical { border-color: var(--critical); box-shadow: 0 4px 16px rgba(239,68,68,.15); }
   .container-card.crisk-high     { border-color: var(--high);     box-shadow: 0 4px 16px rgba(249,115,22,.12); }
@@ -1849,7 +1927,7 @@ export default {
   }
   .container-image {
     font-family: var(--font-mono); font-size: 11px;
-    color: var(--accent); background: var(--bg);
+    color: var(--text-secondary); background: var(--bg);
     padding: 2px 6px; border-radius: 4px; display: inline-block;
   }
   .status-badge {
@@ -1903,7 +1981,7 @@ export default {
 
   .card {
     background: #fff;
-    border: 1px solid var(--accent-border);
+    border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 20px;
     min-width: 0;
@@ -1916,7 +1994,7 @@ export default {
     width: clamp(120px, 35%, 160px); height: auto; flex-shrink: 0;
   }
   .donut-total {
-    font-size: 28px; font-weight: 700; fill: var(--accent);
+    font-size: 28px; font-weight: 700; fill: var(--text);
     font-family: var(--font-sans);
   }
   .donut-sub {
@@ -1963,7 +2041,7 @@ export default {
   .slab-high     { background: var(--high-border);     border-color: var(--high); }
   .slab-medium   { background: var(--medium-border);   border-color: var(--medium); }
   .slab-low      { background: var(--low-border);      border-color: var(--low); }
-  .slab-clean    { background: var(--accent-border);   border-color: var(--border); }
+  .slab-clean    { background: var(--surface);         border-color: var(--border); }
 
   .image-info { flex: 1; min-width: 0; }
   .image-name {
@@ -2009,18 +2087,23 @@ export default {
 
   .findings-list { display: flex; flex-direction: column; gap: 6px; }
 
+  /* Gris, no violeta: la cabecera de grupo no es un elemento interactivo de los que
+     el violeta señala (enlace, Copiar, IA, filtro); que se pueda plegar lo dice el
+     cursor y el chevron. Mismos colores que .group-icon/.group-name/.group-chevron
+     de host. NO renombrar .group-header: el acordeón del informe exportado la busca
+     por subcadena. */
   .group-header {
     display: flex;
     align-items: center;
     gap: 8px;
     margin: 12px 0 2px;
     padding: 6px 10px;
-    background: var(--accent-bg);
-    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    border-left: 3px solid var(--border);
     border-radius: 6px;
     font-size: 12.5px;
     font-weight: 700;
-    color: var(--accent);
+    color: var(--text);
     cursor: pointer;
     user-select: none;
     transition: background .15s;
@@ -2029,11 +2112,14 @@ export default {
   .group-header:first-child { margin-top: 0; }
   .group-chevron {
     font-size: 11px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     width: 12px;
     flex: 0 0 auto;
   }
-  .group-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .group-name { font-family: var(--font-mono); color: var(--text); }
+  /* El icono va dentro del nombre, así que sin esta regla heredaría su color: el
+     mismo gris secundario que .group-icon en host. */
+  .group-name .icon { color: var(--text-secondary); }
   .group-os {
     font-weight: 600;
     font-size: 11px;
@@ -2051,12 +2137,20 @@ export default {
     padding: 0 6px;
     line-height: 16px;
   }
+  /* Misma píldora de recuento que host: borde y texto secundario sobre el fondo de
+     tarjeta, no un círculo relleno de violeta. */
   .group-count {
-    background: var(--accent);
-    color: #fff;
-    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border-radius: var(--radius-pill);
     padding: 1px 8px;
     font-size: 11px;
+    font-weight: 700;
     flex: 0 0 auto;
   }
   .group-body { display: flex; flex-direction: column; gap: 6px; }
@@ -2065,9 +2159,9 @@ export default {
     font-family: var(--font-mono);
     font-size: 10.5px;
     font-weight: 600;
-    color: var(--accent);
+    color: var(--text-secondary);
     background: var(--bg);
-    border: 1px solid var(--accent-border);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 1px 7px;
     margin-right: 8px;
@@ -2076,15 +2170,15 @@ export default {
 
   .finding-item {
     background: #fff;
-    border: 1px solid var(--accent-border);
+    border: 1px solid var(--border);
     border-radius: 10px;
     overflow: hidden;
-    box-shadow: 0 1px 4px rgba(124,58,237,.05);
+    box-shadow: var(--shadow);
     transition: border-color .2s, box-shadow .2s;
   }
   .finding-item.finding-open {
     border-color: var(--border);
-    box-shadow: 0 4px 16px rgba(124,58,237,.1);
+    box-shadow: var(--shadow-md);
   }
 
   .finding-row {
@@ -2095,12 +2189,17 @@ export default {
   }
   .finding-row:hover { background: var(--bg); }
 
+  /* Etiqueta de TIPO, no de severidad ni de acción: gris con borde, igual que
+     .badge.cat en network. El violeta competía con el badge de severidad y con lo
+     único que sí se pulsa; el ámbar de .type-config se leía como un Medio que no
+     era. Los dos tipos comparten estilo porque los dos dicen lo mismo: de dónde
+     sale el hallazgo, no cuánto importa. */
   .type-badge {
     font-family: var(--font-mono); font-size: 11px; font-weight: 700;
     padding: 2px 7px; border-radius: 4px; flex-shrink: 0;
+    background: var(--card); color: var(--text-secondary);
+    border: 1px solid var(--border);
   }
-  .type-cve    { background: var(--bg); color: var(--accent); }
-  .type-config { background: var(--medium-bg);   color: var(--medium-text); }
 
   .sev-badge {
     font-size: 11px; font-weight: 600;
@@ -2129,18 +2228,30 @@ export default {
   .finding-detail.open { display: block; }
   @keyframes iaSlideDown { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
-  .detail-body {
-    padding-top: 12px;
+  /* Detalle común: UN panel plano con secciones, no dos tarjetas apiladas dentro de
+     otra tarjeta. NO renombrar .detail-stack: el export conserva esta anatomía
+     dentro de .finding-detail. */
+  .detail-stack {
+    background: var(--card);
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    background: var(--bg);
-    border: 1px solid var(--accent-border);
     padding: 14px 16px;
   }
+
+  /* Sin caja propia: la sección se delimita por su título y, a partir de la segunda,
+     por una línea discontinua. */
+  .detail-col + .detail-col {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
+  }
+  /* Gris, no violeta: un rótulo de sección no se pulsa. El violeta queda para lo
+     único interactivo (Copiar, enlaces, asistente), igual que en host. */
   .detail-col-title {
     font-size: 11px; font-weight: 700;
     text-transform: uppercase; letter-spacing: .06em;
-    color: var(--accent);
-    margin-bottom: 6px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
   }
   .detail-evidence {
     font-size: 12.5px; color: var(--text); line-height: 1.6;
@@ -2149,11 +2260,12 @@ export default {
   }
 
   /* ── Tira de metadatos del hallazgo ───────────────────────── */
+  /* Borde gris, no violeta: es un separador, no algo que se pulse. */
   .meta-strip {
     display: flex; flex-wrap: wrap;
     gap: 10px 22px;
     margin-top: 14px; padding-top: 14px;
-    border-top: 1px dashed var(--accent-border);
+    border-top: 1px dashed var(--border);
   }
   .meta-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .meta-label {
@@ -2178,21 +2290,64 @@ export default {
   .meta-link:hover { text-decoration: underline; }
   .meta-muted { color: var(--text-secondary); font-weight: 500; font-style: italic; }
 
-  /* ── Recomendación (findings de configuración, no CVE) ────── */
-  .reco {
-    margin-top: 14px; padding-top: 14px;
-    border-top: 1px dashed var(--accent-border);
+  /* ── Pasos de resolución ──
+     Sustituyen a .reco, que era una anatomía propia de image para decir lo mismo.
+     Rama = alternativa excluyente. Su subtítulo es el mismo gris que
+     .detail-col-title, sin mayúsculas: está un nivel por debajo. */
+  .fix-branch + .fix-branch { margin-top: 14px; }
+  .fix-branch-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
   }
-  .reco-label {
-    font-size: 10px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: .04em;
+  .fix-steps {
+    list-style: decimal;
+    /* El número lo pone el navegador. Tabular para que la coma quede alineada al pasar
+       de 9 a 10, y en gris para que no compita con el texto del paso. */
+    padding-left: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+  .fix-steps::marker, .fix-step::marker { color: var(--text-secondary); }
+  /* Un párrafo suelto no es una secuencia: sin marcador y sin sangría. */
+  .fix-steps-single { list-style: none; padding-left: 0; }
+  .fix-step {
+    font-size: 12.5px;
+    color: var(--text);
+    line-height: 1.5;
+    padding-left: 2px;
+  }
+  .fix-step + .fix-step { margin-top: 8px; }
+  .fix-step-label  { color: var(--text); }
+  .command-inline  { margin-top: 6px; }
+  /* Contexto, no acción: ni marcador ni sangría. La intro va antes de las ramas; la
+     nota, detrás de la lista a la que pertenece. Gris secundario para que ninguna de
+     las dos se lea como un paso pendiente. */
+  .fix-intro { font-size: 12.5px; line-height: 1.5; color: var(--text); }
+  .fix-intro + .fix-intro { margin-top: 6px; }
+  .fix-intro + .fix-branch, .fix-note-line + .fix-branch { margin-top: 12px; }
+  .fix-note-line {
+    margin-top: 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
     color: var(--text-secondary);
   }
-  .reco-text {
-    margin: 4px 0 0;
-    font-size: 12.5px; color: var(--text); line-height: 1.55;
-    white-space: pre-wrap; word-break: break-word;
+
+  /* Nota explicativa que acompaña a un comando: nunca entra en el portapapeles. */
+  .cmd-note {
+    margin-top: 6px; font-size: 12px; line-height: 1.55; color: var(--text-secondary);
+    white-space: pre-wrap;
   }
+  /* Cómo funciona la herramienta, no un riesgo del hallazgo: neutra. El ámbar queda
+     para la severidad Media. Fondo --bg y no --surface: el secundario sobre #F1F5F9
+     da 4,34:1 y sobre #F8FAFC 4,55:1. Medido, no deducido del nombre del token. */
+  .cmd-note-safety {
+    display: flex; align-items: flex-start; gap: 7px;
+    background: var(--bg); color: var(--text-secondary);
+    border-radius: var(--radius-sm); padding: 9px 11px;
+    white-space: normal;
+  }
+  .cmd-note-safety .icon { flex-shrink: 0; margin-top: 2px; }
 
   /* Command box */
   .command-box {
@@ -2208,6 +2363,7 @@ export default {
   }
   .command-btn {
     flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 5px;
     background: var(--accent); color: #fff;
     border: none; border-radius: 6px;
     padding: 4px 10px; font-size: 11px; font-weight: 600;
