@@ -161,6 +161,44 @@ async function checkHostReachable(options = {}) {
   }
 
   const { reachable, reason, error } = parseDiscoveryXml(stdout);
+
+  // Segunda opinión SOLO para el "no accesible" firme. El null ya se escanea igual, y un true no
+  // necesita confirmación. Ver systemPing() para el porqué.
+  if (reachable === false && !options.skipPing) {
+    const ping = await systemPing(target, options.platform);
+    if (ping.replied) {
+      const durationMs = Date.now() - started;
+      const secs = (durationMs / 1000).toFixed(1);
+      return {
+        reachable:   true,
+        method:      "nmap-sn",
+        reason:      "echo-reply",
+        error:       null,
+        detail:      `${target} no respondió a las sondas de Nmap, pero sí al ping del sistema ` +
+                     `(${secs} s en total). Sin privilegios de administrador Nmap no puede usar ICMP ` +
+                     "y solo prueba los puertos TCP 22, 80, 443 y 8080, que este equipo no atiende.",
+        durationMs,
+        cmd,
+        confirmedBy: "ping",
+        pingCmd:     ping.cmd,
+      };
+    }
+    const durationMs = Date.now() - started;
+    return {
+      reachable,
+      method: "nmap-sn",
+      reason,
+      error: error || null,
+      // Solo se añade lo que se sabe: "tampoco respondió" cuando el ping se hizo, nada cuando no
+      // se pudo hacer, para no afirmar una comprobación que no ocurrió.
+      detail: describe(target, reachable, reason, durationMs, error) +
+              (ping.ran ? " Tampoco respondió al ping del sistema." : ""),
+      durationMs,
+      cmd,
+      pingCmd: ping.cmd || null,
+    };
+  }
+
   const durationMs = Date.now() - started;
 
   return {
@@ -172,6 +210,56 @@ async function checkHostReachable(options = {}) {
     durationMs,
     cmd,
   };
+}
+
+/** Tiempo máximo del ping del sistema, con margen sobre los ~2 s que tardan dos paquetes. */
+const PING_TIMEOUT_MS = 5000;
+
+/**
+ * El ping del sistema, para el caso en que Nmap da el equipo por caído.
+ *
+ * El problema que resuelve, comprobado el 2026-10-08 contra un equipo real (10.10.10.10, con
+ * solo 2222 y 5900 abiertos y el resto filtrados):
+ *   nmap -sn -n -PE -PS22,80,443,8080 10.10.10.10  → "You are not root -- using TCP pingscan
+ *                                                     rather than ICMP" · 0 hosts up
+ *   nmap -sn -n -PS2222 10.10.10.10                → 1 host up
+ *   ping 10.10.10.10                               → responde
+ * Sin root, Nmap descarta -PE y solo le quedan las cuatro sondas TCP. Un equipo que no atiende
+ * ninguno de esos puertos y filtra el resto sale "no accesible" y no se escanea, aunque el
+ * propio sistema sepa hacerle un ping. El `ping` del sistema sí puede mandar ICMP sin root en
+ * macOS, Linux y Windows.
+ *
+ * Qué cuenta como respuesta: una línea con "ttl=". Es lo único que llevan las respuestas de eco
+ * de verdad en los tres sistemas, y lo que NO lleva el "host de destino inaccesible" que devuelve
+ * un router. El código de salida no sirve: en Windows es 0 también con ese mensaje del router.
+ * "TTL=" no se traduce, así que vale para un Windows en español.
+ *
+ * Dos paquetes y no uno: en la misma prueba real los primeros paquetes se perdieron.
+ *
+ * Devuelve { ran, replied, cmd }. ran=false si no hay ping o no se pudo lanzar: en ese caso no se
+ * afirma nada y el resultado de Nmap se queda como estaba. El objetivo llega ya validado como
+ * IPv4 por validateTarget(), así que puede ir a la línea de órdenes.
+ */
+async function systemPing(target, platform = process.platform) {
+  const pingPath = await commandExists("ping");
+  if (!pingPath) return { ran: false, replied: false, cmd: null };
+
+  const cmd = platform === "win32"
+    ? `"${pingPath}" -n 2 -w 1000 ${target}`
+    : platform === "darwin"
+    ? `"${pingPath}" -n -c 2 -W 1000 ${target}`   // -W en milisegundos en macOS
+    : `"${pingPath}" -n -c 2 -W 1 ${target}`;     // -W en segundos en Linux
+
+  let out;
+  try {
+    out = await execCommand(cmd, PING_TIMEOUT_MS);
+  } catch (err) {
+    // Sin respuesta, ping sale con código distinto de cero: eso es un "no", no un fallo. Fallo
+    // es no haber podido ejecutarlo, y se distingue porque no deja salida ninguna.
+    out = (err.stdout || "") + (err.stderr || "");
+    if (!out.trim()) return { ran: false, replied: false, cmd };
+  }
+  return { ran: true, replied: /\bttl=\d+/i.test(out), cmd };
 }
 
 /**
@@ -188,6 +276,7 @@ function deriveTargetState(discovery) {
 
 module.exports = {
   checkHostReachable,
+  systemPing,
   parseDiscoveryXml,
   buildDiscoveryCmd,
   deriveTargetState,

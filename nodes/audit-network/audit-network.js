@@ -422,6 +422,9 @@ module.exports = function (RED) {
               durationMs: discovery.durationMs,
               cmd:        discovery.cmd,
               detail:     discovery.detail,
+              // Si el "accesible" lo dio el ping del sistema y no Nmap, y con qué orden.
+              confirmedBy: discovery.confirmedBy || null,
+              pingCmd:     discovery.pingCmd || null,
             },
             forceScan,
             // Qué hizo el escaneo, según nmap-wrapper.
