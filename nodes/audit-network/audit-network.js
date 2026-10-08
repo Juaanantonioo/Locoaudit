@@ -15,7 +15,7 @@ const { PORT_CATALOG }            = require("./modules/port-catalog");
 const { runNmap }                 = require("./modules/nmap-wrapper");
 const { checkHostReachable, deriveTargetState } = require("./modules/host-discovery");
 const { enrichPorts, detectFirewall } = require("./modules/service-detect");
-const { isLocalTarget }           = require("./modules/network-utils");
+const { isLocalTarget, validateTarget } = require("./modules/network-utils");
 const { commandExists }           = require("../../lib/executor");
 const { scriptExists, scriptStates } = require("./modules/nse-scripts");
 const { runCanary, canaryIsOk }   = require("./modules/vulners-canary");
@@ -61,9 +61,13 @@ module.exports = function (RED) {
 
       const scanMode       = config.scanMode    || "standard";
       const customPorts    = config.customPorts || "";
-      const target         = config.scanTarget === "custom" && config.customTarget
-        ? config.customTarget
-        : "127.0.0.1";
+      // "Otro equipo de mi red" exige una IPv4 válida de un equipo. Antes, un campo vacío caía
+      // en silencio a 127.0.0.1 (el usuario pedía otro equipo y se auditaba este) y cualquier
+      // texto llegaba tal cual a la línea de nmap, rangos incluidos. La regla vive en
+      // validateTarget(); aquí solo se aplica.
+      const wantsCustom    = config.scanTarget === "custom";
+      const targetCheck    = wantsCustom ? validateTarget(config.customTarget) : { ok: true, ip: "127.0.0.1" };
+      const target         = targetCheck.ok ? targetCheck.ip : null;
       // Para el caso legítimo: equipo encendido que filtra ICMP y las sondas TCP del -sn.
       const forceScan      = config.forceScan === true || config.forceScan === "true";
 
@@ -88,30 +92,57 @@ module.exports = function (RED) {
 
       const startTime = Date.now();
 
+      // Una configuración que no permite auditar: un único hallazgo NET-CFG-ERR y nada de nmap.
+      // El payload es el que ya se emitía para la lista de puertos vacía; `extraMeta` solo añade
+      // campos, para que ese caso siga saliendo byte a byte igual que antes.
+      function sendConfigError({ title, evidence, fix, extraMeta = {} }) {
+        const errFinding = createFinding({
+          id:       "NET-CFG-ERR",
+          title,
+          severity: "medium",
+          evidence,
+          fix,
+          category: "network",
+          source:   "native",
+        });
+        msg.payload = {
+          findings:  [errFinding],
+          summary:   summarize([errFinding]),
+          source:    "audit-network",
+          auditType: "network",
+          host: { hostname: os.hostname(), platform: process.platform },
+          scanMeta: { modulesRun: [], portSource: "none", portsScanned: 0, portsOpen: 0, durationMs: 0, scanMode, ...extraMeta },
+          raw:       { ports: [] },
+          timestamp: new Date().toISOString(),
+        };
+        node.status({ fill: "yellow", shape: "ring", text: "Configuración incorrecta" });
+        send(msg);
+        done();
+      }
+
       try {
+        if (!targetCheck.ok) {
+          // Lo que escribió el usuario se recorta antes de devolverlo: es texto libre y va a
+          // parar al panel y al informe exportado.
+          const escrito = String(config.customTarget == null ? "" : config.customTarget).trim().slice(0, 80);
+          sendConfigError({
+            title:    "Configuración incorrecta: la dirección del equipo no es válida",
+            evidence: `${targetCheck.reason}` + (escrito ? ` Valor indicado: «${escrito}».` : "") +
+                      " No se ha escaneado nada: la ausencia de puertos NO significa que el equipo esté protegido.",
+            fix:      "Indica en el nodo audit-network la dirección IPv4 de un único equipo. Ejemplo: 192.168.1.10\n" +
+                      "Para auditar este mismo equipo, elige \"Este equipo\" en Objetivo.",
+            // scanStatus 'not-run' con el mismo significado que ya tiene: no se escaneó.
+            extraMeta: { scanStatus: "not-run", target: null, customTarget: null },
+          });
+          return;
+        }
+
         if (scanMode === "custom" && !customPorts.trim()) {
-          const errFinding = createFinding({
-            id:       "NET-CFG-ERR",
+          sendConfigError({
             title:    "Configuración incorrecta: lista de puertos vacía",
-            severity: "medium",
             evidence: "El modo personalizado requiere una lista de puertos.",
             fix:      "Configura los puertos en el nodo audit-network. Ejemplo: 22,80,443",
-            category: "network",
-            source:   "native",
           });
-          msg.payload = {
-            findings:  [errFinding],
-            summary:   summarize([errFinding]),
-            source:    "audit-network",
-            auditType: "network",
-            host: { hostname: os.hostname(), platform: process.platform },
-            scanMeta: { modulesRun: [], portSource: "none", portsScanned: 0, portsOpen: 0, durationMs: 0, scanMode },
-            raw:       { ports: [] },
-            timestamp: new Date().toISOString(),
-          };
-          node.status({ fill: "yellow", shape: "ring", text: "Configuración incorrecta" });
-          send(msg);
-          done();
           return;
         }
 

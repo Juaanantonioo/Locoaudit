@@ -138,13 +138,22 @@ async function checkHostReachable(options = {}) {
     stdout = err.stdout || "";
     if (!stdout.includes("<runstats")) {
       const durationMs = Date.now() - started;
+      // Cortado por el límite: el motivo es el tiempo, no lo que nmap llevase escrito en stderr.
+      // Antes se mostraba el stderr también aquí, y en macOS sin root eso es el aviso "You are
+      // not root -- using TCP pingscan", que aparece en TODAS las ejecuciones: el informe
+      // atribuía el fallo a los permisos cuando lo que pasó es que se acabó el tiempo.
+      // Mismo criterio que lynis.js: child_process marca killed y manda SIGTERM al cortar.
+      const timedOut = err.killed || err.signal === "SIGTERM";
       return {
         reachable:  null,
         method:     "error",
-        reason:     null,
-        detail:     `El descubrimiento de ${target} falló: ` +
-                    `${(err.stderr || err.message || "timeout").trim()}. ` +
-                    "No se puede afirmar si el equipo está accesible.",
+        reason:     timedOut ? "timeout" : null,
+        detail:     timedOut
+          ? `El descubrimiento de ${target} no terminó en el límite de ${Math.round(timeout / 1000)} s ` +
+            "y se interrumpió. No se puede afirmar si el equipo está accesible."
+          : `El descubrimiento de ${target} falló: ` +
+            `${(err.stderr || err.message || "sin detalle del sistema").trim()}. ` +
+            "No se puede afirmar si el equipo está accesible.",
         durationMs,
         cmd,
       };

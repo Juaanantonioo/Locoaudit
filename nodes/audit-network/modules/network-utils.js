@@ -3,6 +3,7 @@
 // Parar un servicio systemd con su .socket tiene una sola definición: duplicarla aquí acabaría
 // divergiendo de la de los fixes de proceso.
 const { systemdDisable, getFixForProcess } = require("../../../lib/process-fix");
+const os = require("os");
 
 /** "80,443,8000-8080" a números ordenados; null si la cadena viene vacía. */
 function parsePortsList(input) {
@@ -37,6 +38,90 @@ function parseTargets(input) {
     .map((x) => x.trim())
     .filter(Boolean);
   return Array.from(new Set(raw));
+}
+
+/**
+ * ¿Es `input` la dirección IPv4 de UN equipo? Devuelve { ok: true, ip } o { ok: false, reason }.
+ *
+ * Por qué existe. El campo "Dirección IP del equipo" se pasaba tal cual a la línea de nmap. Con
+ * eso pasaban dos cosas, las dos comprobadas:
+ *   - Un rango (10.10.10.0/24) se aceptaba, y el nodo está hecho para un equipo: parseNmapXml()
+ *     junta los <port> de todos los <host> sin decir de cuál es cada uno, y el hostname es el
+ *     del primero. Un escaneo de red que terminase daría los puertos de varios equipos como si
+ *     fueran de uno, con el nombre de otro. Medido con un /24 real: no llegó a terminar
+ *     (420 s de límite, -Pn sondea las 256 direcciones), pero con un rango pequeño sí terminaría.
+ *   - El texto llegaba a la shell sin filtrar: `1.2.3.4; cualquier-cosa` era una orden más.
+ *
+ * Qué admite: solo cuatro octetos decimales, 0-255, sin ceros a la izquierda (`010` lo lee nmap
+ * como octal en algunas versiones y apunta a otro equipo). Nada de nombres, rangos, máscaras,
+ * listas ni IPv6: el comando no lleva -6 y findInterfaceForTarget() solo entiende IPv4, así que
+ * aceptarlos sería prometer algo que el resto del nodo no hace.
+ *
+ * Qué rechaza aunque tenga forma de IPv4, porque no es la dirección de un equipo:
+ *   0.0.0.0/8 ("esta red"), 224.0.0.0/4 (multidifusión), 240.0.0.0/4 (reservada, incluye la
+ *   difusión 255.255.255.255), y la dirección de red o de difusión de una subred a la que este
+ *   equipo está conectado. Esta última solo se puede saber para las subredes propias, que son
+ *   las que conocemos por su máscara; para una subred remota no hay forma de distinguirla.
+ *
+ * Es la única regla: audit-network.html hace una comprobación de forma para pintar el campo en
+ * rojo, pero quien decide si se escanea es esta función.
+ */
+function validateTarget(input, interfaces = os.networkInterfaces()) {
+  const raw = String(input == null ? "" : input).trim();
+  if (!raw) {
+    return { ok: false, reason: "No se ha indicado ninguna dirección IP." };
+  }
+
+  const m = raw.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) {
+    return {
+      ok: false,
+      reason: "No es una dirección IPv4 de un solo equipo. Se admite una dirección con el formato " +
+              "192.168.1.10, sin rangos (/24, 1-20), listas, nombres de equipo ni otros caracteres.",
+    };
+  }
+
+  const octets = m.slice(1);
+  if (octets.some((o) => o.length > 1 && o.startsWith("0"))) {
+    return { ok: false, reason: "Los números de la dirección no pueden llevar ceros a la izquierda." };
+  }
+  const n = octets.map(Number);
+  if (n.some((o) => o > 255)) {
+    return { ok: false, reason: "Cada número de la dirección tiene que estar entre 0 y 255." };
+  }
+
+  const ip = n.join(".");
+  if (n[0] === 0) {
+    return { ok: false, reason: `${ip} no es la dirección de un equipo (rango 0.0.0.0/8, reservado).` };
+  }
+  if (n[0] >= 224 && n[0] <= 239) {
+    return { ok: false, reason: `${ip} es una dirección de multidifusión, no la de un equipo.` };
+  }
+  if (n[0] >= 240) {
+    return { ok: false, reason: `${ip} es una dirección reservada o de difusión, no la de un equipo.` };
+  }
+
+  // Red y difusión de las subredes propias. /31 y /32 no tienen ninguna de las dos (RFC 3021).
+  const toInt = (parts) => parts.reduce((acc, o) => ((acc << 8) | o) >>> 0, 0);
+  const target = toInt(n);
+  for (const [name, addrs] of Object.entries(interfaces || {})) {
+    for (const addr of addrs || []) {
+      if (addr.family !== "IPv4" && addr.family !== 4) continue;
+      if (addr.internal) continue;
+      const mask = toInt(addr.netmask.split(".").map(Number));
+      if (mask >= 0xFFFFFFFE) continue;
+      const network   = (toInt(addr.address.split(".").map(Number)) & mask) >>> 0;
+      const broadcast = (network | (~mask >>> 0)) >>> 0;
+      if (target === network) {
+        return { ok: false, reason: `${ip} es la dirección de la red ${addr.cidr || ip} (interfaz ${name}), no la de un equipo.` };
+      }
+      if (target === broadcast) {
+        return { ok: false, reason: `${ip} es la dirección de difusión de la red ${addr.cidr || ""} (interfaz ${name}), no la de un equipo.`.replace(" ()", "") };
+      }
+    }
+  }
+
+  return { ok: true, ip };
 }
 
 /** Decide si el objetivo es este equipo, y con eso si se ejecutan lsof y el descubrimiento. */
@@ -234,4 +319,4 @@ function getFixForPort(port, platform) {
   }
 }
 
-module.exports = { parsePortsList, parseTargets, isLocalTarget, toBaseUrl, getFixForPort };
+module.exports = { parsePortsList, parseTargets, validateTarget, isLocalTarget, toBaseUrl, getFixForPort };

@@ -7,7 +7,17 @@
             scanMode:     { value: "standard" },
             customPorts:  { value: "" },
             scanTarget:   { value: "localhost" },
-            customTarget: { value: "" },
+            // Solo la FORMA, para marcar el campo en rojo mientras se escribe. Quien decide si se
+            // escanea es validateTarget() en network-utils.js, que además rechaza las direcciones
+            // de red, difusión y multidifusión: esta comprobación no puede sustituirla.
+            customTarget: { value: "", validate: function (v) {
+                var mode = $("#node-input-scanTarget").length ? $("#node-input-scanTarget").val() : this.scanTarget;
+                if (mode !== "custom") return true;
+                var m = String(v || "").trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+                return !!m && m.slice(1).every(function (o) {
+                    return Number(o) <= 255 && !(o.length > 1 && o.charAt(0) === "0");
+                });
+            } },
             forceScan:    { value: false },
             // Apagado de fábrica: activarlo manda a un servidor de internet las versiones de
             // servicio detectadas. Un defecto distinto sería ceder datos sin que nadie lo lea.
@@ -188,7 +198,8 @@
                     placeholder="Ej: 192.168.1.100"
                     style="width: 100%; box-sizing: border-box;">
                 <div style="color: #555; font-size: 0.82em; margin-top: 6px; line-height: 1.5;">
-                    Introduce la IP del equipo que quieres auditar.<br>
+                    Introduce la dirección IPv4 de un único equipo, por ejemplo 192.168.1.10.
+                    No se admiten rangos (/24, 1-20), listas ni nombres de equipo.<br>
                     Solo audita equipos de tu propiedad.
                 </div>
 
