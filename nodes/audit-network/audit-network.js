@@ -79,9 +79,9 @@ module.exports = function (RED) {
        *
        * Apagado porque cambia lo que la auditoría le hace a un tercero. El escaneo de puertos
        * pregunta "¿estás abierto?"; los scripts dialogan con el servicio y, en el caso de
-       * vulners, mandan la versión detectada a un servidor de internet. Eso es una cesión de
-       * datos y una interacción más larga con el equipo auditado, y ninguna de las dos se activa
-       * sin que alguien lo haya leído y marcado.
+       * vulners, consultan una base de datos de internet con la versión detectada. Eso es una
+       * dependencia externa y una interacción más larga con el equipo auditado, y ninguna de las
+       * dos se activa sin que alguien lo haya leído y marcado.
        *
        * Apagado también porque el escaneo tarda bastante más, y quien solo quiere saber qué
        * puertos tiene abiertos no debería pagarlo.

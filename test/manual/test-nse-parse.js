@@ -608,7 +608,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
    * Estas comprobaciones leen el FUENTE del nodo y de su diálogo, no su comportamiento: un nodo
    * de Node-RED no se puede instanciar fuera de Node-RED, y la validación de verdad es la
    * auditoría real. Lo que cubren es lo que una prueba manual no pilla porque "parece que va":
-   * que el defecto siga apagado, que el presupuesto de tiempo se SUME, y que la cesión de datos
+   * que el defecto siga apagado, que el presupuesto de tiempo se SUME, y que la consulta a Vulners
    * siga escrita dentro de la casilla. Son las tres cosas que se deshacen solas en una limpieza
    * de seis meses.
    */
@@ -620,7 +620,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
     require("path").join(__dirname, "../../nodes/audit-network/audit-network.html"), "utf8");
 
   ok(/nseEnabled:\s*\{\s*value:\s*false\s*\}/.test(fuenteHtml),
-     "la casilla viene APAGADA de fábrica: activarla cede datos a un tercero");
+     "la casilla viene APAGADA de fábrica: activarla consulta una base de datos externa");
   ok(/config\.nseEnabled === true \|\| config\.nseEnabled === "true"/.test(fuenteNodo),
      "y el nodo la lee con el mismo patrón estricto que forceScan, sin colar un string vacío");
 
@@ -640,12 +640,12 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   ok(/nseScripts = \[\.\.\.nseAvailability\.available\]/.test(fuenteNodo),
      "y solo se le pide a nmap lo que ese nmap tiene: un nombre inexistente aborta el escaneo entero");
 
-  // La cesión va DENTRO del texto que se marca. Se comprueba sobre el <label> de la casilla, no
+  // La consulta va DENTRO del texto que se marca. Se comprueba sobre el <label> de la casilla, no
   // sobre el fichero entero: una advertencia en un párrafo aparte no cuenta, porque no se lee.
   const etiqueta = fuenteHtml.match(
     /<label for="node-input-nseEnabled"[\s\S]*?<\/label>/);
-  ok(etiqueta && /vulners\.com/.test(etiqueta[0]) && /versi[óo]n/.test(etiqueta[0]),
-     "el texto de la casilla dice, él mismo, que envía las versiones a vulners.com");
+  ok(etiqueta && /Vulners/i.test(etiqueta[0]) && /base de datos/.test(etiqueta[0]),
+     "el texto de la casilla dice, él mismo, que consulta la base de datos de Vulners");
 
   ok(/scanMeta[\s\S]*?nse:\s*\{[\s\S]*?canary:/.test(fuenteNodo),
      "y el estado del análisis viaja en scanMeta.nse para quien lee el JSON");

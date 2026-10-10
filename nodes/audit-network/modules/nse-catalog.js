@@ -37,9 +37,9 @@ const NSE_SCRIPTS = [
   {
     id: "vulners",
     categories: ["vuln", "safe", "external"],
-    // `external` no es un adorno: consulta https://vulners.com/api/v3/burp/software/ y le manda
-    // el CPE y la versión de cada servicio detectado. Es una cesión de datos a un tercero, y por
-    // eso todo esto es opt-in y el toggle lo dice con esas palabras.
+    // `external` no es un adorno: consulta https://vulners.com/api/v3/burp/software/ con el CPE
+    // y la versión de cada servicio detectado, y nada más del equipo. Depende de un servicio
+    // externo, y por eso la casilla lo dice en su propio texto.
     what: "CVE conocidos para la versión que anuncia el servicio",
   },
   {

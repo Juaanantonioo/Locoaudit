@@ -144,23 +144,23 @@
         <div style="padding-left: 8px; display: flex; flex-direction: column; gap: 10px;">
 
             <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
-                <!-- La cesión de datos va DENTRO del texto que se marca, no en una nota debajo.
-                     Quien activa una casilla lee la casilla; una advertencia en un párrafo aparte
-                     se salta, y aquí lo que se acepta es mandar las versiones detectadas a un
-                     tercero. -->
-                <label for="node-input-nseEnabled" style="font-weight: 600; display: flex; align-items: flex-start; gap: 6px; margin: 0;">
+                <!-- La consulta a Vulners va DENTRO del texto que se marca, no en una nota debajo.
+                     Quien activa una casilla lee la casilla; una nota en un párrafo aparte se
+                     salta, y quien la activa tiene que saber que se consulta una base de datos
+                     externa. -->
+                <label for="node-input-nseEnabled" style="width: 100%; font-weight: 600; display: flex; align-items: flex-start; gap: 6px; margin: 0;">
                     <input type="checkbox" id="node-input-nseEnabled" style="width: auto; margin: 3px 0 0 0;">
                     <span>
-                        Buscar vulnerabilidades conocidas y revisar servicios (Nmap NSE; puede
-                        enviar el nombre y la versión a vulners.com)
+                        Buscar vulnerabilidades conocidas y revisar servicios (Nmap NSE, con
+                        consulta a la base de datos de Vulners)
                     </span>
                 </label>
                 <div style="color: #555; font-size: 0.82em; margin-top: 8px; line-height: 1.5;">
-                    Nmap consulta CVE conocidos según la versión anunciada y revisa el cifrado,
-                    los algoritmos SSH y los banners de los servicios. <strong>Solo en equipos
-                    de tu propiedad:</strong> esta opción interroga a los servicios y puede
-                    enviar a Vulners el nombre y la versión detectados; no envía tu IP privada ni
-                    el contenido del equipo. Tarda más y, si está apagada, no se comprueba esta
+                    Nmap busca los CVE conocidos de cada servicio en la base de datos de Vulners
+                    a partir de su nombre y versión, y revisa el cifrado, los algoritmos SSH y
+                    los banners. La consulta no incluye la dirección del equipo auditado ni otros
+                    datos suyos. <strong>Solo en equipos de tu propiedad:</strong> esta opción
+                    interroga a los servicios. Tarda más y, si está apagada, no se comprueba esta
                     parte: que no aparezcan vulnerabilidades no significa que no existan.
                 </div>
 
@@ -333,9 +333,10 @@
         <code>NET-SVC-*</code> (algoritmos que ofrece el servidor SSH).
     </p>
     <p>
-        <strong>Cede datos a un tercero:</strong> <code>vulners</code> manda a vulners.com el
-        nombre y la versión de cada servicio detectado. Por eso viene apagado y por eso la casilla
-        lo dice en su propio texto. No se ejecuta con privilegios: nada de <code>-O</code>, nada de
+        <strong>Consulta una base de datos externa:</strong> <code>vulners</code> busca en la de
+        vulners.com los CVE de cada servicio a partir de su nombre y versión, sin incluir la
+        dirección del equipo auditado. Necesita conexión a internet, y la casilla lo indica en su
+        propio texto. No se ejecuta con privilegios: nada de <code>-O</code>, nada de
         <code>sudo</code>.
     </p>
     <p>
