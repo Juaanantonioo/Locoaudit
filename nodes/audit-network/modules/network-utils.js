@@ -2,7 +2,7 @@
 
 // Parar un servicio systemd con su .socket tiene una sola definición: duplicarla aquí acabaría
 // divergiendo de la de los fixes de proceso.
-const { systemdDisable, getFixForProcess } = require("../../../lib/process-fix");
+const { systemdDisable, getFixForProcess, unitFor } = require("../../../lib/process-fix");
 const os = require("os");
 
 /** "80,443,8000-8080" a números ordenados; null si la cadena viene vacía. */
@@ -242,42 +242,72 @@ function comandoYNota(texto) {
  * rama propia, así que macOS recibe los comandos de Linux (systemctl, rutas de /etc). Estaba
  * así antes de migrar los textos y arreglarlo es otro trabajo.
  */
-function getFixForPort(port, platform) {
+function getFixForPort(port, platform, pkgManager) {
   const plat = platform || process.platform;
+  const m = pkgManager || null;
+  // Las órdenes salen de process-fix.js, la misma tabla que usa el fix por proceso. Antes este
+  // switch repetía el texto a mano y la copia se desincronizó: macOS recibía las órdenes de Linux
+  // (systemctl, /etc/mysql) en los puertos 80, 443, 3306, 5432, 6379 y 27017.
+  const lines = (texto) => String(texto).split("\n").map((l) => l.trim()).filter(Boolean);
+  // A la gramática del dashboard: una línea que empieza por sudo es el comando del paso; "texto:
+  // sudo …" es un paso con su comando; la primera línea sin comando es el paso; el resto, notas.
+  const cmdAndNotes = (texto) => {
+    const out = [];
+    lines(texto).forEach((l, i) => {
+      const conCmd = /^(.*?):\s+(sudo\s.+)$/.exec(l);
+      if (/^sudo\s/.test(l)) out.push(`$ ${l}`);
+      else if (conCmd) out.push(`${conCmd[1]}:`, `$ ${conCmd[2]}`);
+      else if (i === 0) out.push(l);
+      else out.push(`> ${l.replace(/^\((.*)\)$/, "$1")}`);
+    });
+    return out;
+  };
 
   switch (port) {
-    case 22: // SSH
+    case 22: { // SSH
       if (plat === "win32") {
         return "## SSH: si no necesitas el acceso remoto\n" +
-               "Desactiva el servicio OpenSSH en Servicios del sistema (services.msc → OpenSSH " +
+               "Desactiva el servicio OpenSSH en Servicios del sistema (services.msc → OpenSSH SSH " +
                "Server → Detener y deshabilitar).";
       }
+      // PasswordAuthentication no sin una clave ya configurada deja al usuario fuera del equipo:
+      // la versión anterior lo recomendaba sin avisar. `sshd -T` muestra la configuración
+      // efectiva, que es la que cuenta: un fichero de /etc/ssh/sshd_config.d/ puede imponerse
+      // al principal.
+      const harden = [
+        "Edita /etc/ssh/sshd_config → PermitRootLogin no.",
+        "Si ya entras con clave SSH, añade PasswordAuthentication no. Sin una clave configurada, ese cambio te dejaría sin acceso.",
+        "Comprueba la configuración que queda en vigor:",
+        "$ sudo sshd -T | grep -Ei 'permitrootlogin|passwordauthentication'",
+      ];
       if (plat === "darwin") {
-        return (
-          "## SSH: si no necesitas el acceso remoto\n" +
-          "Desactiva la sesión remota:\n" +
-          "$ sudo systemsetup -setremotelogin off\n" +
-          "## SSH: si lo necesitas, asegúralo\n" +
-          "Edita /etc/ssh/sshd_config → PermitRootLogin no, PasswordAuthentication no.\n" +
-          "Vuelve a activar la sesión remota:\n" +
-          "$ sudo systemsetup -setremotelogin on"
-        );
+        return [
+          "## SSH: si no necesitas el acceso remoto",
+          "Desactiva la sesión remota:",
+          ...cmdAndNotes(getFixForProcess("sshd", "darwin")),
+          "## SSH: si lo necesitas, asegúralo",
+          ...harden,
+          "Aplica los cambios desactivando y volviendo a activar «Sesión remota» en Ajustes del Sistema → General → Compartido.",
+        ].join("\n");
       }
-      return (
-        "## SSH: si no necesitas el acceso remoto\n" +
-        "Deshabilita el servicio:\n" +
-        "$ " + systemdDisable("ssh") + "\n" +
-        "## SSH: si lo necesitas, asegúralo\n" +
-        "Edita /etc/ssh/sshd_config → PermitRootLogin no, PasswordAuthentication no.\n" +
-        "Reinicia el servicio:\n" +
-        "$ sudo systemctl restart ssh"
-      );
+      const { unit } = unitFor("ssh", m);
+      return [
+        "## SSH: si no necesitas el acceso remoto",
+        "Deshabilita el servicio:",
+        ...cmdAndNotes(getFixForProcess("sshd", "linux", m)),
+        "## SSH: si lo necesitas, asegúralo",
+        ...harden,
+        "Reinicia el servicio:",
+        `$ sudo systemctl restart ${unit}`,
+      ].join("\n");
+    }
 
     case 21: // FTP
       if (plat === "win32") {
         return "## FTP: si no lo necesitas\n" +
                "Desactiva el servicio FTP en Panel de control → Características de Windows → " +
-               "IIS → Servidor FTP.";
+               "IIS → Servidor FTP. Si no usas IIS, el puerto lo abre otro programa (por ejemplo, " +
+               "FileZilla Server): identifícalo con netstat -ano | findstr :21.";
       }
       if (plat === "darwin") {
         // macOS no trae servidor FTP, así que el label real se desconoce: ver process-fix.js.
@@ -286,24 +316,14 @@ function getFixForPort(port, platform) {
       }
       return "## FTP: si no lo necesitas\n" +
              "Deshabilita el servicio:\n" +
-             "$ " + systemdDisable("vsftpd");
+             "$ " + systemdDisable("vsftpd") + "\n" +
+             "> Si tu servidor FTP es otro (proftpd, pure-ftpd), cambia vsftpd por su nombre en el comando.";
 
     case 23: // Telnet
-      if (plat === "win32") {
-        return "## Telnet: si no lo necesitas\n" +
-               "Desactiva el cliente Telnet en Panel de control → Características de Windows → " +
-               "Cliente Telnet.";
-      }
       if (plat === "darwin") {
         return "## Telnet: si no lo necesitas\n" + comandoYNota(getFixForProcess("telnetd", "darwin"));
       }
-      return (
-        "## Telnet: si no lo necesitas\n" +
-        "Deshabilita el servicio:\n" +
-        "$ " + systemdDisable("telnet") + "\n" +
-        "Si no lo usas, desinstálalo:\n" +
-        "$ sudo apt remove telnetd"
-      );
+      return ["## Telnet: si no lo necesitas", ...cmdAndNotes(getFixForProcess("telnetd", plat, m))].join("\n");
 
     case 80:  // HTTP
     case 443: // HTTPS
@@ -312,82 +332,46 @@ function getFixForPort(port, platform) {
           "## Servidor web: si no lo necesitas\n" +
           "Detén el servicio web de Windows:\n" +
           "$ net stop w3svc\n" +
+          "> Si net stop dice que el servicio no existe, el puerto lo abre otro programa: identifícalo con netstat -ano | findstr :" + port + ".\n" +
           "## Servidor web: si lo necesitas\n" +
           "Asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
         );
       }
-      return (
-        "## Servidor web: si no lo necesitas\n" +
-        "Deshabilita el servidor web:\n" +
-        "$ " + systemdDisable("nginx") + "\n" +
-        "> Si el servidor es Apache, usa apache2 en vez de nginx en ese comando.\n" +
-        "## Servidor web: si lo necesitas\n" +
-        "Asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
-      );
+      if (plat === "darwin") {
+        return (
+          "## Servidor web: si no lo necesitas\n" +
+          "Si es nginx instalado con Homebrew:\n" +
+          "$ brew services stop nginx\n" +
+          "Si es el Apache que trae macOS:\n" +
+          "$ " + getFixForProcess("apache", "darwin") + "\n" +
+          "## Servidor web: si lo necesitas\n" +
+          "Asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
+        );
+      }
+      {
+        const ap = unitFor("apache", m);
+        return (
+          "## Servidor web: si no lo necesitas\n" +
+          "Deshabilita el servidor web:\n" +
+          "$ " + systemdDisable("nginx") + "\n" +
+          `> Si el servidor es Apache, usa ${ap.unit} en vez de nginx en ese comando` +
+          (ap.note ? ` (${ap.note.trim().replace(/^\(|\)$/g, "").replace(/\.$/, "")}).` : ".") + "\n" +
+          "## Servidor web: si lo necesitas\n" +
+          "Asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
+        );
+      }
 
     case 3306: // MySQL
-      if (plat === "win32") {
-        return (
-          "## MySQL: limita el acceso\n" +
-          "En my.ini añade bind-address = 127.0.0.1 bajo [mysqld].\n" +
-          "Reinicia el servicio MySQL desde services.msc."
-        );
-      }
-      return (
-        "## MySQL: limita el acceso\n" +
-        "Edita /etc/mysql/mysql.conf.d/mysqld.cnf → bind-address = 127.0.0.1\n" +
-        "Reinicia el servicio:\n" +
-        "$ sudo systemctl restart mysql"
-      );
+      return ["## MySQL: limita el acceso", ...cmdAndNotes(getFixForProcess("mysqld", plat, m))].join("\n");
 
     case 5432: // PostgreSQL
-      if (plat === "win32") {
-        return (
-          "## PostgreSQL: limita el acceso\n" +
-          "Edita postgresql.conf → listen_addresses = 'localhost'\n" +
-          "Edita pg_hba.conf para restringir IPs.\n" +
-          "Reinicia el servicio PostgreSQL desde services.msc."
-        );
-      }
-      return (
-        "## PostgreSQL: limita el acceso\n" +
-        "Edita postgresql.conf → listen_addresses = 'localhost'\n" +
-        "Edita pg_hba.conf para restringir IPs.\n" +
-        "Reinicia el servicio:\n" +
-        "$ sudo systemctl restart postgresql"
-      );
+      return ["## PostgreSQL: limita el acceso", ...cmdAndNotes(getFixForProcess("postgres", plat, m))].join("\n");
 
     case 6379: // Redis
-      if (plat === "win32") {
-        return (
-          "## Redis: limita el acceso\n" +
-          "Edita redis.windows.conf → bind 127.0.0.1\n" +
-          "Añade requirepass con contraseña fuerte.\n" +
-          "Reinicia el servicio Redis desde services.msc."
-        );
-      }
-      return (
-        "## Redis: limita el acceso\n" +
-        "Edita /etc/redis/redis.conf → bind 127.0.0.1\n" +
-        "Añade requirepass con contraseña fuerte.\n" +
-        "Reinicia el servicio:\n" +
-        "$ sudo systemctl restart redis"
-      );
+      return ["## Redis: limita el acceso", ...cmdAndNotes(getFixForProcess("redis", plat, m))].join("\n");
 
     case 27017: // MongoDB
-      if (plat === "win32") {
-        return (
-          "## MongoDB: limita el acceso\n" +
-          "Edita mongod.cfg → bindIp: 127.0.0.1\n" +
-          "Habilita autenticación: security.authorization: enabled\n" +
-          "Reinicia el servicio MongoDB."
-        );
-      }
-      return (
-        "## MongoDB: limita el acceso\n" +
-        "Edita /etc/mongod.conf → bindIp: 127.0.0.1\n" +
-        "Habilita autenticación: security.authorization: enabled"
-      );
+      return ["## MongoDB: limita el acceso", ...cmdAndNotes(getFixForProcess("mongod", plat, m))].join("\n");
 
     default:
       // La guía genérica la arma buildPortFix() en el normalizador, con el bind real y el

@@ -186,7 +186,7 @@ module.exports = function (RED) {
                 title:    "Trivy no disponible",
                 severity: "info",
                 evidence: "Trivy no está instalado en este equipo.",
-                fix:      "Instalar Trivy: https://trivy.dev/latest/getting-started/installation/",
+                fix:      "Instalar Trivy: https://trivy.dev/",
                 category: "image",
                 source:   "native",
               }),

@@ -156,15 +156,42 @@ const CASOS = [
   { id: "BOOT-5122", plat: "linux",  debe: /grub-mkpasswd|superusers/i,
     noDebe: /servicios que arrancan|systemctl list-unit-files/i,
     nota: "GRUB sin contraseña → contraseña de GRUB, no 'revisar servicios de arranque'" },
-  { id: "PKGS-7420", plat: "linux",  debe: /debsecan|Trivy/i,
-    noDebe: /apt upgrade|actualizar los paquetes del sistema/i,
-    nota: "sin herramienta de auditoría → instalar una, no 'apt upgrade'" },
+  // PKGS-7420 es "Detect toolkit to automatically download and apply upgrades" (Lynis 3.1.8). La
+  // versión anterior de este caso exigía debsecan, que es la herramienta de OTRO control (PKGS-7398).
+  { id: "PKGS-7420", plat: "linux",  debe: /unattended-upgrades|dnf-automatic/i,
+    noDebe: /apt upgrade|debsecan/i,
+    nota: "sin actualizaciones automáticas → unattended-upgrades, no 'apt upgrade' ni debsecan" },
   { id: "PKGS-7398", plat: "darwin", debe: /Trivy/i,
     noDebe: /brew upgrade|actualizar los paquetes/i,
     nota: "sin herramienta de auditoría → no 'brew upgrade'" },
-  { id: "FIRE-4590", plat: "darwin", debe: /setloggingmode|registro/i,
-    noDebe: /Activa el cortafuegos|Activar el cortafuegos/i,
-    nota: "el cortafuegos no REGISTRA → activar el registro, no el cortafuegos ya activo" },
+  // FIRE-4590 sale cuando Lynis NO encuentra un cortafuegos activo (FIREWALL_ACTIVE=0, en el
+  // código de Lynis 3.1.8 y en el informe real de macOS: "Configure a firewall/packet filter").
+  // La versión anterior de este caso exigía activar el REGISTRO, que es otro problema.
+  { id: "FIRE-4590", plat: "darwin", debe: /--getglobalstate/i,
+    noDebe: /setloggingmode/i,
+    nota: "sin cortafuegos activo → comprobar y activar el cortafuegos, no su registro" },
+  // Controles que el diccionario tenía cruzados o con el significado de otro control. Cada uno con
+  // el texto que Lynis emite de verdad (tests_* de 3.1.8 o informes reales de test/fixtures/lynis).
+  { id: "HTTP-6640", plat: "linux",  debe: /mod_evasive/i, noDebe: /ModSecurity/i,
+    nota: "HTTP-6640 es 'Install Apache mod_evasive', no ModSecurity" },
+  { id: "HTTP-6643", plat: "linux",  debe: /ModSecurity/i, noDebe: /mod_evasive/i,
+    nota: "HTTP-6643 es 'Install Apache modsecurity', no mod_evasive" },
+  { id: "LOGG-2190", plat: "linux",  debe: /lsof \+L1/, noDebe: /logrotate/i,
+    nota: "LOGG-2190 es 'Check what deleted files are still in use', no la rotación de logs" },
+  { id: "STRG-1846", plat: "linux",  debe: /firewire/i, noDebe: /squashfs/i,
+    nota: "STRG-1846 es 'Check if firewire storage is disabled', no squashfs" },
+  { id: "PKGS-7394", plat: "linux",  debe: /apt-show-versions/, noDebe: /unattended/i,
+    nota: "PKGS-7394 es 'Install package apt-show-versions'" },
+  { id: "PRNT-2307", plat: "linux",  debe: /chmod 640 \/etc\/cups\/cupsd\.conf/, noDebe: /Listen localhost/i,
+    nota: "PRNT-2307 son los permisos del fichero de CUPS; escuchar en red es PRNT-2308" },
+  { id: "HOME-9304", plat: "linux",  debe: /chmod 750/, noDebe: /chmod 600/,
+    nota: "HOME-9304 son los permisos de los directorios personales (750), no de sus ficheros" },
+  { id: "DEB-0880",  plat: "linux",  debe: /fail2ban/, noDebe: /apt-show-versions/,
+    nota: "DEB-0880 es fail2ban (parche de Debian, informe real de Lynis 3.0.8)" },
+  { id: "DEB-0280",  plat: "linux",  debe: /libpam-tmpdir/, noDebe: /apt-listbugs/,
+    nota: "DEB-0280 es libpam-tmpdir" },
+  { id: "DEB-0831",  plat: "linux",  debe: /needrestart/, noDebe: /debsums/,
+    nota: "DEB-0831 es needrestart" },
   { id: "TOOL-5002", plat: "linux",  debe: /configuraci[oó]n de un equipo|repetible/i,
     noDebe: /rkhunter|chkrootkit|aide/i,
     nota: "gestión de configuración → no herramientas de detección de intrusiones" },
@@ -201,10 +228,23 @@ ok(vaciosFix.length === 0, "ningún fix es una cadena vacía o de una palabra", 
 
 console.log("\n── 7 · Sin fix: no se inventa uno, se da la ficha ────────────────\n");
 
-// PROC-3614 informa de lo que Lynis NO pudo comprobar: no hay nada que arreglar.
-const proc = lynisFix("PROC-3614", "linux", "apt", installCmd);
-ok(proc.fix === null, "PROC-3614 no emite fix", JSON.stringify(proc.fix));
+// NETW-2705 ("Couldn't find 2 responsive nameservers") en una red doméstica no admite acción.
+// Antes este bloque usaba PROC-3614 como ejemplo, pero ese control SÍ admite acción: Lynis lo emite
+// cuando encuentra procesos bloqueados esperando E/S (estado D), no cuando "no pudo comprobar".
+const proc = lynisFix("NETW-2705", "linux", "apt", installCmd);
+ok(proc.fix === null, "NETW-2705 no emite fix", JSON.stringify(proc.fix));
 ok(proc.noAction === true, "y se marca como 'no admite acción', no como 'nos falta escribirlo'");
+
+// El nombre del paquete depende de la distribución: con pacman no se puede proponer `auditd`.
+const auditPac = lynisFix("ACCT-9628", "linux", "pacman", installCmd);
+ok(auditPac.command === "sudo pacman -S --noconfirm audit",
+   "ACCT-9628 con pacman instala `audit`, no `auditd`", JSON.stringify(auditPac.command));
+const acctPac = lynisFix("ACCT-9622", "linux", "pacman", installCmd);
+ok(acctPac.fix && acctPac.command === null,
+   "ACCT-9622 con pacman: hay texto, pero sin orden (el nombre en Arch no está confirmado)", JSON.stringify(acctPac));
+const pwqDnf = lynisFix("AUTH-9262", "linux", "dnf", installCmd);
+ok(pwqDnf.command === "sudo dnf install -y libpwquality",
+   "AUTH-9262 con dnf instala `libpwquality`", JSON.stringify(pwqDnf.command));
 
 // Un control que sí admite acción pero cuyo paso es solo de Linux: en macOS no se inventa.
 const soloLinux = lynisFix("BOOT-5122", "darwin", "brew", installCmd);

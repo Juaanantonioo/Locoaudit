@@ -15,7 +15,8 @@ const { PORT_CATALOG }            = require("./modules/port-catalog");
 const { runNmap }                 = require("./modules/nmap-wrapper");
 const { checkHostReachable, deriveTargetState } = require("./modules/host-discovery");
 const { enrichPorts, detectFirewall } = require("./modules/service-detect");
-const { isLocalTarget, validateTarget, validatePortSpec, scanTimeoutMs } = require("./modules/network-utils");
+const { isLocalTarget, validateTarget, validatePortSpec, scanTimeoutMs, getFixForPort } = require("./modules/network-utils");
+const { detectPackageManager }   = require("../../lib/pkg-manager");
 const { commandExists }           = require("../../lib/executor");
 const { scriptExists, scriptStates } = require("./modules/nse-scripts");
 const { runCanary, canaryIsOk }   = require("./modules/vulners-canary");
@@ -216,7 +217,7 @@ module.exports = function (RED) {
              *
              * No se pasa la lista a ciegas: `nmap --script a,b,c` con un solo nombre que no
              * existe aborta la ejecución entera y devuelve cero puertos. O sea que un nmap
-             * recortado —el `nmap-common` de Debian, sin la colección de scripts— convertiría
+             * antiguo —anterior a la 7.80, que es la que trae vulners— convertiría
              * activar esta opción en perder el escaneo completo. Se pregunta antes y se manda
              * solo lo que hay.
              *
@@ -277,6 +278,19 @@ module.exports = function (RED) {
           }
         }
 
+        // El gestor de paquetes decide el nombre de las unidades systemd de las recomendaciones
+        // (ssh en Debian, sshd en Arch y Fedora). Solo tiene sentido para este equipo y en Linux:
+        // en un objetivo remoto no se propone ninguna orden. Sin gestor, la recomendación usa el
+        // nombre de Debian y añade una nota con el otro.
+        let pkgManager = null;
+        if (targetIsLocal && process.platform === "linux" && ports.length > 0) {
+          try { pkgManager = await detectPackageManager("linux"); } catch (_) { pkgManager = null; }
+          for (const p of ports) {
+            const guia = getFixForPort(p.port, process.platform, pkgManager);
+            if (guia) p.fix = guia;
+          }
+        }
+
         // Los fixes solo proponen reglas del firewall que esté detectado y activo.
         let firewall = null;
         if (targetIsLocal && openPorts.length > 0) {
@@ -307,7 +321,7 @@ module.exports = function (RED) {
         }
 
         const findings = normalizeNetwork(ports, "nmap", {
-          firewall, targetIsLocal, target,
+          firewall, targetIsLocal, target, pkgManager,
           // Solo viaja cuando el análisis se pidió. Sin esta clave el normalizador devuelve
           // exactamente los hallazgos de siempre, sin una línea de más.
           nse: nseEnabled
@@ -388,8 +402,12 @@ module.exports = function (RED) {
             severity: "medium",
             evidence: `El escaneo de ${target} no terminó (timeout o interrupción). ` +
                       "No se puede afirmar que el host esté seguro con estos datos.",
-            fix:      "El host puede estar protegido por un firewall que ralentiza el escaneo. " +
-                      "Reintenta con el modo Completo (más tiempo) o aumenta el timeout del nodo.",
+            // La versión anterior proponía el modo Completo "con más tiempo" y "aumentar el
+            // timeout del nodo". Completo recorre ahora los 65535 puertos y tarda más, no menos, y
+            // el nodo no tiene ningún ajuste de tiempo para el escaneo de puertos.
+            fix:      "El equipo puede tener un cortafuegos que hace esperar a cada puerto filtrado. " +
+                      "Repite la auditoría con el modo Rápido o con un rango de puertos personalizado " +
+                      "más pequeño. Si tienes activado el análisis NSE, también puedes subir su tiempo extra.",
             category: "network",
             source:   "nmap",
           }));
