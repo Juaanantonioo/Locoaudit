@@ -624,9 +624,10 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   ok(/config\.nseEnabled === true \|\| config\.nseEnabled === "true"/.test(fuenteNodo),
      "y el nodo la lee con el mismo patrón estricto que forceScan, sin colar un string vacío");
 
-  // El presupuesto se suma. Si alguien lo cambia por una sustitución, los 90/240/620 s dejan de
-  // cubrir lo que fueron calibrados para cubrir y el escaneo de puertos se corta.
-  ok(/\(NMAP_TIMEOUT_BY_MODE\[scanMode\] \|\| 240000\) \+ \(nseEnabled \? nseTimeout : 0\)/.test(fuenteNodo),
+  // El presupuesto se suma. Si alguien lo cambia por una sustitución, los límites de
+  // scanTimeoutMs() dejan de cubrir lo que fueron calibrados para cubrir y el escaneo de puertos
+  // se corta.
+  ok(/scanTimeoutMs\(scanMode,[^)]*\)\s*\+\s*\(nseEnabled \? nseTimeout : 0\)/.test(fuenteNodo),
      "el tiempo de los scripts se SUMA al del modo, no lo sustituye");
 
   // El orden que evita que dos puertos de la misma ejecución reciban veredictos distintos.

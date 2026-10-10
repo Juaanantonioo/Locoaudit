@@ -15,7 +15,7 @@ const { PORT_CATALOG }            = require("./modules/port-catalog");
 const { runNmap }                 = require("./modules/nmap-wrapper");
 const { checkHostReachable, deriveTargetState } = require("./modules/host-discovery");
 const { enrichPorts, detectFirewall } = require("./modules/service-detect");
-const { isLocalTarget, validateTarget } = require("./modules/network-utils");
+const { isLocalTarget, validateTarget, validatePortSpec, scanTimeoutMs } = require("./modules/network-utils");
 const { commandExists }           = require("../../lib/executor");
 const { scriptExists, scriptStates } = require("./modules/nse-scripts");
 const { runCanary, canaryIsOk }   = require("./modules/vulners-canary");
@@ -60,7 +60,9 @@ module.exports = function (RED) {
       node.status({ fill: "blue", shape: "dot", text: "Escaneando..." });
 
       const scanMode       = config.scanMode    || "standard";
-      const customPorts    = config.customPorts || "";
+      // En modo personalizado lo que llega a nmap es la lista normalizada, nunca el texto del campo.
+      const portCheck      = validatePortSpec(config.customPorts);
+      const customPorts    = portCheck.ok ? portCheck.spec : "";
       // "Otro equipo de mi red" exige una IPv4 válida de un equipo. Antes, un campo vacío caía
       // en silencio a 127.0.0.1 (el usuario pedía otro equipo y se auditaba este) y cualquier
       // texto llegaba tal cual a la línea de nmap, rangos incluidos. La regla vive en
@@ -85,7 +87,7 @@ module.exports = function (RED) {
        */
       const nseEnabled = config.nseEnabled === true || config.nseEnabled === "true";
       // Tiempo EXTRA para los scripts, no el total. Se suma al presupuesto del modo en vez de
-      // sustituirlo: los 90/240/620 s están calibrados para lo que tarda `-sV` sobre puertos
+      // sustituirlo: los límites de scanTimeoutMs() están calibrados para lo que tarda `-sV` sobre puertos
       // filtrados, y meter los scripts dentro de ese mismo margen recortaría el escaneo de
       // puertos —que es la función principal— para pagar una opcional.
       const nseTimeout = Math.max(0, parseInt(config.nseTimeout, 10) || 180000);
@@ -137,12 +139,25 @@ module.exports = function (RED) {
           return;
         }
 
-        if (scanMode === "custom" && !customPorts.trim()) {
-          sendConfigError({
-            title:    "Configuración incorrecta: lista de puertos vacía",
-            evidence: "El modo personalizado requiere una lista de puertos.",
-            fix:      "Configura los puertos en el nodo audit-network. Ejemplo: 22,80,443",
-          });
+        // Misma regla que con la IP: la lista va a la línea de nmap, así que lo que no es una
+        // lista de puertos no se escanea. La vacía conserva su hallazgo de siempre.
+        if (scanMode === "custom" && !portCheck.ok) {
+          if (portCheck.empty) {
+            sendConfigError({
+              title:    "Configuración incorrecta: lista de puertos vacía",
+              evidence: "El modo personalizado requiere una lista de puertos.",
+              fix:      "Configura los puertos en el nodo audit-network. Ejemplo: 22,80,443",
+            });
+          } else {
+            sendConfigError({
+              title:    "Configuración incorrecta: la lista de puertos no es válida",
+              evidence: `${portCheck.reason} No se ha escaneado nada: la ausencia de puertos NO ` +
+                        "significa que el equipo esté protegido.",
+              fix:      "Indica en el nodo audit-network puertos del 1 al 65535 separados por comas, " +
+                        "y rangos con guion. Ejemplo: 22,80,443,8000-8080",
+              extraMeta: { scanStatus: "not-run" },
+            });
+          }
           return;
         }
 
@@ -188,13 +203,13 @@ module.exports = function (RED) {
         } else {
           try {
             node.status({ fill: "blue", shape: "dot", text: "Escaneando..." });
-            // Por modo, según el tiempo medido sobre un host filtrado, donde cada puerto
-            // filtrado añade espera. No se usa --host-timeout de nmap: cortaría antes de sondear
-            // los puertos altos y daría un falso 0. Pasado este límite, "no concluyente".
-            const NMAP_TIMEOUT_BY_MODE = { rapido: 90000, standard: 240000, full: 620000, custom: 90000 };
-            // Presupuesto del modo MÁS el de los scripts. Quien no activa NSE suma 0 y escanea
-            // exactamente con el mismo límite de siempre.
-            const nmapTimeout = (NMAP_TIMEOUT_BY_MODE[scanMode] || 240000) + (nseEnabled ? nseTimeout : 0);
+            // Por modo y por número de puertos, según el tiempo medido sobre un host filtrado,
+            // donde cada puerto filtrado añade espera (ver scanTimeoutMs). No se usa
+            // --host-timeout de nmap: cortaría antes de sondear los puertos altos y daría un
+            // falso 0. Pasado este límite, "no concluyente".
+            // Presupuesto del modo MÁS el de los scripts. Quien no activa NSE suma 0.
+            const nmapTimeout = scanTimeoutMs(scanMode, portCheck.ok ? portCheck.count : 0) +
+                                (nseEnabled ? nseTimeout : 0);
 
             /**
              * Qué scripts pedirle a ESTE nmap.

@@ -41,6 +41,83 @@ function parseTargets(input) {
 }
 
 /**
+ * ¿Es `input` una lista de puertos válida para -p? Devuelve { ok: true, spec, count } o
+ * { ok: false, empty, reason }.
+ *
+ * Por qué existe. El campo "Puertos a escanear" del modo personalizado iba tal cual a la línea de
+ * nmap (`-p ${portSpec}`), igual que iba la IP antes de validateTarget(): `22; orden` era una
+ * orden más para la shell. parsePortsList(), que ya existía, no sirve para esto porque descarta
+ * en silencio lo que no entiende, y aquí lo que no se entiende no se escanea: se rechaza.
+ *
+ * Qué admite: elementos separados por comas, cada uno un puerto (`22`) o un rango (`8000-8080`),
+ * de 1 a 65535 y con el inicio del rango menor o igual que el final. Los espacios alrededor de
+ * las comas se toleran y desaparecen en `spec`, que es lo que se pasa a nmap. Nada más: ni
+ * prefijos de protocolo de nmap (`T:`, `U:`), ni nombres de servicio, ni comodines.
+ *
+ * `count` son los puertos distintos que cubre la lista, y de él sale el tiempo máximo del escaneo
+ * (scanTimeoutMs). Antes el modo personalizado tenía 90 s fijos, y 1-65535 nunca podía terminar.
+ */
+function validatePortSpec(input) {
+  const raw = String(input == null ? "" : input).trim();
+  if (!raw) return { ok: false, empty: true, reason: "No se ha indicado ningún puerto." };
+
+  const items = raw.split(",").map((x) => x.trim());
+  const ranges = [];
+  for (const item of items) {
+    const m = item.match(/^([1-9]\d{0,4})(?:-([1-9]\d{0,4}))?$/);
+    if (!m) {
+      return {
+        ok: false, empty: false,
+        reason: `«${item.slice(0, 30)}» no es un puerto ni un rango válido. Se admiten puertos ` +
+                "sueltos y rangos separados por comas, por ejemplo 22,80,443,8000-8080.",
+      };
+    }
+    const a = Number(m[1]);
+    const b = m[2] ? Number(m[2]) : a;
+    if (a > 65535 || b > 65535) {
+      return { ok: false, empty: false, reason: `«${item}»: los puertos van del 1 al 65535.` };
+    }
+    if (a > b) {
+      return { ok: false, empty: false, reason: `«${item}»: el inicio del rango es mayor que el final.` };
+    }
+    ranges.push([a, b]);
+  }
+
+  // Puertos distintos, sin construir el conjunto: con 1-65535 serían 65535 enteros en memoria.
+  const sorted = ranges.slice().sort((x, y) => x[0] - y[0]);
+  let count = 0, curA = null, curB = null;
+  for (const [a, b] of sorted) {
+    if (curB === null || a > curB + 1) {
+      if (curB !== null) count += curB - curA + 1;
+      curA = a; curB = b;
+    } else if (b > curB) {
+      curB = b;
+    }
+  }
+  if (curB !== null) count += curB - curA + 1;
+
+  const spec = ranges.map(([a, b]) => (a === b ? String(a) : `${a}-${b}`)).join(",");
+  return { ok: true, spec, count };
+}
+
+/**
+ * Tiempo máximo de nmap, sin contar el de NSE, para un modo y un número de puertos.
+ *
+ * Rápido y estándar conservan los valores que ya estaban medidos (90 s y 240 s). Completo y
+ * personalizado dependen ahora del número de puertos: 62 ms por puerto, que es la misma
+ * proporción que daba el límite anterior del modo completo (620 s para 10.000 puertos, medido
+ * contra un equipo con cortafuegos, donde cada puerto filtrado espera sus reintentos). Con los
+ * 65535 puertos salen unos 68 minutos. Nunca menos de 90 s.
+ */
+const MS_PER_PORT = 62;
+function scanTimeoutMs(scanMode, portCount) {
+  if (scanMode === "rapido")   return 90000;
+  if (scanMode === "standard") return 240000;
+  const n = scanMode === "full" ? 65535 : (Number(portCount) || 0);
+  return Math.max(90000, n * MS_PER_PORT);
+}
+
+/**
  * ¿Es `input` la dirección IPv4 de UN equipo? Devuelve { ok: true, ip } o { ok: false, reason }.
  *
  * Por qué existe. El campo "Dirección IP del equipo" se pasaba tal cual a la línea de nmap. Con
@@ -319,4 +396,4 @@ function getFixForPort(port, platform) {
   }
 }
 
-module.exports = { parsePortsList, parseTargets, validateTarget, isLocalTarget, toBaseUrl, getFixForPort };
+module.exports = { parsePortsList, parseTargets, validatePortSpec, scanTimeoutMs, validateTarget, isLocalTarget, toBaseUrl, getFixForPort };

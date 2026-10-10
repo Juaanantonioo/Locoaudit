@@ -5,7 +5,19 @@
         defaults: {
             name:         { value: "" },
             scanMode:     { value: "standard" },
-            customPorts:  { value: "" },
+            // Solo la forma, para pintar el campo en rojo. Quien decide es validatePortSpec().
+            customPorts:  { value: "", validate: function (v) {
+                var mode = $("#node-input-scanMode").length ? $("#node-input-scanMode").val() : this.scanMode;
+                if (mode !== "custom") return true;
+                var items = String(v || "").split(",");
+                if (!String(v || "").trim()) return false;
+                return items.every(function (it) {
+                    var m = it.trim().match(/^([1-9]\d{0,4})(?:-([1-9]\d{0,4}))?$/);
+                    if (!m) return false;
+                    var a = Number(m[1]), b = m[2] ? Number(m[2]) : a;
+                    return a <= 65535 && b <= 65535 && a <= b;
+                });
+            } },
             scanTarget:   { value: "localhost" },
             // Solo la FORMA, para marcar el campo en rojo mientras se escribe. Quien decide si se
             // escanea es validateTarget() en network-utils.js, que además rechaza las direcciones
@@ -101,7 +113,7 @@
                 <select id="node-input-scanMode" style="width: 100%;">
                     <option value="rapido">Rápido — Puertos 1-1024 + servicios de gestión. Segundos en local. No cubre puertos altos.</option>
                     <option value="standard">Estándar — Puertos 1-3000. Recomendado.</option>
-                    <option value="full">Completo — Puertos 1-10000. Cobertura máxima pero LENTO.</option>
+                    <option value="full">Completo — Todos los puertos (1-65535). Muy LENTO: puede pasar de una hora si el equipo tiene cortafuegos.</option>
                     <option value="custom">Personalizado — Define tú mismo qué puertos auditar.</option>
                 </select>
             </div>
@@ -114,7 +126,7 @@
                     placeholder="Ej: 22,80,443 o rangos como 1-500"
                     style="width: 100%; box-sizing: border-box;">
                 <div style="color: #555; font-size: 0.82em; margin-top: 6px; line-height: 1.5;">
-                    Separa puertos con comas. Puedes usar rangos (1-1024).<br>
+                    Separa puertos con comas. Puedes usar rangos (1-1024). Del 1 al 65535.<br>
                     Máximo recomendado: 500 puertos para no ralentizar el análisis.
                 </div>
             </div>
@@ -185,7 +197,7 @@
                     Qué equipo auditar
                 </label>
                 <select id="node-input-scanTarget" style="width: 100%;">
-                    <option value="localhost">Este equipo (recomendado)</option>
+                    <option value="localhost">Este equipo</option>
                     <option value="custom">Otro equipo de mi red</option>
                 </select>
             </div>
@@ -305,9 +317,10 @@
 
     <h3>Modos de escaneo</h3>
     <ul>
-        <li><strong>Estándar</strong> — ~27 puertos del catálogo interno. Rápido y suficiente para uso doméstico.</li>
-        <li><strong>Completo 1-1024</strong> — todos los puertos privilegiados. Más lento.</li>
-        <li><strong>Personalizado</strong> — define exactamente qué puertos auditar. Formato: <code>22,80,443</code> o rangos <code>1-500</code>.</li>
+        <li><strong>Rápido</strong> — puertos 1-1024 más los del catálogo de servicios conocidos que queden por encima.</li>
+        <li><strong>Estándar</strong> — puertos 1-3000 más los del catálogo.</li>
+        <li><strong>Completo</strong> — los 65535 puertos. Contra un equipo con cortafuegos puede tardar más de una hora.</li>
+        <li><strong>Personalizado</strong> — define exactamente qué puertos auditar, del 1 al 65535. Formato: <code>22,80,443</code> o rangos <code>8000-8080</code>. El tiempo máximo crece con el número de puertos.</li>
     </ul>
 
     <h3>Análisis de vulnerabilidades y configuración (opcional, apagado)</h3>

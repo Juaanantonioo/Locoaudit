@@ -184,8 +184,11 @@ async function runNmap(options = {}) {
   // Rango numérico por modo, más los puertos del catálogo que queden por encima: los de dentro
   // ya están cubiertos y repetirlos da el aviso "Duplicate port number(s)" y sondeos de más.
   // El coste lo marcan los puertos filtrados, no los abiertos, porque cada uno espera reintentos:
-  // medido contra un host filtrado, 10.000 puertos rondan los 500 s. De ahí que "full" avise.
-  const RANGE_MAX = { rapido: 1024, standard: 3000, full: 10000 };
+  // medido contra un host filtrado, 10.000 puertos rondan los 500 s. "full" son todos los
+  // puertos: un modo llamado Completo que se paraba en el 10000 dejaba fuera servicios reales
+  // (el 27017 de MongoDB solo entraba por el catálogo). Tarda más de una hora contra un equipo
+  // con cortafuegos, y el editor lo avisa.
+  const RANGE_MAX = { rapido: 1024, standard: 3000, full: 65535 };
   let portSpec;
   if (scanMode === "custom" && options.customPorts && options.customPorts.trim()) {
     portSpec = options.customPorts.trim();
