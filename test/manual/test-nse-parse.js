@@ -2,22 +2,10 @@
 
 /**
  * test-nse-parse.js — El mini-parser de NSE lee lo que nmap emite de verdad.
- *
- * Los dos fixtures son CAPTURAS REALES de nmap 7.99, no XML escrito a mano:
- *
- *   scan-nse-ssh.xml  nmap -sV -Pn -T4 -p 22 --script vulners,ssl-cert,ssh2-enum-algos,banner
- *                     contra 127.0.0.1 (OpenSSH 10.3). Trae el caso que importa: 11 CVE con su
- *                     CVSS dentro del subárbol de vulners.
- *   scan-nse-tls.xml  los cinco scripts contra un `openssl s_server` levantado en 14443 para
- *                     esto, con certificado autofirmado de un día. Trae ssl-cert y
- *                     ssl-enum-ciphers con su nota.
- *
- * Se capturan y no se inventan porque todo el diseño depende de la FORMA del XML —dónde está
- * la nota, si la lista lleva key, qué pasa con un script autocerrado—, y un fixture escrito de
- * memoria confirma lo que uno creía, no lo que nmap hace.
- *
- * Uso:
- *   node test/manual/test-nse-parse.js
+ * Los fixtures son capturas reales de nmap 7.99, no XML escrito a mano, porque el diseño depende de la FORMA del XML:
+ *   scan-nse-ssh.xml  vulners, ssl-cert, ssh2-enum-algos y banner contra 127.0.0.1 (OpenSSH 10.3), con 11 CVE y su CVSS.
+ *   scan-nse-tls.xml  los cinco scripts contra un `openssl s_server` con certificado autofirmado (ssl-cert y ssl-enum-ciphers).
+ * Uso: node test/manual/test-nse-parse.js
  */
 
 const fs   = require("fs");
@@ -349,24 +337,14 @@ ok(Object.values(e22).concat(Object.values(e14443))
 
 // ── 11. Canario de vulners ───────────────────────────────────────────────────
 /**
- * LOS NÚMEROS QUE MATARON EL NIVEL 2. Medidos a mano contra vulners.com el 2026-09-13, desde
- * macOS, con curl y sin proxy. Se guardan aquí porque son el motivo por el que el módulo NO
- * tiene sonda de red, y ese motivo no se puede recomprobar automáticamente sin salir a internet
- * —cosa que ningún test de este repositorio hace—.
- *
- *   GET https://vulners.com/api/v3/burp/software/?software=cpe:/a:openbsd:openssh:7.4
- *                                                &version=7.4&type=cpe
- *
- *   sin cabecera User-Agent                → HTTP 403, cuerpo "Just a moment..." (reto anti-bot)
- *   User-Agent: LoCoAudit/1.0 (...)        → HTTP 403, el mismo reto
- *   User-Agent: Vulners NMAP Plugin 1.7    → HTTP 200, {"result":"OK"}, 45.820 bytes
- *
- *   Mismo resultado en /api/v3/search/id/ y en /api/v3/burp/softwareapi/.
- *   vulners.nse fija api_version="1.2" en su línea 64, y su propio comentario admite que el
- *   script muere en silencio si la petición HTTP falla.
- *
- * Conclusión: la única sonda que habría funcionado era suplantar al plugin de nmap. Se descartó,
- * y con ella el nivel 2 entero. Aquí solo queda la inferencia, que no habla con nadie.
+ * Los números que descartaron la sonda de red, medidos a mano contra vulners.com el 2026-09-13 (curl, sin proxy). Se guardan
+ * aquí porque ningún test del repositorio sale a internet.
+ *   GET https://vulners.com/api/v3/burp/software/?software=cpe:/a:openbsd:openssh:7.4&version=7.4&type=cpe
+ *   sin User-Agent                  → HTTP 403, "Just a moment..." (reto anti-bot)
+ *   User-Agent: LoCoAudit/1.0 (...) → HTTP 403, el mismo reto
+ *   User-Agent: Vulners NMAP Plugin 1.7 → HTTP 200, {"result":"OK"}, 45.820 bytes
+ * Igual en /api/v3/search/id/ y /api/v3/burp/softwareapi/. La única sonda posible era suplantar al plugin de nmap, así
+ * que se descartó y solo queda la inferencia.
  */
 console.log("\n11. canario");
 

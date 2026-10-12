@@ -3,30 +3,11 @@
 /**
  * test-powershell-syntax.js — Los scripts de PowerShell que LoCoAudit GENERA compilan.
  *
- * El bug que fija, capturado en un informe real de Windows:
- *
- *   $ErrorActionPreference='Stop' try { $s = New-Object -ComObject Micros...
- *                                 ~~~
- *   Token 'try' inesperado en la expresión o la instrucción.
- *
- * `WINDOWS_PS_SCRIPT` se construía uniendo un array con `" "`, así que la primera sentencia y el
- * `try` quedaban pegadas en la misma línea sin separador. El script NUNCA llegó a compilar: la
- * consulta a Windows Update falló en todas las ejecuciones desde que se escribió, y lo que veía
- * el usuario era un volcado de ParserError en la evidencia. Un fallo de sintaxis en una cadena
- * generada no se ve leyendo el código: hay que compilarla.
- *
- * DOS NIVELES, porque el segundo no corre en todas partes:
- *
- *   A) Estructural, en cualquier plataforma. No necesita PowerShell. Comprueba las invariantes
- *      que producen esta clase de bug: unión por saltos de línea, llaves equilibradas, y que no
- *      queden dos sentencias pegadas en una línea sin separador.
- *
- *   B) Compilación REAL con [ScriptBlock]::Create(), solo si hay powershell o pwsh. Es el único
- *      que habría cazado el bug original, y se salta con un aviso explícito donde no hay
- *      PowerShell — nunca en silencio, que sería un verde falso.
- *
- * Uso:
- *   node test/manual/test-powershell-syntax.js
+ * Bug de un informe real de Windows: `$ErrorActionPreference='Stop' try { … }` ("Token 'try' inesperado"). WINDOWS_PS_SCRIPT
+ * unía un array con " " y el script nunca compilaba, así que la consulta a Windows Update fallaba siempre.
+ *   A) Estructural, en cualquier plataforma: unión por saltos de línea, llaves equilibradas, sin dos sentencias pegadas.
+ *   B) Compilación real con [ScriptBlock]::Create(), solo si hay powershell o pwsh. Se salta con aviso explícito, nunca en silencio.
+ * Uso: node test/manual/test-powershell-syntax.js
  */
 
 const { execSync } = require("child_process");

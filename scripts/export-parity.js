@@ -1,22 +1,13 @@
 "use strict";
 
 /**
- * export-parity.js — PASO 3: el export NO puede divergir del dashboard.
- *
- *   A) CABLEADO — cada ui_template usa el cuerpo snapshot compartido
- *      (lib/snapshot-body.txt), tiene sentinel + report-root, conserva el
- *      fallback y NO deja código global (que rompería Dashboard 2.0).
- *   B) SNAPSHOT (smoke) — se ejecuta el MISMO cuerpo contra un DOM falso y se
- *      comprueba que quita IA + descargas, reabre grupos, abre detalles y
- *      produce un documento autocontenido.
- *
- *   C) FLOWS — examples/flows.json es lo que la gente importa en Node-RED, así
- *      que su `format` embebido tiene que ser BYTE A BYTE el .html de examples/.
- *      Sin este paso la deriva es invisible: en julio de 2026 flows.json se
- *      quedó tres semanas con dashboards viejos y dos ui-template huérfanos
- *      mientras A) y B) daban verde, porque ninguno de los dos lo miraba.
- *
- * Sin navegador ni dependencias. `node scripts/export-parity.js`.
+ * export-parity.js — el export NO puede divergir del dashboard.
+ *   A) CABLEADO: cada ui_template usa el cuerpo snapshot compartido (lib/snapshot-body.txt), con sentinel + report-root,
+ *      fallback y sin código global (rompería Dashboard 2.0).
+ *   B) SNAPSHOT (smoke): el MISMO cuerpo contra un DOM falso quita IA + descargas, reabre grupos, abre detalles y da un documento autocontenido.
+ *   C) FLOWS: el `format` embebido de examples/flows.json tiene que ser BYTE A BYTE el .html de examples/ (en julio de 2026
+ *      flows.json se quedó tres semanas con dashboards viejos mientras A) y B) daban verde).
+ * Sin navegador ni dependencias: `node scripts/export-parity.js`.
  */
 
 const fs = require("fs");

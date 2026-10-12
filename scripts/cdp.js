@@ -2,37 +2,15 @@
 
 /**
  * cdp.js — Ejecuta JavaScript dentro de un dashboard servido y devuelve el resultado.
+ * Validar un dashboard exige mirarlo renderizado (color efectivo, orden de bloques en el DOM, sprite tras el export).
+ * Sin dependencias: habla el protocolo de DevTools por WebSocket, que Node 22 trae de serie.
  *
- * Existe porque validar un dashboard exige mirarlo RENDERIZADO: el color efectivo de
- * un elemento, el orden real de los bloques en el DOM o si el sprite sobrevivió al
- * export no se pueden deducir leyendo el .html. Antes eso dependía de una extensión
- * de navegador; esto no depende de nada instalable y se puede repetir siempre igual.
- *
- * Sin dependencias: habla el protocolo de DevTools por WebSocket, que Node 22 trae
- * de serie.
- *
- *   # 1. Un Chrome headless con el puerto de depuración abierto
- *   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
- *     --headless=new --disable-gpu --remote-debugging-port=9333 \
- *     --user-data-dir=/tmp/lca-chrome about:blank &
- *
- *   # 2. Cualquier expresión, contra cualquier URL
+ *   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu --remote-debugging-port=9333 --user-data-dir=/tmp/lca-chrome about:blank &
  *   node scripts/cdp.js http://127.0.0.1:1881/dashboard/Host scripts/contrast-audit.js
  *
- * El segundo argumento es un FICHERO con una expresión JavaScript (no un script con
- * `return`): lo que evalúe es lo que se imprime. `contrast-audit.js` es el uso
- * principal, pero sirve cualquier comprobación puntual.
- *
- * Variables:
- *   CDP_PORT     puerto de depuración (9333)
- *   CDP_WAIT_MS  espera tras navegar (9000) — el dashboard recibe los datos por
- *                websocket, no con el load, así que el load no basta
- *   CDP_NO_NAV   si vale "1", NO navega: evalúa en la página que ya estuviera abierta.
- *                Imprescindible para sondear en bucle: cada navegación reinicia el
- *                componente y tira el websocket, así que un sondeo que navega impide
- *                que llegue justo lo que está esperando. Con payloads grandes (una
- *                auditoría de imagen son megabytes) eso se traduce en una espera que
- *                no termina nunca.
+ * El segundo argumento es un FICHERO con una expresión JavaScript (no un script con `return`); se imprime lo que evalúe.
+ * Variables: CDP_PORT (9333), CDP_WAIT_MS (9000, el dashboard recibe los datos por websocket y no con el load) y
+ * CDP_NO_NAV=1 para no navegar y evaluar en la página ya abierta (cada navegación tira el websocket y un sondeo en bucle no termina).
  */
 
 const fs = require("fs");

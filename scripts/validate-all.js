@@ -1,28 +1,17 @@
 "use strict";
 
 /**
- * validate-all.js — Validación end-to-end de los tres dashboards.
- *
- * No improvisa nada: ejecuta siempre las mismas comprobaciones, en el mismo orden, y
- * falla con un mensaje que dice QUÉ criterio cayó y en qué dashboard. Sustituye a la
- * lista de pasos que hasta ahora había que recordar y ejecutar a mano.
+ * validate-all.js — Validación end-to-end de los tres dashboards: siempre las mismas comprobaciones, en el mismo orden,
+ * con un mensaje que dice qué criterio cayó y en qué dashboard.
  *
  *   node scripts/validate-all.js              # todo
  *   node scripts/validate-all.js --static     # solo lo que no necesita navegador
  *   node scripts/validate-all.js --only host  # un dashboard
  *   node scripts/validate-all.js --keep       # no parar Node-RED/Chrome al terminar
  *
- * Qué necesita para el modo completo:
- *   - Node-RED instalado y los nodos de LoCoAudit resolubles (usa ~/.node-red/node_modules
- *     por enlaces, sin tocar ese directorio);
- *   - Google Chrome, para medir contraste e imprimir;
- *   - las herramientas de auditoría que cada nodo use (trivy, lynis, nmap, docker).
- *     Lo que falte se traduce en un dashboard con menos datos, no en un fallo del runner.
- *
- * Levanta su PROPIO Node-RED en un userDir temporal con una copia de
- * examples/flows.json. Nunca escribe en ~/.node-red: Node-RED reescribe su flows.json
- * al arrancar y eso obligaría a repetir el pegado en la otra máquina.
- *
+ * El modo completo necesita Node-RED con los nodos de LoCoAudit resolubles, Chrome (contraste e impresión) y las
+ * herramientas de cada nodo (trivy, lynis, nmap, docker); lo que falte da un dashboard con menos datos, no un fallo.
+ * Levanta su PROPIO Node-RED en un userDir temporal con una copia de examples/flows.json y nunca escribe en ~/.node-red.
  * Exit code 0 solo si TODOS los criterios pasan.
  */
 

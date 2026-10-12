@@ -99,20 +99,10 @@ function assertConsistent(label, f) {
 
 // ── Constructores sintéticos ─────────────────────────────────────────────────
 /**
- * Finding de host para un Type de Trivy.
- *
- * `installed` decide si el fixture lleva PkgPath, y ESE es el punto:
- *   - PkgPath presente  → Trivy vio un paquete REAL en disco (origin
- *     'installed'). Es el único caso en el que un comando de gestor tiene
- *     sentido, y por tanto el que ejercita la tabla TRIVY_LANG_CMD / los
- *     gestores de SO. La ruta se elige FUERA de SYSTEM_PREFIXES a propósito:
- *     el desvío al gestor del sistema por ruta se prueba en test-trivy-coverage.js.
- *   - PkgPath ausente   → Trivy leyó una ANOTACIÓN en un fichero de bloqueo
- *     (origin 'declared'): no hay software instalado que actualizar, así que
- *     NUNCA debe salir un comando, sea cual sea el Type.
- *
- * Se conservan las dos variantes con expectativas distintas: son dos contratos
- * distintos, no dos formas del mismo caso.
+ * Finding de host para un Type de Trivy. `installed` decide si el fixture lleva PkgPath:
+ *   - con PkgPath (origin 'installed') es el único caso con comando de gestor; la ruta queda FUERA de SYSTEM_PREFIXES,
+ *     porque el desvío al gestor del sistema se prueba en test-trivy-coverage.js.
+ *   - sin PkgPath (origin 'declared', anotación en un lockfile) NUNCA debe salir un comando.
  */
 function hostFindingForType(type, installed = true) {
   const vuln = {

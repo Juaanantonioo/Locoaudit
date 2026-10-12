@@ -1,15 +1,9 @@
 "use strict";
 
 /**
- * Foto fija de los eventos de seguridad de las últimas N horas: logins, sudo/su y sesiones
- * abiertas. No es un HIDS ni monitorización continua: recoge datos crudos y termina.
- *
- * Reparto con Lynis: Lynis mira la CONFIGURACIÓN de SSH, este módulo los EVENTOS. No duplicar
- * aquí chequeos de configuración. La severidad tampoco es cosa suya: la pone el normalizador con
- * las reglas de severity-map.
- *
- * Si ninguna fuente está disponible devuelve { skipped, reason }; las que fallan sueltas se
- * anotan en `partial` y el resto sigue. Nunca pide sudo ni ejecuta nada destructivo.
+ * Foto fija de los eventos de seguridad de las últimas N horas: logins, sudo/su y sesiones abiertas. No es un HIDS.
+ * Lynis mira la configuración de SSH y este módulo los eventos; la severidad la pone el normalizador (severity-map).
+ * Sin fuentes devuelve { skipped, reason }; las que fallan sueltas van en `partial`. Nunca pide sudo.
  */
 
 const fs = require("fs");
@@ -49,10 +43,8 @@ function tagPid(line, tagRe) {
 const SSHD_PID_RE = /sshd(?:-session|-auth)?\[(\d+)\]/;
 
 /**
- * Clave de sesión cuando la línea no trae [PID]: el canal OpenSSH/Operational de Windows escribe
- * "sshd: Failed password for ..." sin él, y sin clave cada línea de respaldo contaba como intento
- * propio (3 intentos reales salían como 5). IP:puerto sirve igual, porque el puerto de origen es
- * único por conexión TCP, y aparece en las tres formas de línea. Solo se usa si no hay PID.
+ * Clave de sesión cuando la línea no trae [PID] (canal OpenSSH/Operational de Windows). IP:puerto sirve porque el puerto de
+ * origen es único por conexión TCP. Solo se usa si no hay PID.
  */
 function connKey(line) {
   let m = line.match(/\bfrom (\S+) port (\d+)/);
@@ -61,13 +53,8 @@ function connKey(line) {
 }
 
 /**
- * Líneas de sshd, iguales en Linux y macOS, más "error: PAM: authentication error" de macOS.
- *
- * Un solo intento fallido emite varias líneas con el mismo PID: la de "Failed password", el
- * resumen de pam_unix, el "N more authentication failures" y el "Connection closed". Solo cuenta
- * la primera, una por intento real de contraseña. "Invalid user" y "Connection closed by ..." se
- * usan de respaldo, uno por sesión, para conexiones que nunca dieron un "Failed password" (los
- * fallos de publickey); contarlas todas inflaba el recuento de fuerza bruta.
+ * Líneas de sshd (Linux y macOS) más "error: PAM: authentication error" de macOS. Un intento fallido emite varias líneas con el
+ * mismo PID y solo cuenta "Failed password"; "Invalid user" y "Connection closed" son respaldo, uno por sesión (fallos de publickey).
  */
 function parseSshdLines(text) {
   const accepted = [];
@@ -137,9 +124,8 @@ function parseSshdLines(text) {
 }
 
 /**
- * Líneas de sudo y su. Un uso correcto de sudo se reconoce por COMMAND=; los fallos, por
- * "N incorrect password attempt(s)", "a password is required" (sudo -n) o el authentication
- * failure de pam_unix. De su: "session opened for user" y el "BAD SU ... to ..." de macOS.
+ * Líneas de sudo y su. Un sudo correcto se reconoce por COMMAND=; los fallos, por "incorrect password attempt(s)", "a password
+ * is required" o el authentication failure de pam_unix. De su: "session opened for user" y el "BAD SU" de macOS.
  */
 function parseSudoLines(text) {
   const ok = [];
@@ -235,12 +221,8 @@ async function collectLinux(windowHours, sources, partial) {
   let sudoText = "";
 
   if (await commandExists("journalctl")) {
-    // Desde OpenSSH 9.8 el listener sigue siendo `sshd` pero la autenticación la registra
-    // `sshd-session`, y `sshd-auth` desde la 9.9: con solo _COMM=sshd salen cero eventos. Los
-    // varios _COMM= se combinan con OR y en versiones viejas los nombres extra no casan nada.
-    //
-    // `-o short-iso` y no `-o cat`, que emite el MESSAGE pelado: hacen falta el timestamp para
-    // la columna HORA, sin el lío de "jul"/"Jul", y el [PID] para deduplicar.
+    // Desde OpenSSH 9.8 la autenticación la registra `sshd-session` (y `sshd-auth` desde la 9.9): con solo _COMM=sshd salen cero
+    // eventos. Los varios _COMM= se combinan con OR. `-o short-iso` y no `-o cat`: hacen falta el timestamp y el [PID] para deduplicar.
     sshText = await tryExec(
       `journalctl _COMM=sshd _COMM=sshd-session _COMM=sshd-auth --since "-${windowHours}h" --no-pager -o short-iso`,
       CMD_TIMEOUT_MS, "journalctl(sshd)", partial
@@ -334,35 +316,16 @@ function toArray(v) {
 }
 
 /**
- * Los dos canales de Windows en una sola invocación de PowerShell, con la salida en JSON.
- *
- * FilterHashtable con StartTime en vez de XPath con fechas en texto, y TimeCreated serializado a
- * yyyy-MM-dd HH:mm:ss: las dos cosas, para no depender del formato regional (y porque en PS 5.1
- * ConvertTo-Json emitiría "/Date(ms)/"). Las Properties se leen por índice, estables por Id desde
- * Windows 7:
+ * Los dos canales de Windows en una sola invocación de PowerShell, con salida JSON. FilterHashtable con StartTime y TimeCreated
+ * como yyyy-MM-dd HH:mm:ss, para no depender del formato regional ni del "/Date(ms)/" de PS 5.1. Properties por índice:
  *   4624: 5=TargetUserName, 7=TargetLogonId, 8=LogonType, 18=IpAddress
  *   4625: 5=TargetUserName, 10=LogonType, 19=IpAddress
  *   4672: 1=SubjectUserName, 3=SubjectLogonId
- * El 4672 no trae IP, así que su SubjectLogonId se cruza con el TargetLogonId del 4624. Ese
- * logonId se emite al JSON: es lo que permite atribuir un 4672 a su 4624 fuera de PowerShell y
- * sin heurística, en win-logons.js. Antes se calculaba aquí y se tiraba.
- *
- * Las cuentas de servicio se descartan en `Svc`, un solo sitio para los tres Ids: generan miles
- * de eventos por hora. `sshd_<PID>` va por patrón y no por lista, porque no es un usuario sino la
- * cuenta de separación de privilegios que sshd crea por conexión, con el PID dentro del nombre.
- * Su 4672 salía en el panel como «sesión admin de sshd_13048», y encima como local, que es como
- * lo reporta Windows pero no es el acceso de nadie.
- *
- * "No events found" no significa "no pasó nada": sin permisos sobre Security, Get-WinEvent
- * devuelve NoMatchingEventsFound igual que si la ventana estuviera vacía, y no lanza
- * UnauthorizedAccessException. Medido con 5 eventos 4625 reales: elevado salían los cinco, sin
- * elevar "no se encontraron eventos". Por eso ahí se sondea el canal con -ListLog: si está
- * habilitado, tiene registros y aun así no devuelve ni uno, es permiso y no ausencia. No se
- * mira si el proceso es administrador, porque un usuario de "Event Log Readers" lee el canal sin
- * serlo y suponerlo daría un falso "denegado".
- *
- * El canal OpenSSH/Operational se lee sin elevar y sus mensajes los escribe OpenSSH en inglés
- * sea cual sea el idioma de Windows, con el formato de Linux: se vuelca tal cual a parseSshdLines.
+ * El 4672 no trae IP: su SubjectLogonId se cruza con el TargetLogonId del 4624 (win-logons.js), por eso el logonId va al JSON.
+ * Las cuentas de servicio se descartan en `Svc` (`sshd_<PID>` por patrón: es la cuenta de separación de privilegios de sshd).
+ * Sin permisos sobre Security, Get-WinEvent devuelve NoMatchingEventsFound igual que con la ventana vacía: se sondea el canal con
+ * -ListLog (habilitado, con registros y sin devolver ninguno = permiso, no ausencia) y no se mira si el proceso es administrador.
+ * OpenSSH/Operational se lee sin elevar, con el formato de Linux, y se vuelca tal cual a parseSshdLines.
  */
 function buildWinEventsScript(windowHours) {
   return `
@@ -441,12 +404,9 @@ $out | ConvertTo-Json -Depth 4 -Compress
 }
 
 /**
- * El JSON del script a la estructura `windows` del módulo. `logonId` se conserva tal cual
- * ("0x3E7"): es la clave de correlación 4624↔4672. La IP pasa por normalizeWinIp porque Windows
- * escribe un guion literal en IpAddress cuando el logon no lleva dirección —el 4624 de tipo 3 que
- * crea sshd, por ejemplo— y como "-" es truthy llegaba entero a la columna ORIGEN del panel. El
- * filtro de cuentas de servicio se repite aquí como red para datos de una versión anterior, y
- * porque es la mitad de la regla que se puede probar sin Windows.
+ * El JSON del script a la estructura `windows` del módulo. `logonId` se conserva tal cual ("0x3E7"): es la clave de correlación
+ * 4624↔4672. La IP pasa por normalizeWinIp (Windows escribe un guion en IpAddress si no hay dirección) y el filtro de cuentas
+ * de servicio se repite aquí.
  */
 function parseWinEventsJson(jsonText) {
   const data = JSON.parse(String(jsonText).trim());
@@ -488,9 +448,8 @@ function parseWinEventsJson(jsonText) {
 }
 
 /**
- * `query user`, en la forma que devuelve `who`. Cabecera en la primera línea y '>' marcando la
- * sesión propia. Se lee por posición y no por cabecera, que cambia con el idioma del SO; ojo con
- * las sesiones desconectadas, que vienen sin SESSIONNAME y desplazan las columnas.
+ * `query user` en la forma que devuelve `who`: cabecera en la primera línea y '>' marcando la sesión propia. Se lee por posición y
+ * no por cabecera (cambia con el idioma); las sesiones desconectadas vienen sin SESSIONNAME y desplazan las columnas.
  */
 function parseQueryUserLines(text) {
   const sessions = [];
@@ -562,15 +521,9 @@ async function collectWin32(windowHours, sources, partial) {
       reason: "ni powershell ni pwsh disponibles en el PATH",
     });
   } else {
-    // Fichero temporal y no -EncodedCommand: así el script iba entero en la línea de comandos,
-    // que Windows limita a 8191 caracteres, y UTF-16LE más base64 multiplican por 2,67, o sea
-    // unos 3070 caracteres de margen real. Medido cuando dejó de funcionar: 3109 de script →
-    // 8292 de base64. El fallo fue silencioso y total, porque los dos canales se leen en la misma
-    // invocación: no salía ni un evento, elevado o no. Con -File el límite no aplica. No volver a
-    // -EncodedCommand ni a -Command; el guardarraíl es test/manual/test-security-events-win32.js.
-    //
-    // Con BOM porque PowerShell 5.1 lee un .ps1 sin él usando la página de códigos ANSI. Hoy el
-    // script es ASCII y daría igual, pero una tilde en un mensaje futuro sería mojibake.
+    // Fichero temporal y no -EncodedCommand: Windows limita la línea de comandos a 8191 caracteres y UTF-16LE más base64 multiplican
+    // por 2,67 (unos 3070 de margen; el fallo fue silencioso y total con 3109). No volver a -EncodedCommand ni -Command: lo guarda
+    // test/manual/test-security-events-win32.js. Con BOM porque PowerShell 5.1 lee un .ps1 sin él en ANSI.
     const script = buildWinEventsScript(windowHours);
     let out = "";
     try {
@@ -683,21 +636,10 @@ function tsToEpoch(ts) {
 }
 
 /**
- * El resultado aplanado como lo consume el dashboard: eventos ya parseados, ts descendente, tope
- * MAX_EVENT_LIST. Con skipped devuelve la lista vacía, que el finding informativo ya lo cuenta.
- *
- * En Windows, una fila por acceso y no una por fuente. Con Node-RED elevado se leen dos canales
- * que describen el mismo hecho y un único login SSH daba cuatro filas: la de SSH, el 4624 remoto,
- * el 4672 de esa sesión y el 4672 de sshd_<PID>. Sobrevive la de SSH porque trae la IP de origen
- * real, que el 4624 de sshd no lleva, y el método de autenticación; lo que aporta el 4672
- * absorbido, con qué cuenta se entró, se anota en `detail` y en el campo `privileged`.
- *
- * Un 4672 no dice que la sesión estuviera elevada: Windows lo emite cuando la CUENTA pertenece al
- * grupo Administradores, se eleve algo o no. Entrar por SSH con una cuenta administradora lo
- * dispara igual, así que los textos hablan de la cuenta.
- *
- * La regla de correlación vive en win-logons.js, compartida con el normalizador, que tiene que
- * decidir lo mismo para los findings. Tener dos copias era justo el fallo que se arregló.
+ * El resultado aplanado como lo consume el dashboard: eventos parseados, ts descendente, tope MAX_EVENT_LIST.
+ * En Windows, una fila por acceso y no por fuente: sobrevive la de SSH (trae la IP real y el método) y lo que aporta el 4672
+ * absorbido va en `detail` y `privileged`. Un 4672 no dice que la sesión estuviera elevada, solo que la cuenta es administradora.
+ * La regla de correlación está en win-logons.js, compartida con el normalizador.
  */
 function buildEventList(result) {
   const windowHours = (result && result.windowHours) || 24;

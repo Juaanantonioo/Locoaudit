@@ -3,28 +3,12 @@
 /**
  * test-declared-severity.js — Los hallazgos 'declared' de host no elevan el riesgo.
  *
- * Fija el arreglo del segundo falso positivo de la herramienta (el primero fue el
- * tick verde sobre un host inexistente, ver test-host-state.js):
- *
- *   Trivy leía ficheros de bloqueo (yarn.lock, bun.lock, pom.xml) empaquetados
- *   dentro de programas de terceros y los presentaba con su CVSS. Medido en
- *   macOS: 96 hallazgos, 96 de ellos 'declared', y el resumen decía RIESGO
- *   CRÍTICO por un yarn.lock de una extensión de VS Code de 2019. El usuario no
- *   tenía absolutamente nada que hacer.
- *
- * El CVSS de esos hallazgos describe la vulnerabilidad si la ejecutaras, no el
- * estado del equipo. Fuera del riesgo global.
- *
- * EL CONTRASTE ES LA MITAD DEL TEST: en una imagen Docker la misma marca
- * 'declared' significa lo contrario. Los CVEs de paquetes del SO llegan SIN
- * PkgPath (medido con trivy 0.72.0 sobre debian:12 → 0 de 169 traen PkgPath),
- * así que la regla `PkgPath ? installed : declared` de normalizer.js los marca
- * 'declared' aunque estén instalados dentro de la imagen. Ahí SÍ elevan.
- *
- * Uso:
- *   node test/manual/test-declared-severity.js
- *
- * Sin framework, como el resto de test/manual/*.js. Sale con código 1 si falla.
+ * Trivy leía lockfiles empaquetados dentro de programas de terceros y los presentaba con su CVSS: en macOS, 96 hallazgos
+ * 'declared' y RIESGO CRÍTICO por el yarn.lock de una extensión de VS Code de 2019. Ese CVSS describe la vulnerabilidad
+ * si se ejecutara, no el estado del equipo, así que queda fuera del riesgo global.
+ * El contraste es la mitad del test: en una imagen Docker 'declared' significa lo contrario. Los CVE de paquetes del SO
+ * llegan sin PkgPath (0 de 169 en debian:12 con trivy 0.72.0) y se marcan 'declared' aunque estén instalados. Ahí sí elevan.
+ * Uso: node test/manual/test-declared-severity.js (sin framework; sale con 1 si falla)
  */
 
 const path = require("path");

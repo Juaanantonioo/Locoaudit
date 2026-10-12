@@ -1,29 +1,12 @@
 "use strict";
 
 /**
- * test-system-pkg-scope.js — Alcance del análisis de paquetes del sistema.
- *
- * El hecho que el dashboard convierte en una frase: ¿se han analizado los
- * paquetes del sistema de este equipo, y si no, por qué no?
- *
- * En CachyOS la respuesta es NO (Trivy no tiene analizador para pacman) y hasta
- * ahora no aparecía en ningún sitio: el usuario veía sus hallazgos y concluía
- * que su equipo estaba cubierto. Ausencia de datos presentada como resultado.
- *
- * QUÉ CAMBIÓ. El veredicto salía de una lista nuestra de gestores soportados
- * (TRIVY_OS_MANAGERS = apt, dnf, yum, zypper, apk). Esa lista era una segunda
- * fuente de verdad sobre algo que Trivy ya responde por sí mismo, y envejecía
- * con cada versión suya: a una distribución que Trivy sí sabía analizar se le
- * decía que no sin haberlo intentado. Ahora el gate es `.Metadata.OS.Family`
- * del propio informe, y systemPackagesSupport() recibe el RESULTADO del módulo
- * en vez del nombre del gestor.
- *
- * Sigue siendo PURA y recibiendo la plataforma por parámetro, así que esta
- * matriz cubre las tres plataformas desde una sola máquina — no hace falta un
- * Arch ni un Windows para fijar el comportamiento.
- *
- * Uso:
- *   node test/manual/test-system-pkg-scope.js
+ * test-system-pkg-scope.js — Alcance del análisis de paquetes del sistema: ¿se analizaron, y si no, por qué?
+ * En CachyOS la respuesta es NO (Trivy no tiene analizador para pacman) y antes no aparecía en ningún sitio.
+ * El veredicto salía de una lista propia (TRIVY_OS_MANAGERS) que envejecía con cada versión de Trivy. Ahora el gate es
+ * `.Metadata.OS.Family` del informe, y systemPackagesSupport() recibe el resultado del módulo.
+ * Es pura y recibe la plataforma por parámetro, así que cubre las tres plataformas desde una máquina.
+ * Uso: node test/manual/test-system-pkg-scope.js
  */
 
 const { systemPackagesSupport } = require("../../lib/trivy-rootfs");

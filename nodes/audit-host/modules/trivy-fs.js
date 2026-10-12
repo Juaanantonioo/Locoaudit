@@ -1,21 +1,11 @@
 "use strict";
 
 /**
- * Wrapper de Trivy sobre el sistema de ficheros. El ámbito es el HOME del usuario en las tres
- * plataformas. Antes se escaneaba territorio del gestor de paquetes (C:\Program Files, el Cellar
- * de Homebrew, /usr/lib) y en Arch no salía un solo hallazgo accionable; lo que sí aparecían eran
- * lockfiles empaquetados dentro de otros paquetes, o sea dependencias declaradas de terceros y no
- * software del usuario (campo `origin` en lib/finding-schema.js).
- *
- * SOLO el HOME. Los paquetes del sistema operativo son otra pregunta y viven en su propio módulo,
- * lib/trivy-rootfs.js, con su propia entrada en el despacho de audit-host. Hasta esta versión los
- * dos escaneos compartían este fichero y se concatenaban en el mismo array `Results`, lo que hacía
- * que el bloque de Alcance tuviera que reconstruir a posteriori de cuál de los dos venía cada
- * cifra. Aquí ya no hay ni `systemPackages`, ni `mergeScans`, ni lista de gestores soportados.
- *
- * Cuando no se puede escanear devuelve { skipped, kind, reason } y quien llama decide por `kind`,
- * no por el texto: 'unsupported' no es un error y la auditoría continúa; 'not-installed' y
- * 'error' sí lo son.
+ * Wrapper de Trivy sobre el sistema de ficheros. El ámbito es solo el HOME del usuario en las tres plataformas: escanear
+ * territorio del gestor de paquetes daba lockfiles empaquetados de terceros (campo `origin` en lib/finding-schema.js).
+ * Los paquetes del SO son otra pregunta y viven en lib/trivy-rootfs.js.
+ * Cuando no se puede escanear devuelve { skipped, kind, reason } y quien llama decide por `kind`: 'unsupported' no es un
+ * error; 'not-installed' y 'error' sí.
  */
 
 const os = require("os");
@@ -30,11 +20,9 @@ const TIMEOUT_MS = 120000;
 const CHILD_TIMEOUT_MS = 90000;
 
 /**
- * Exclusiones por defecto, relativas al objetivo. Comprobado en trivy 0.72.0: relativas y
- * absolutas valen igual, el separador es la coma, y una ruta inexistente no molesta. Ojo con el
- * sufijo "/*", que excluye los hijos pero no el directorio ("junk/*" deja pasar
- * junk/package-lock.json); por eso ninguna entrada lo lleva. node_modules se queda dentro a
- * propósito: son dependencias reales de proyectos del usuario y sus CVEs se pueden accionar.
+ * Exclusiones por defecto, relativas al objetivo (trivy 0.72.0: valen igual relativas y absolutas, separador coma, una ruta
+ * inexistente no molesta). El sufijo "/*" excluye los hijos pero no el directorio, por eso ninguna entrada lo lleva.
+ * node_modules se queda dentro a propósito: son dependencias reales del usuario.
  */
 const DEFAULT_SKIP_DIRS = [
   ".cache",                // cachés de herramientas: nada que parchear
@@ -117,10 +105,7 @@ function trivyVersion() {
 
 /**
  * Ejecuta un comando de Trivy y devuelve su JSON parseado, o { skipped, kind, reason }.
- *
- * `buildCmd` recibe la ruta de un temporal y devuelve la línea a ejecutar con su `-o`: la salida
- * va a fichero, nunca a stdout. El motivo está en execToFile(), y en corto es que exec() mata el
- * proceso al pasarse de maxBuffer y entrega un JSON cortado a mitad que parece bueno.
+ * `buildCmd` recibe la ruta de un temporal y devuelve la línea con su `-o`: la salida va a fichero (ver execToFile()).
  */
 async function runTrivyCommand(buildCmd, timeoutMs) {
   const parsed = await execToFile(buildCmd, timeoutMs, { prefix: "lcaudit-trivy-fs-" });
@@ -173,12 +158,8 @@ function walkErrorResult(stderr) {
 }
 
 /**
- * Escaneo del HOME, y solo del HOME. Los paquetes del sistema son otro módulo (lib/trivy-rootfs.js)
- * con su propia entrada en el despacho de audit-host: aquí ya no se suman ni se sustituyen.
- *
- * El commandExists sigue aquí y no en el despacho por una razón concreta: audit-image también
- * llama a Trivy y comprueba por su cuenta, así que este módulo no puede dar por hecho quién le
- * llama. El despacho comprueba lo suyo para trivy-rootfs; esta es la comprobación de este camino.
+ * Escaneo del HOME, y solo del HOME (los paquetes del sistema son lib/trivy-rootfs.js).
+ * El commandExists sigue aquí porque audit-image también llama a Trivy y no se puede dar por hecho quién llama.
  */
 async function runTrivyFs(opts = {}) {
   const available = await commandExists("trivy");
@@ -231,13 +212,10 @@ function absSkipDirs(home, skipDirs) {
 }
 
 /**
- * Una pasada por hijo de primer nivel. Medido: con una sola invocación sobre el home, un
- * directorio que no responde aborta el escaneo completo —"walk dir error: fdopendir
- * …/CloudStorage/GoogleDrive-…: operation timed out"— y --skip-dirs no lo evita porque Trivy
- * recorre antes de filtrar (probado con "Library", "Library/CloudStorage", "…/*" y "…/**": los
- * cuatro fallan igual). Por hijo, el fallo queda en su carpeta y el resto del home sí se audita.
- * Los hijos que no son almacenamiento local se descartan antes, vía local-fs.js.
- * A cambio, los ficheros sueltos en la raíz del home no se miran: los proyectos viven en carpetas.
+ * Una pasada por hijo de primer nivel. Con una sola invocación, un directorio que no responde (p. ej. CloudStorage/GoogleDrive)
+ * aborta todo el escaneo y --skip-dirs no lo evita, porque Trivy recorre antes de filtrar (probado con cuatro variantes).
+ * Por hijo, el fallo queda en su carpeta. Los hijos que no son almacenamiento local se descartan antes, vía local-fs.js.
+ * A cambio, los ficheros sueltos en la raíz del home no se miran.
  */
 async function scanHomeByChildren(home, skipDirs, resolvedFrom) {
   const started = Date.now();

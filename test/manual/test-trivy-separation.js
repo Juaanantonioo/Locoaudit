@@ -1,34 +1,14 @@
 "use strict";
 
 /**
- * test-trivy-separation.js — La carpeta personal y los paquetes del sistema son
- * DOS auditorías independientes.
+ * test-trivy-separation.js — La carpeta personal y los paquetes del sistema son DOS auditorías independientes.
  *
- * Historia, porque explica qué protege cada assert:
- *
- *  1. Al principio el interruptor hacía `if (opts.systemPackages) return
- *     runTrivyRootfs();`, y ese `return` iba ANTES de resolver el objetivo. Un
- *     usuario de Debian que marcaba "Analizar paquetes del sistema" (a) dejaba
- *     de auditar su carpeta personal por completo y (b) anulaba en silencio el
- *     campo "Carpeta a auditar". El dashboard decía "se han analizado TAMBIÉN
- *     los paquetes del sistema" con "Carpeta: /".
- *
- *  2. Se arregló con mergeScans(), que sumaba los `Results` de los dos escaneos
- *     en un solo objeto y colgaba el estado del sistema de `scan.system`. Eso
- *     quitó la pérdida de datos, pero dejó dos preguntas distintas compartiendo
- *     un array: el bloque de alcance tenía que reconstruir a posteriori de cuál
- *     de los dos venía cada cifra, y `origin` era la única pista.
- *
- *  3. Ahora son dos módulos con dos entradas del despacho y dos huecos en `raw`.
- *     mergeScans() ya no existe porque no hay nada que fusionar.
- *
- * Este fichero fija el paso 3 a nivel de MÓDULO: que trivy-fs no vuelva a saber
- * nada de los paquetes del sistema. La prueba de extremo a extremo —que las dos
- * mitades llegan al payload y ninguna anula a la otra— vive en
- * test-audit-host-payload.js, secciones 5 y 6.
- *
- * Uso:
- *   node test/manual/test-trivy-separation.js
+ * Historia: un `return runTrivyRootfs()` anterior a resolver el objetivo hacía que marcar "Analizar paquetes del sistema"
+ * dejara de auditar la carpeta personal y anulara "Carpeta a auditar". mergeScans() lo arregló mezclando los `Results`
+ * de los dos escaneos en un solo array, y ahora son dos módulos con dos entradas del despacho y dos huecos en `raw`.
+ * Este fichero fija que trivy-fs no vuelva a saber nada de los paquetes del sistema; la prueba de extremo a extremo
+ * está en test-audit-host-payload.js, secciones 5 y 6.
+ * Uso: node test/manual/test-trivy-separation.js
  */
 
 const trivyFs = require("../../nodes/audit-host/modules/trivy-fs");

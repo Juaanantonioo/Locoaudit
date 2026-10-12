@@ -2,16 +2,8 @@
 
 /**
  * Del subárbol NSE de un puerto a un resumen ya interpretado.
- *
- * POR QUÉ EXISTE ESTE FICHERO, que no estaba en el plan de la fase. El normalizador
- * (lib/normalizer.js) construye los findings, y para eso necesita severidades; pero las tablas
- * de severidad de NSE viven en nse-catalog.js, que está en nodes/. Y `lib/` NO importa de
- * `nodes/` en todo el proyecto: la dependencia va en un solo sentido y romperla por comodidad
- * sería pagar con arquitectura una función.
- *
- * Así que el reparto es: aquí se lee el XML ya parseado y se resuelve la severidad con las
- * tablas del catálogo; el normalizador recibe el resultado y solo se ocupa de lo suyo —ids,
- * esquema, agregación, textos—. Ninguna tabla se duplica y ningún módulo cambia de capa.
+ * Existe aquí porque el normalizador (lib/normalizer.js) necesita las tablas de severidad de nse-catalog.js, y `lib/` no
+ * importa de `nodes/`. Este módulo lee el XML ya parseado y resuelve la severidad; el normalizador solo hace ids, esquema y textos.
  */
 
 const { fromCvss, max } = require("../../../lib/severity-map");
@@ -21,14 +13,9 @@ const {
 } = require("./nse-catalog");
 
 /**
- * Los CVE de vulners, agrupados por CPE.
- *
- * La severidad del GRUPO es la del CVE más alto, no la suma ni la media: lo que decide cuánto
- * corre prisa es el peor, y promediar diez CVE bajos con uno crítico esconde el crítico.
- *
- * Los tipos que no son 'cve' (exploitdb, packetstorm, githubexploit…) NO generan hallazgo
- * propio: son otra forma de nombrar el mismo fallo y multiplicarían las tarjetas sin añadir
- * nada. Se cuentan aparte, porque "existe exploit público" sí cambia la urgencia.
+ * Los CVE de vulners, agrupados por CPE. La severidad del grupo es la del CVE más alto, no la media (diez bajos esconderían un crítico).
+ * Los tipos que no son 'cve' (exploitdb, packetstorm, githubexploit…) no generan hallazgo propio, pero se cuentan aparte
+ * porque "existe exploit público" cambia la urgencia.
  */
 function extractVulns(scripts) {
   const node = findScript(scripts, "vulners");
@@ -82,16 +69,9 @@ function extractVulns(scripts) {
 }
 
 /**
- * La nota TLS y con qué se sostiene.
- *
- * `least strength` es la nota agregada que el propio script calcula por puerto: la peor de todas
- * las suites que aceptó. Se usa esa y no un recálculo propio porque duplicar el criterio de
- * ssl-enum-ciphers sería mantener una segunda opinión sobre lo mismo, y las dos se desincronizan.
- *
- * Una nota que no esté en la tabla —incluida 'unknown', que el script emite cuando no pudo
- * completar el diálogo— NO se convierte en severidad: devuelve `severity: null`, que el llamante
- * tiene que tratar como "no se pudo comprobar". Mapearla a 'info' sería exactamente el falso
- * verde.
+ * La nota TLS y con qué se sostiene. Se usa la `least strength` que calcula ssl-enum-ciphers (la peor suite aceptada) en
+ * vez de recalcularla. Una nota fuera de la tabla, incluida 'unknown', devuelve `severity: null`, que el llamante trata
+ * como "no se pudo comprobar"; mapearla a 'info' sería un falso verde.
  */
 function extractTls(scripts) {
   const node = findScript(scripts, "ssl-enum-ciphers");
@@ -177,14 +157,11 @@ function extractSsh(scripts) {
 }
 
 /**
- * Los cuatro estados de vulnerabilidad de un puerto. La pregunta que responden no es "¿tiene
- * CVE?" sino "¿qué sabemos de si los tiene?", que es la distinción que evita el falso verde.
- *
- *   found                salieron CVE. Hay dato.
- *   clean                anunció versión, el canario confirma que la fuente respondió y no vino
- *                        ningún CVE. ES LA ÚNICA COMBINACIÓN que autoriza a decir "sin
- *                        vulnerabilidades conocidas".
- *   no-version           no anunció versión: no había nada que consultar. Alcance, no hueco.
+ * Los cuatro estados de vulnerabilidad de un puerto: no "¿tiene CVE?" sino "¿qué sabemos de si los tiene?".
+ *   found                salieron CVE.
+ *   clean                anunció versión, el canario confirma que la fuente respondió y no vino ningún CVE.
+ *                        Es la única combinación que autoriza a decir "sin vulnerabilidades conocidas".
+ *   no-version           no anunció versión: nada que consultar. Alcance, no hueco.
  *   source-unavailable   anunció versión y la fuente no está confirmada. Hueco: ámbar.
  */
 function portVulnState(p, vulns, canaryOk) {

@@ -1,21 +1,14 @@
 "use strict";
 
 /**
- * Única fuente sobre si el objetivo existe, con un `nmap -sn` explícito antes del escaneo. Hace
- * falta porque el escaneo va con -Pn y ahí nmap marca siempre up="1" y reason="user-set", que es
- * su forma de decir que no comprobó nada: un host inexistente daba 0 puertos abiertos y el
- * dashboard lo pintaba verde. Y sale a cuenta: medido contra una IP sin host detrás de WireGuard,
- * 3,0 s de descubrimiento frente a 212,6 s del escaneo de 1-1024, a 28 s del timeout del modo.
+ * Única fuente sobre si el objetivo existe, con un `nmap -sn` explícito antes del escaneo. El escaneo va con -Pn y ahí
+ * nmap marca siempre up="1" reason="user-set" sin comprobar nada: un host inexistente daba 0 puertos y el dashboard lo
+ * pintaba verde. Sale a cuenta: contra una IP sin host, 3,0 s de descubrimiento frente a 212,6 s del escaneo de 1-1024.
  *
- * Solo decide el bloque <hosts> del XML: up >= 1 es accesible, up=0 con <finished> es no
- * accesible, y todo lo demás (exit="error", sin runstats, timeout, nmap ausente, XML ilegible)
- * queda en null. Con null el llamante escanea igual y avisa: un falso "no alcanzable" que cancela
- * la auditoría es peor que un escaneo de más.
- *
- * `reason` no decide nada, solo afina el mensaje. Medido en macOS sin privilegios, los tres casos
- * de host inalcanzable (subred VPN vacía, IP libre de la LAN, link-local sin ruta) dan el mismo
- * `no-response`; `host-unreach` y `net-unreach` salen cuando el SO informa de EHOSTUNREACH o
- * llega un ICMP unreachable, y ahí sí cambia el consejo.
+ * Solo decide el bloque <hosts>: up >= 1 accesible, up=0 con <finished> no accesible, y todo lo demás (exit="error", sin
+ * runstats, timeout, nmap ausente, XML ilegible) es null. Con null se escanea igual y se avisa, porque un falso
+ * "no alcanzable" que cancela la auditoría es peor que un escaneo de más.
+ * `reason` solo afina el mensaje (sin privilegios los casos inalcanzables dan el mismo `no-response`).
  */
 
 const { execCommand, commandExists } = require("../../../lib/executor");
@@ -216,29 +209,14 @@ async function checkHostReachable(options = {}) {
 const PING_TIMEOUT_MS = 5000;
 
 /**
- * El ping del sistema, para el caso en que Nmap da el equipo por caído.
+ * El ping del sistema, para cuando Nmap da el equipo por caído. Sin root, nmap descarta -PE y solo le quedan cuatro
+ * sondas TCP, así que un equipo que filtra todo salvo otros puertos sale "no accesible" aunque `ping` le responda
+ * (comprobado el 2026-10-08 contra un equipo con solo 2222 y 5900 abiertos). El `ping` del sistema manda ICMP sin root.
  *
- * El problema que resuelve, comprobado el 2026-10-08 contra un equipo real (10.10.10.10, con
- * solo 2222 y 5900 abiertos y el resto filtrados):
- *   nmap -sn -n -PE -PS22,80,443,8080 10.10.10.10  → "You are not root -- using TCP pingscan
- *                                                     rather than ICMP" · 0 hosts up
- *   nmap -sn -n -PS2222 10.10.10.10                → 1 host up
- *   ping 10.10.10.10                               → responde
- * Sin root, Nmap descarta -PE y solo le quedan las cuatro sondas TCP. Un equipo que no atiende
- * ninguno de esos puertos y filtra el resto sale "no accesible" y no se escanea, aunque el
- * propio sistema sepa hacerle un ping. El `ping` del sistema sí puede mandar ICMP sin root en
- * macOS, Linux y Windows.
- *
- * Qué cuenta como respuesta: una línea con "ttl=". Es lo único que llevan las respuestas de eco
- * de verdad en los tres sistemas, y lo que NO lleva el "host de destino inaccesible" que devuelve
- * un router. El código de salida no sirve: en Windows es 0 también con ese mensaje del router.
- * "TTL=" no se traduce, así que vale para un Windows en español.
- *
- * Dos paquetes y no uno: en la misma prueba real los primeros paquetes se perdieron.
- *
- * Devuelve { ran, replied, cmd }. ran=false si no hay ping o no se pudo lanzar: en ese caso no se
- * afirma nada y el resultado de Nmap se queda como estaba. El objetivo llega ya validado como
- * IPv4 por validateTarget(), así que puede ir a la línea de órdenes.
+ * Cuenta como respuesta una línea con "ttl=": es lo que llevan los ecos reales y no el "destino inaccesible" de un router.
+ * El código de salida no sirve (en Windows es 0 con ese mensaje) y "TTL=" no se traduce. Son dos paquetes porque en la
+ * prueba real se perdieron los primeros.
+ * Devuelve { ran, replied, cmd }; con ran=false no se afirma nada. El objetivo llega validado por validateTarget().
  */
 async function systemPing(target, platform = process.platform) {
   const pingPath = await commandExists("ping");

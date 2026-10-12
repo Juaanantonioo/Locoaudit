@@ -41,21 +41,10 @@ function parseTargets(input) {
 }
 
 /**
- * ¿Es `input` una lista de puertos válida para -p? Devuelve { ok: true, spec, count } o
- * { ok: false, empty, reason }.
- *
- * Por qué existe. El campo "Puertos a escanear" del modo personalizado iba tal cual a la línea de
- * nmap (`-p ${portSpec}`), igual que iba la IP antes de validateTarget(): `22; orden` era una
- * orden más para la shell. parsePortsList(), que ya existía, no sirve para esto porque descarta
- * en silencio lo que no entiende, y aquí lo que no se entiende no se escanea: se rechaza.
- *
- * Qué admite: elementos separados por comas, cada uno un puerto (`22`) o un rango (`8000-8080`),
- * de 1 a 65535 y con el inicio del rango menor o igual que el final. Los espacios alrededor de
- * las comas se toleran y desaparecen en `spec`, que es lo que se pasa a nmap. Nada más: ni
- * prefijos de protocolo de nmap (`T:`, `U:`), ni nombres de servicio, ni comodines.
- *
- * `count` son los puertos distintos que cubre la lista, y de él sale el tiempo máximo del escaneo
- * (scanTimeoutMs). Antes el modo personalizado tenía 90 s fijos, y 1-65535 nunca podía terminar.
+ * ¿Es `input` una lista de puertos válida para -p? Devuelve { ok: true, spec, count } o { ok: false, empty, reason }.
+ * Antes iba tal cual a la línea de nmap, así que se valida y lo que no se entiende se rechaza, no se descarta.
+ * Admite elementos separados por comas, cada uno un puerto o un rango (1-65535, inicio <= fin); sin prefijos T:/U:, nombres ni comodines.
+ * `count` son los puertos distintos y de él sale el tiempo máximo del escaneo (scanTimeoutMs).
  */
 function validatePortSpec(input) {
   const raw = String(input == null ? "" : input).trim();
@@ -101,13 +90,8 @@ function validatePortSpec(input) {
 }
 
 /**
- * Tiempo máximo de nmap, sin contar el de NSE, para un modo y un número de puertos.
- *
- * Rápido y estándar conservan los valores que ya estaban medidos (90 s y 240 s). Completo y
- * personalizado dependen ahora del número de puertos: 62 ms por puerto, que es la misma
- * proporción que daba el límite anterior del modo completo (620 s para 10.000 puertos, medido
- * contra un equipo con cortafuegos, donde cada puerto filtrado espera sus reintentos). Con los
- * 65535 puertos salen unos 68 minutos. Nunca menos de 90 s.
+ * Tiempo máximo de nmap, sin contar NSE. Rápido y estándar conservan los valores medidos (90 s y 240 s); completo y
+ * personalizado escalan a 62 ms por puerto (la proporción medida contra un equipo con cortafuegos). Nunca menos de 90 s.
  */
 const MS_PER_PORT = 62;
 function scanTimeoutMs(scanMode, portCount) {
@@ -119,29 +103,10 @@ function scanTimeoutMs(scanMode, portCount) {
 
 /**
  * ¿Es `input` la dirección IPv4 de UN equipo? Devuelve { ok: true, ip } o { ok: false, reason }.
- *
- * Por qué existe. El campo "Dirección IP del equipo" se pasaba tal cual a la línea de nmap. Con
- * eso pasaban dos cosas, las dos comprobadas:
- *   - Un rango (10.10.10.0/24) se aceptaba, y el nodo está hecho para un equipo: parseNmapXml()
- *     junta los <port> de todos los <host> sin decir de cuál es cada uno, y el hostname es el
- *     del primero. Un escaneo de red que terminase daría los puertos de varios equipos como si
- *     fueran de uno, con el nombre de otro. Medido con un /24 real: no llegó a terminar
- *     (420 s de límite, -Pn sondea las 256 direcciones), pero con un rango pequeño sí terminaría.
- *   - El texto llegaba a la shell sin filtrar: `1.2.3.4; cualquier-cosa` era una orden más.
- *
- * Qué admite: solo cuatro octetos decimales, 0-255, sin ceros a la izquierda (`010` lo lee nmap
- * como octal en algunas versiones y apunta a otro equipo). Nada de nombres, rangos, máscaras,
- * listas ni IPv6: el comando no lleva -6 y findInterfaceForTarget() solo entiende IPv4, así que
- * aceptarlos sería prometer algo que el resto del nodo no hace.
- *
- * Qué rechaza aunque tenga forma de IPv4, porque no es la dirección de un equipo:
- *   0.0.0.0/8 ("esta red"), 224.0.0.0/4 (multidifusión), 240.0.0.0/4 (reservada, incluye la
- *   difusión 255.255.255.255), y la dirección de red o de difusión de una subred a la que este
- *   equipo está conectado. Esta última solo se puede saber para las subredes propias, que son
- *   las que conocemos por su máscara; para una subred remota no hay forma de distinguirla.
- *
- * Es la única regla: audit-network.html hace una comprobación de forma para pintar el campo en
- * rojo, pero quien decide si se escanea es esta función.
+ * Un rango mezclaría en parseNmapXml() los puertos de varios equipos como si fueran de uno, y el texto sin filtrar era
+ * una orden más para la shell. Solo admite cuatro octetos decimales 0-255 sin ceros a la izquierda (nmap lee `010` como octal).
+ * Rechaza 0.0.0.0/8, multidifusión, reservada (incluye 255.255.255.255) y la red o difusión de una subred propia.
+ * No hay IPv6 porque el comando no lleva -6. Esta función decide; audit-network.html solo pinta el campo.
  */
 function validateTarget(input, interfaces = os.networkInterfaces()) {
   const raw = String(input == null ? "" : input).trim();
@@ -229,18 +194,9 @@ function comandoYNota(texto) {
 
 /**
  * Fix por puerto conocido y plataforma; null si no hay uno específico.
- *
- * Gramática (la misma que el resto de los `fix`, y la que lee el dashboard):
- *   "## " abre una rama excluyente · "$ " es el comando del paso anterior · "> " es una nota
- *   que no se numera · el resto son pasos. Nunca "1)" ni "2)": el orden lo pone la lista.
- *
- * Los subtítulos llevan delante el servicio ("SSH: …") porque buildPortFix() concatena este
- * texto DETRÁS de su propia pareja "Si no lo necesitas / Si lo necesitas": sin el prefijo se
- * leerían como la misma rama repetida.
- *
- * LÍMITE CONOCIDO, no corregido aquí: para 80, 443, 3306, 5432, 6379 y 27017 solo win32 tiene
- * rama propia, así que macOS recibe los comandos de Linux (systemctl, rutas de /etc). Estaba
- * así antes de migrar los textos y arreglarlo es otro trabajo.
+ * Gramática de los `fix` que lee el dashboard: "## " rama excluyente, "$ " comando, "> " nota sin numerar, el resto pasos.
+ * Los subtítulos llevan el servicio delante porque buildPortFix() concatena este texto tras su propia pareja de ramas.
+ * Límite conocido: para 80, 443, 3306, 5432, 6379 y 27017 solo win32 tiene rama propia, y macOS recibe los comandos de Linux.
  */
 function getFixForPort(port, platform, pkgManager) {
   const plat = platform || process.platform;

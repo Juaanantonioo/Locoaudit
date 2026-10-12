@@ -1,13 +1,9 @@
 "use strict";
 
 /**
- * Nodo audit-network. Nmap es requisito: no hay escáner alternativo desde que se eliminó el
- * port-scanner nativo, y con él sus opciones de la UI (timeout por puerto, workers). Si falta,
- * el nodo no revienta: emite NET-DEP-NMAP y sigue.
- *
- * La identificación de proceso, PID y bind no es opcional para targets locales: de esos campos
- * dependen las reglas de resolución, que distinguen loopback de expuesto y daemon del sistema de
- * aplicación de terceros.
+ * Nodo audit-network. Nmap es requisito (no hay escáner alternativo). Si falta, el nodo emite NET-DEP-NMAP y sigue.
+ * Proceso, PID y bind no son opcionales en targets locales: las reglas de resolución distinguen de ahí loopback de expuesto
+ * y daemon del sistema de aplicación de terceros.
  */
 
 const os = require("os");
@@ -75,16 +71,8 @@ module.exports = function (RED) {
       const forceScan      = config.forceScan === true || config.forceScan === "true";
 
       /**
-       * Análisis NSE: APAGADO por defecto, y el defecto se decide aquí una vez.
-       *
-       * Apagado porque cambia lo que la auditoría le hace a un tercero. El escaneo de puertos
-       * pregunta "¿estás abierto?"; los scripts dialogan con el servicio y, en el caso de
-       * vulners, consultan una base de datos de internet con la versión detectada. Eso es una
-       * dependencia externa y una interacción más larga con el equipo auditado, y ninguna de las
-       * dos se activa sin que alguien lo haya leído y marcado.
-       *
-       * Apagado también porque el escaneo tarda bastante más, y quien solo quiere saber qué
-       * puertos tiene abiertos no debería pagarlo.
+       * Análisis NSE apagado por defecto: cambia lo que la auditoría le hace a un tercero (los scripts dialogan con el
+       * servicio y vulners consulta internet con la versión detectada) y alarga bastante el escaneo.
        */
       const nseEnabled = config.nseEnabled === true || config.nseEnabled === "true";
       // Tiempo EXTRA para los scripts, no el total. Se suma al presupuesto del modo en vez de
@@ -213,17 +201,9 @@ module.exports = function (RED) {
                                 (nseEnabled ? nseTimeout : 0);
 
             /**
-             * Qué scripts pedirle a ESTE nmap.
-             *
-             * No se pasa la lista a ciegas: `nmap --script a,b,c` con un solo nombre que no
-             * existe aborta la ejecución entera y devuelve cero puertos. O sea que un nmap
-             * antiguo —anterior a la 7.80, que es la que trae vulners— convertiría
-             * activar esta opción en perder el escaneo completo. Se pregunta antes y se manda
-             * solo lo que hay.
-             *
-             * Y si no se puede ni preguntar, se escanea SIN scripts: el escaneo de puertos es la
-             * función principal y no se arriesga por una opcional. Lo que no se hace es callarlo:
-             * `nseAvailability.checked === false` llega al informe como omisión.
+             * Qué scripts pedirle a ESTE nmap. Un solo nombre inexistente aborta el escaneo entero (p. ej. nmap anterior a
+             * la 7.80, que es la que trae vulners), así que se pregunta antes y se manda lo que hay. Si no se puede ni
+             * preguntar, se escanea SIN scripts y `nseAvailability.checked === false` llega al informe como omisión.
              */
             let nseScripts = [];
             if (nseEnabled) {
@@ -300,13 +280,8 @@ module.exports = function (RED) {
         }
 
         /**
-         * El veredicto sobre la fuente de CVE, y con él el resumen NSE de cada puerto.
-         *
-         * ORDEN OBLIGADO: primero el canario sobre TODOS los puertos, después el resumen de cada
-         * uno. El canario es una propiedad del escaneo entero —si un solo puerto recibió datos de
-         * vulners, la fuente respondió para todos—, así que resolverlo puerto a puerto daría
-         * "limpio" a unos y "sin comprobar" a otros dentro de la misma ejecución, según el orden
-         * del bucle.
+         * Veredicto sobre la fuente de CVE y resumen NSE de cada puerto. Orden obligado: primero el canario sobre TODOS
+         * los puertos, porque es propiedad del escaneo entero; puerto a puerto dependería del orden del bucle.
          */
         if (nseEnabled) {
           // `!skipScan` en el estado del canario: con el objetivo no alcanzable no se escaneó
@@ -479,16 +454,9 @@ module.exports = function (RED) {
                 : `1-1024 + catálogo (${Object.keys(PORT_CATALOG).length} puertos conocidos)`,
             customTarget: target !== "127.0.0.1" ? target : null,
             /**
-             * El estado del análisis NSE, en estructurado.
-             *
-             * Duplica lo que ya dicen los hallazgos de omisión, y a propósito: son dos lectores
-             * distintos. Los hallazgos los lee una persona en el panel y en el informe; esto lo
-             * lee el dashboard para decidir si puede pintar verde, y el JSON exportado para que
-             * otra herramienta sepa qué cubrió esta ejecución. La regla del proyecto es que el
-             * estado de la comprobación viaje aparte del resultado de la comprobación.
-             *
-             * `available` sale como array ordenado y no como Set: un Set se serializa a {} y el
-             * campo llegaría vacío al informe sin que falle nada.
+             * Estado del análisis NSE en estructurado. Duplica a propósito los hallazgos de omisión: estos los lee una
+             * persona y esto lo lee el dashboard (para decidir si pinta verde) y el JSON exportado.
+             * `available` es un array ordenado porque un Set se serializa a {}.
              */
             nse: {
               enabled: nseEnabled,

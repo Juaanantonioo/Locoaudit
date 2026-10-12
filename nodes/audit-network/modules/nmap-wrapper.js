@@ -1,12 +1,8 @@
 "use strict";
 
 /**
- * Único escáner de puertos del nodo: el port-scanner nativo se eliminó al pasar Nmap a requisito.
- * Si no está instalado devuelve { skipped, reason } y el llamante emite el finding de dependencia.
- *
- * El comando va con -sV para las versiones de servicio, -T4, -Pn y -oX - para XML por stdout.
- * El "host up" de -Pn no se usa para nada: siempre dice que sí, y quien decide si el objetivo
- * existe es host-discovery.js.
+ * Único escáner de puertos del nodo. Si nmap no está instalado devuelve { skipped, reason } y el llamante emite el finding.
+ * Va con -sV, -T4, -Pn y -oX - (XML por stdout). El "host up" de -Pn no se usa: siempre dice que sí, y decide host-discovery.js.
  */
 
 const os                             = require("os");
@@ -16,15 +12,10 @@ const { getFixForPort }              = require("./network-utils");
 const { decodeXmlEntities, parseScripts } = require("./nmap-xml");
 
 /**
- * La interfaz local que comparte subred con el objetivo, para el -e. Hace falta en macOS con
- * varias interfaces en la misma subred: sin -e nmap falla con SO_ERROR 50 al no saber cuál usar.
- *
- * En Windows devuelve siempre null y el comando sale sin -e. os.networkInterfaces() da el nombre
- * amigable ("Wi-Fi") y el nmap de Windows usa sus propios alias o el dispositivo NPF: con
- * `-e Wi-Fi` responde "I cannot figure out what source address to use for device Wi-Fi" y sale
- * con exit="error" y <hosts up="0">, que el pre-check leía como host caído. Sin -e funciona,
- * porque la tabla de rutas ya enruta bien; -e es una optimización, no un requisito. Traducir el
- * nombre con `nmap --iflist` se descartó: una llamada más y un parseo de texto frágil.
+ * La interfaz local que comparte subred con el objetivo, para el -e. Hace falta en macOS con varias interfaces en la
+ * misma subred (sin -e nmap falla con SO_ERROR 50).
+ * En Windows devuelve null: os.networkInterfaces() da el nombre amigable ("Wi-Fi"), nmap responde "I cannot figure out
+ * what source address to use" y sale con <hosts up="0">, que el pre-check leía como host caído. Sin -e funciona.
  */
 function findInterfaceForTarget(targetIp, platform = process.platform) {
   if (platform === "win32") return null;
@@ -151,18 +142,9 @@ function applyMeta(parsed) {
 }
 
 /**
- * La línea de nmap. Se extrae de runNmap() para poder comprobar en un test que, con el análisis
- * NSE apagado, el comando es EXACTAMENTE el de siempre: byte a byte, incluido el doble espacio
- * que deja un ifaceFlag vacío. Que activar una función no toque el camino de quien no la activa
- * es una propiedad que se verifica, no que se promete.
- *
- * Lo que NO lleva, y por qué:
- *   -O               necesita sockets crudos, o sea root. Un panel web que se audita a sí mismo
- *                    no corre como root, y además dio un SO equivocado en las pruebas reales.
- *   -f               fragmentar es evadir cortafuegos: impropio de una auditoría autorizada.
- *   --script-timeout un script matado por timeout desaparece del XML igual que si no hubiera
- *                    encontrado nada, así que añadiría una cuarta causa de silencio que el
- *                    canario no puede cerrar. Se prefiere el presupuesto global de tiempo.
+ * La línea de nmap, extraída de runNmap() para comprobar en un test que con NSE apagado el comando es el de siempre, byte a byte.
+ * No lleva -O (necesita root y dio un SO equivocado), -f (fragmentar es evadir cortafuegos) ni --script-timeout (un script
+ * matado desaparece del XML igual que uno sin hallazgos, una causa de silencio que el canario no cierra).
  */
 function buildScanCommand({ target, portSpec, ifaceFlag = "", nseScripts = [] }) {
   const scriptFlag = nseScripts.length ? ` --script ${nseScripts.join(",")}` : "";
@@ -182,13 +164,9 @@ async function runNmap(options = {}) {
     return { skipped: true, kind: "not-installed", reason: "Nmap no está instalado en este equipo" };
   }
 
-  // Rango numérico por modo, más los puertos del catálogo que queden por encima: los de dentro
-  // ya están cubiertos y repetirlos da el aviso "Duplicate port number(s)" y sondeos de más.
-  // El coste lo marcan los puertos filtrados, no los abiertos, porque cada uno espera reintentos:
-  // medido contra un host filtrado, 10.000 puertos rondan los 500 s. "full" son todos los
-  // puertos: un modo llamado Completo que se paraba en el 10000 dejaba fuera servicios reales
-  // (el 27017 de MongoDB solo entraba por el catálogo). Tarda más de una hora contra un equipo
-  // con cortafuegos, y el editor lo avisa.
+  // Rango numérico por modo más los puertos del catálogo por encima; repetir los de dentro da "Duplicate port number(s)".
+  // El coste lo marcan los puertos filtrados (cada uno espera reintentos): 10.000 rondan los 500 s. "full" son todos,
+  // porque parar en el 10000 dejaba fuera servicios reales (27017 de MongoDB). Contra un equipo con cortafuegos pasa de una hora y el editor lo avisa.
   const RANGE_MAX = { rapido: 1024, standard: 3000, full: 65535 };
   let portSpec;
   if (scanMode === "custom" && options.customPorts && options.customPorts.trim()) {

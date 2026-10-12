@@ -1,19 +1,11 @@
 "use strict";
 
 /**
- * Qué scripts NSE están instalados y, después del escaneo, qué le pasó a cada uno en cada puerto.
+ * Qué scripts NSE están instalados y, tras el escaneo, qué le pasó a cada uno en cada puerto.
  *
- * POR QUÉ HAY QUE PREGUNTAR ANTES. Un nombre que no exista no degrada el escaneo: lo ABORTA.
- * Comprobado con nmap 7.99:
- *   nmap --script vulners,noexiste -p 22 127.0.0.1
- *   → NSE: failed to initialize the script engine … 'noexiste' did not match a category,
- *     filename, or directory  /  QUITTING!  /  exit=1, <hosts up="0">
- * O sea: una instalación de nmap sin `vulners` —que no viene en todas las distribuciones— no
- * daría "análisis NSE incompleto", daría "la red entera sin auditar". Podar la lista antes de
- * construir el comando no es una optimización, es lo que evita eso.
- *
- * (Y si aun así se colara: ese XML lo recoge parseNmapFatalError() y acaba en NET-SCAN-WARN, o
- * sea "no concluyente". Nunca en un falso verde. Esta poda es el primer cinturón, no el único.)
+ * Hay que preguntar antes: un nombre inexistente en `--script` no degrada el escaneo, lo aborta
+ * (nmap 7.99: "failed to initialize the script engine … QUITTING!", exit=1, <hosts up="0">). Una instalación sin
+ * `vulners` daría "la red entera sin auditar". Si aun así se colara, parseNmapFatalError() lo recoge como NET-SCAN-WARN.
  */
 
 const { execCommand }                        = require("../../../lib/executor");
@@ -23,17 +15,8 @@ const { findScript }                         = require("./nmap-xml");
 const HELP_TIMEOUT_MS = 15000;
 
 /**
- * Los nombres que `nmap --script-help` reconoció.
- *
- * Formato real de la salida, por script:
- *   ssh2-enum-algos
- *   Categories: safe discovery
- *   https://nmap.org/nsedoc/scripts/ssh2-enum-algos.html
- *   …descripción…
- *
- * El ancla es la línea `Categories:`, no el nombre: la descripción de un script puede contener
- * el nombre de otro (ssl-cert cita ssl-enum-ciphers), y buscar nombres sueltos daría por
- * instalado algo que solo estaba mencionado en un párrafo.
+ * Los nombres que `nmap --script-help` reconoció. El ancla es la línea `Categories:` y no el nombre, porque la descripción
+ * de un script puede citar a otro (ssl-cert cita ssl-enum-ciphers) y se daría por instalado algo solo mencionado.
  */
 function parseScriptHelp(stdout) {
   const lines = String(stdout || "").split(/\r?\n/);
@@ -53,16 +36,9 @@ function parseRejectedName(text) {
 }
 
 /**
- * Qué scripts de la lista están instalados. UNA llamada, no una por script.
- *
- * `--script-help` con la lista completa aborta en el PRIMER nombre que no reconoce y no dice
- * nada de los siguientes, así que ese caso —y solo ese— cuesta un reintento con el resto: una
- * llamada más por script AUSENTE, que en una instalación normal son cero. Sondear uno a uno
- * serían cinco llamadas siempre, incluso cuando no falta ninguno.
- *
- * Devuelve { checked, available:Set, missing:[], reason }.
- * `checked:false` significa que no se pudo averiguar, y eso NO es "no hay scripts": el llamante
- * tiene que tratarlo como comprobación no realizada.
+ * Qué scripts de la lista están instalados, con UNA llamada. `--script-help` aborta en el primer nombre que no reconoce,
+ * así que solo ese caso cuesta un reintento con el resto (una llamada por script AUSENTE).
+ * Devuelve { checked, available:Set, missing:[], reason }. `checked:false` es comprobación no realizada, no "no hay scripts".
  */
 async function scriptExists(nmapPath, ids = NSE_SCRIPT_IDS, timeoutMs = HELP_TIMEOUT_MS) {
   const available = new Set();
@@ -111,20 +87,12 @@ async function scriptExists(nmapPath, ids = NSE_SCRIPT_IDS, timeoutMs = HELP_TIM
 }
 
 /**
- * Qué le pasó a cada script en un puerto concreto, después del escaneo.
- *
- * Tres estados, y la diferencia entre ellos es la razón de ser del módulo:
- *
- *   found           el script salió en el XML de este puerto. Hay dato.
- *   not-applicable  no le tocaba (el puerto no es TLS, el servicio no anunció versión…).
- *                   No es un hueco: es el alcance real. Va con su motivo.
- *   not-run         le tocaba —o no sabemos si le tocaba— y no hay dato. ESTO SÍ ES UN HUECO.
- *
- * Lo que no existe a propósito es un cuarto estado "salió y estaba limpio". Un script que no
- * emite nada no está diciendo "todo bien": ssl-enum-ciphers callado puede ser un handshake que
- * no se completó, y leerlo como limpio es exactamente el falso verde que el proyecto prohíbe.
- * Quien afirme "limpio" tiene que apoyarse en otra cosa —para vulners, el canario—, no en el
- * silencio.
+ * Qué le pasó a cada script en un puerto, después del escaneo:
+ *   found           salió en el XML de este puerto. Hay dato.
+ *   not-applicable  no le tocaba (puerto no TLS, servicio sin versión…). Es alcance, no hueco, y lleva su motivo.
+ *   not-run         le tocaba, o no se sabe, y no hay dato. Esto sí es un hueco.
+ * No existe un estado "salió y estaba limpio": un script callado puede ser un handshake que no se completó, y leerlo
+ * como limpio es el falso verde que el proyecto prohíbe. Para vulners se apoya en el canario.
  */
 function scriptStates(p, availability) {
   const scripts = (p && p.nse) || [];

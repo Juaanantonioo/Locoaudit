@@ -17,15 +17,8 @@ const { commandExists } = require("../../lib/executor");
 const { summarize } = require("../../lib/severity-map");
 
 /**
- * Avisa de un módulo omitido con el NIVEL que corresponde a su motivo.
- *
- * `node.warn` pinta el aviso en amarillo en el editor de Node-RED, y eso es una llamada a la
- * acción. Usarlo para "Trivy no cubre los paquetes de sistema de macOS" contradice la propia
- * clasificación del informe, que ya trata ese caso como 'not-applicable' y no como fallo: el
- * panel decía "no aplica" y el log, al lado, lo pintaba como problema.
- *
- * El criterio es el mismo `esNoAplica()` que usan el finding y el estado del módulo, no una
- * segunda lista de kinds aquí.
+ * Avisa de un módulo omitido con el nivel que corresponde a su motivo. `node.warn` pinta en amarillo, y para casos
+ * 'not-applicable' (Trivy en macOS) contradiría al informe. El criterio es `esNoAplica()`, el mismo del finding y del estado del módulo.
  */
 function avisarOmitido(node, modulo, res) {
   const kind = res && res.kind;
@@ -312,13 +305,8 @@ module.exports = function (RED) {
             // sola cosa —"esto es lo que no se ha mirado"— y no cuatro problemas del equipo.
             checksSkipped: buildSkippedChecksSummary(findings),
             /**
-             * Los siete módulos y qué pasó con cada uno. Antes solo viajaba `modulesRun`, la lista
-             * de los que se ejecutaron, y de ahí no se puede deducir la diferencia que importa:
-             * un módulo APAGADO por el usuario y uno que se CAYÓ producen la misma ausencia.
-             *
-             * Se deriva aquí y no de los findings a propósito. Solo Lynis y Trivy emiten un
-             * hallazgo al omitirse; los otros cinco devuelven null y no dejan rastro, así que
-             * contar findings cubriría dos de siete. Esto cubre los siete sin tocar cinco ficheros.
+             * Los siete módulos y qué pasó con cada uno. `modulesRun` no distingue un módulo APAGADO de uno que se CAYÓ, y
+             * solo Lynis y Trivy emiten hallazgo al omitirse, así que se deriva aquí y no de los findings.
              */
             modules: [
               { id: "cpu-memory",      label: "Procesador y memoria",        requested: enableCpu,       ran: enableCpu },
@@ -337,14 +325,9 @@ module.exports = function (RED) {
               // El kind del módulo, para poder separar el límite estructural del fallo real sin
               // volver a mirar el resultado entero.
               kind: m.kind || null,
-              // CUATRO estados, no dos ni tres:
-              //   'not-requested'  lo apagó el usuario. Decisión suya, no un agujero.
-              //   'not-applicable' no tiene sentido en este sistema y no se va a poder. Tampoco
-              //                    es un agujero: es el alcance real de la herramienta.
-              //   'failed'         se pidió, se intentó y no salió. Esto SÍ es un agujero.
-              //   'ok'             se ejecutó.
-              // Fundir los dos primeros con 'failed' es lo que ponía avisos ámbar sobre cosas
-              // que nadie puede arreglar.
+              // Cuatro estados: 'not-requested' (lo apagó el usuario), 'not-applicable' (no tiene sentido en este
+              // sistema), 'failed' (se pidió y no salió: el único agujero) y 'ok'. Fundir los dos primeros con 'failed'
+              // ponía avisos ámbar sobre cosas que nadie puede arreglar.
               status: !m.requested
                 ? "not-requested"
                 : m.ran
@@ -435,15 +418,9 @@ module.exports = function (RED) {
               version: (lynis && lynis.version) || null,
               testsDone: (lynis && lynis.testsDone) || null,
               scale: { deficiente: "<30", mejorable: "30-54", aceptable: ">=55" },
-              // Cobertura REAL del diccionario de castellano sobre los controles que ha
-              // devuelto ESTE informe. Va al panel para que se lea "34 de 36 traducidos" en vez
-              // de dar por hecho que está todo: la tabla cubre lo visto en los informes de
-              // referencia, no el catálogo entero de Lynis, y eso hay que decirlo.
-              // Cobertura REAL sobre los controles que ha devuelto ESTE informe: cuántos
-              // traducidos, cuántos con paso de resolución, y —por separado— cuántos NO admiten
-              // acción frente a cuántos la admiten pero no tenemos el paso escrito. Colapsar
-              // esos dos daría "N sin cubrir" mezclando lo que falta por escribir con lo que no
-              // existe. La plataforma entra porque un fix puede ser solo de Linux.
+              // Cobertura REAL sobre los controles que ha devuelto ESTE informe (la tabla cubre lo visto en los informes de
+              // referencia, no todo Lynis): traducidos, con paso de resolución y, por separado, los que no admiten acción frente
+              // a los que la admiten sin paso escrito. La plataforma entra porque un fix puede ser solo de Linux.
               i18n: lynisCoverage(
                 [...(lynis?.warnings || []), ...(lynis?.suggestions || [])].map((e) => e.id),
                 process.platform

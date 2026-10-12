@@ -1,22 +1,12 @@
 /**
  * contrast-audit.js — Auditoría de contraste sobre un dashboard RENDERIZADO.
- *
- * NO es un script de Node: es una EXPRESIÓN que se evalúa dentro de la página, y se
- * lanza con scripts/cdp.js. Ver la cabecera de ese fichero para el arranque completo.
- *
+ * No es un script de Node sino una expresión que se evalúa en la página con scripts/cdp.js:
  *   node scripts/cdp.js http://127.0.0.1:1881/dashboard/Host scripts/contrast-audit.js
  *
- * Por qué renderizado y no estático: el contraste depende del fondo EFECTIVO, que
- * puede venir de un ancestro varios niveles más arriba, de un rgba() a medio
- * componer, o de una clase que resultó tener más alcance del previsto. Leyendo el CSS
- * no se ve. Caso real: al quitar el prefijo `ia-` de image, la regla `.critical` pasó
- * a alcanzar `.header-card.critical` y pintó la cabecera entera de rojo pálido; se
- * detectó porque este auditor devolvió rgb(254,242,242) como fondo de las etiquetas.
- *
- * Criterio: WCAG AA — 4,5:1 para texto normal, 3:1 para texto grande (≥24px, o
- * ≥18,66px en negrita). Solo se miran elementos con texto propio, visibles y dentro
- * de .lca-report-root. Los resultados se deduplican por clase+color: la misma regla
- * repetida en veinte filas es UN fallo, no veinte.
+ * Renderizado y no estático porque el fondo efectivo puede venir de un ancestro, de un rgba() a medio componer o de una
+ * clase con más alcance del previsto (al quitar el prefijo `ia-` de image, `.critical` pintó de rojo pálido toda la cabecera).
+ * Criterio WCAG AA: 4,5:1 texto normal y 3:1 texto grande (≥24px, o ≥18,66px en negrita). Solo elementos con texto propio,
+ * visibles y dentro de .lca-report-root; se deduplica por clase+color.
  */
 (function () {
   const parse = (c) => {

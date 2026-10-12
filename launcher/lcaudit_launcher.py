@@ -388,20 +388,11 @@ _uac_notice_shown = False
 # redacción del mensaje final, no si la instalación se considera correcta o no.
 _already_installed = False
 
-# Estado de las herramientas opcionales: lo rellena el paso 2 y es la ÚNICA
-# fuente de la que salen los dos resúmenes (final del paso 2 y _print_summary).
-# Antes convivía con un `all_present` local que se calculaba por su cuenta, y los
-# dos se contradecían en pantalla.
-#
+# Estado de las herramientas opcionales: lo rellena el paso 2 y es la ÚNICA fuente de los dos resúmenes
+# (final del paso 2 y _print_summary).
 #   _tool_status[cmd] = {"state": <estado>, "reason": <motivo o "">}
-#
-# Cuatro estados, porque "instalada" y "utilizable" no son lo mismo:
-#   "available"        instalada y operativa
-#   "not_operational"  instalada, pero ahora mismo no se puede usar
-#                      (Docker con el daemon parado, binario que el sistema no
-#                      encuentra tras instalarlo)
-#   "unsupported"      no existe para esta plataforma (Lynis en Windows)
-#   "missing"          no instalada
+# Estados: "available" (operativa), "not_operational" (instalada pero no utilizable, p. ej. Docker con el daemon parado),
+# "unsupported" (no existe para esta plataforma, Lynis en Windows) y "missing" (no instalada).
 _tool_status: dict = {}
 
 # Node-RED es requisito, pero se instala en el mismo lote que las herramientas

@@ -1,22 +1,10 @@
 "use strict";
 
 /**
- * Actualizaciones pendientes del sistema. Solo LISTA: este módulo no instala, no actualiza y no
- * sincroniza bases de datos de paquetes. Nada de lo que ejecuta modifica el equipo auditado.
- *
- * Mismo contrato que lynis.js y trivy-fs.js: si no se puede mirar devuelve
- * { skipped, kind, reason } y quien llama decide por `kind`, nunca por el texto de `reason`.
- * De los cuatro kinds solo 'unsupported' no es un fallo: ahí la plataforma o el gestor quedan
- * fuera de lo que LoCoAudit sabe leer, y la auditoría sigue sin este módulo.
- *
- * "Cero actualizaciones pendientes" es un dato real y sale como resultado normal con total 0.
- * No se confunde con un skip: lo primero significa "miré y no hay", lo segundo "no pude mirar".
- *
- * Marcar cuáles son de seguridad solo se hace donde la plataforma lo indique de forma nativa.
- * `securityDetection` dice hasta dónde llega esa capacidad: 'full' cuando el gestor clasifica
- * todas las actualizaciones, 'none' cuando no clasifica ninguna, y 'partial' en macOS, que sabe
- * de los datos de protección (XProtect, MRT, Gatekeeper) y no de las del propio sistema. Con
- * 'none' el recuento va a null: inventarlo a partir de nombres de paquete sería peor que no darlo.
+ * Actualizaciones pendientes del sistema. Solo las lista: no instala, no actualiza ni sincroniza bases de paquetes.
+ * Mismo contrato que lynis.js y trivy-fs.js: si no puede mirar devuelve { skipped, kind, reason } y quien llama decide por `kind`.
+ * Solo 'unsupported' no es un fallo. Cero pendientes es un dato real (total 0), no un skip.
+ * `securityDetection` ('full', 'partial', 'none') dice hasta dónde clasifica el gestor las de seguridad; con 'none' el recuento va a null.
  */
 
 const fs = require("fs");
@@ -31,19 +19,9 @@ const WINDOWS_TIMEOUT_MS = 180000;   // la búsqueda COM tarda minutos en un equ
 const PACMAN_SYNC_DIR = "/var/lib/pacman/sync";
 
 /**
- * Actualizaciones de DATOS de protección de macOS, que son las únicas que softwareupdate deja
- * identificar como de seguridad. Lista explícita y no un heurístico de formato: la etiqueta de
- * estas entradas no tiene una forma fija en la que confiar.
- *
- * Los tres nombres salen de lo que este sistema registra de verdad, comprobado con
- * `pkgutil --pkgs` (com.apple.pkg.XProtectPlistConfigData_10_15, .XProtectPayloads_10_15,
- * .MRTConfigData_10_15, .GatekeeperCompatibilityData) y con
- * `system_profiler SPInstallHistoryDataType` (que añade XProtectCloudKitUpdate y escribe
- * Gatekeeper con espacios). De ahí que Gatekeeper acepte las dos grafías.
- *
- * Fuera a propósito: RosettaUpdateAuto y CLTools, que llegan por la misma vía silenciosa pero no
- * son actualizaciones de seguridad. Y TCC, que no aparece por ninguna vía en este sistema: sin
- * evidencia de que Apple lo distribuya así, una entrada especulativa en esta lista sobra.
+ * Actualizaciones de DATOS de protección de macOS, las únicas que softwareupdate deja identificar como de seguridad.
+ * Lista explícita, comprobada con `pkgutil --pkgs` y `system_profiler SPInstallHistoryDataType` (por eso Gatekeeper acepta
+ * dos grafías). Quedan fuera RosettaUpdateAuto, CLTools y TCC, que no son de seguridad o no aparecen en este sistema.
  */
 const MACOS_SECURITY_DATA = [
   /^XProtect/i,                              // XProtectPlistConfigData, XProtectPayloads, XProtectCloudKitUpdate
@@ -303,11 +281,8 @@ function pacmanDbAgeDays() {
 }
 
 /**
- * pacman no tiene un "listar pendientes" que no toque el sistema: `pacman -Sy` sincronizaría la
- * base y dejaría el equipo en estado parcial, así que aquí está prohibido. checkupdates (de
- * pacman-contrib) sincroniza en una copia temporal y es la vía correcta. Sin él queda `pacman -Qu`,
- * que compara contra la base local: lo que devuelve es válido pero puede estar incompleto, y el
- * resultado lleva la antigüedad de esa base para que el finding lo diga.
+ * `pacman -Sy` dejaría el equipo en estado parcial, así que está prohibido. checkupdates (pacman-contrib) sincroniza en una
+ * copia temporal. Sin él queda `pacman -Qu`, válido pero posiblemente incompleto; el resultado lleva la antigüedad de la base.
  */
 async function fromPacman() {
   const hasCheckupdates = await commandExists("checkupdates");
@@ -579,29 +554,12 @@ async function fromApk() {
 const HRESULT_NOT_ELEVATED = "0x80240044";   // WU_E_NOT_ELEVATED
 
 /**
- * Se une con SALTOS DE LÍNEA, no con espacios.
+ * Se une con SALTOS DE LÍNEA y no con espacios: con " " salía `$ErrorActionPreference='Stop' try {` y PowerShell no compilaba.
+ * El script va por fichero temporal y `-File` (runPowerShell en lib/executor.js) para que los saltos lleguen intactos.
  *
- * Unido con " " producía `$ErrorActionPreference='Stop' try {`, que PowerShell rechaza con
- * "Token 'try' inesperado": el script no llegaba a compilar y el módulo salía por el camino de
- * error en todas las ejecuciones de Windows. Añadir un `;` habría arreglado ese caso concreto y
- * dejado la trampa puesta para la siguiente línea que alguien añadiera. El salto de línea es
- * separador de sentencias en PowerShell y elimina la clase entera de bug.
- *
- * Para que esos saltos lleguen intactos, el script va por fichero temporal y `-File`
- * (runPowerShell en lib/executor.js): con `-Command` el script viaja dentro del argumento de
- * `cmd.exe /c` y un salto de línea ahí corta el comando. Es el mismo camino que ya usaba
- * security-events.js.
- *
- * REINICIO PENDIENTE. Se consultan dos claves del registro y solo dos:
- *   HKLM\...\Component Based Servicing\RebootPending
- *   HKLM\...\WindowsUpdate\Auto Update\RebootRequired
- * Queda FUERA `PendingFileRenameOperations`, que la deja puesta casi cualquier instalador y
- * produciría un "hay reinicio pendiente" permanente. Un falso positivo constante se aprende a
- * ignorar, y entonces deja de avisar del caso real.
- *
- * El script no deja escapar la excepción: la convierte en un JSON con el HRESULT, igual que
- * security-events.js hace con `denied` para el canal Security. Así el mapeo en Node es sobre un
- * campo estructurado y no sobre el stderr, que viene traducido al idioma del equipo.
+ * Reinicio pendiente: solo dos claves (Component Based Servicing\RebootPending y WindowsUpdate\Auto Update\RebootRequired).
+ * PendingFileRenameOperations queda fuera porque casi cualquier instalador la deja y avisaría siempre.
+ * La excepción sale como JSON con el HRESULT, para mapear sobre un campo y no sobre un stderr traducido.
  */
 const WINDOWS_PS_SCRIPT = [
   "$ErrorActionPreference='Stop'",
@@ -747,20 +705,9 @@ async function fromWindowsUpdate() {
 }
 
 /**
- * ¿Es de seguridad esta actualización de Windows? Tres respuestas, no dos.
- *
- *   true  → consta que sí (categoría de seguridad, o severidad MSRC asignada).
- *   false → consta que no (hay categorías legibles y ninguna es de seguridad).
- *   null  → NO SE SABE: la entrada no trae categorías ni severidad.
- *
- * El tercer caso existe porque el booleano mentía. Windows Update no siempre devuelve
- * `Categories` —una entrada de driver, una actualización retirada, o una respuesta recortada por
- * la política del equipo pueden venir sin ellas—, y con dos estados esas caían en `false`, o sea
- * "no es de seguridad". Contar como segura de menos es el error peligroso de los dos.
- *
- * La CATEGORÍA es la señal principal: una actualización de seguridad sin severidad MSRC asignada
- * sigue siendo de seguridad. La severidad MSRC es la segunda señal, no un requisito: si Microsoft
- * le ha puesto Critical/Important/Moderate/Low, es que la ha evaluado como problema de seguridad.
+ * ¿Es de seguridad esta actualización de Windows? true si consta, false si hay categorías legibles y ninguna lo es,
+ * null si no se sabe (sin categorías ni severidad, p. ej. drivers o respuestas recortadas por política).
+ * Contar de menos es el error peligroso, por eso hay tercer estado. La categoría es la señal principal y la severidad MSRC la segunda.
  */
 function classifyWindowsUpdate(categories, msrcSeverity) {
   // El nombre de la categoría llega TRADUCIDO al idioma del equipo: "Security Updates" en un

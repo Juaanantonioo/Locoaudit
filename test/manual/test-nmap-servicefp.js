@@ -3,35 +3,12 @@
 /**
  * test-nmap-servicefp.js — Un servicio que nmap no reconoce del todo NO se lee como "unknown".
  *
- * BUG PREEXISTENTE, ajeno al análisis NSE. Introducido en 61206c9 (2026-04-12, reescritura del
- * wrapper) y vivo 75 commits. Se descubrió capturando un fixture para otra cosa, y se separa en
- * su propio test porque afecta al camino de HOY: `-sV` —que va en el comando desde siempre— mete
- * un atributo `servicefp` con la huella del servicio cuando no logra identificarlo del todo, y
- * esa huella lleva barras dentro ("HTTP/1\\.1", "AirTunes/950\\.7\\.1").
- *
- * El regex era `/<service\s([^/]*)\/?>/`. Su grupo no puede cruzar una barra, así que en cuanto
- * aparece una dentro de servicefp el patrón entero DEJA DE CASAR y el servicio cae al fallback
- * "unknown".
- *
- * Qué se pierde y qué no, medido:
- *   · el puerto NO se pierde: `state` se parsea aparte y el puerto sigue saliendo como abierto;
- *   · la severidad NO cambia: sale de PORT_CATALOG por número de puerto, no por nombre;
- *   · sí se pierden `name`, `product`, `version` y `extrainfo` de ese puerto, y con ellos el fix
- *     por servicio, que cae a la guía genérica.
- *
- * O sea: no es un falso verde —el puerto se ve—, es un dato de auditoría empobrecido sin aviso.
- *
- * El fixture es una captura real anterior a este trabajo (2026-08-12): el bug estaba dentro del
- * repositorio, en un fichero de pruebas, sin que ningún test mirase ese puerto.
- *
- * Este test se sostiene SOLO: usa un fixture que ya estaba en el repositorio y no depende de
- * nada del análisis NSE, para que el arreglo pueda ir en su propio commit y revertirse sin
- * arrastrar una funcionalidad opcional. El otro efecto del mismo regex —conservar tunnel="ssl",
- * que va detrás de la huella— se comprueba en test-nse-parse.js, porque ese atributo solo se
- * extrae desde que existe el análisis NSE.
- *
- * Uso:
- *   node test/manual/test-nmap-servicefp.js
+ * Bug preexistente (61206c9, 2026-04-12): `-sV` mete un atributo `servicefp` con la huella del servicio y esa huella lleva
+ * barras ("HTTP/1\.1"). El regex `/<service\s([^/]*)\/?>/` no cruza barras, dejaba de casar y el servicio caía a "unknown".
+ * Se pierden name, product, version y extrainfo (y con ellos el fix por servicio); el puerto y su severidad no cambian.
+ * El fixture es una captura real de 2026-08-12 y el test no depende del análisis NSE. El efecto sobre tunnel="ssl" se
+ * comprueba en test-nse-parse.js.
+ * Uso: node test/manual/test-nmap-servicefp.js
  */
 
 const fs   = require("fs");

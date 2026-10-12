@@ -1,19 +1,11 @@
 "use strict";
 
 /**
- * Severidad por puerto para un PC personal, no para un servidor: el criterio es el mismo que rige
- * las severidades de Lynis, con un usuario doméstico delante. "high" es riesgo inmediato aquí
- * (credenciales en claro, escritorio remoto, puertos de backdoor); "medium", servicio legítimo
- * pero expuesto sin necesidad; "info", lo normal en un equipo de uso diario o de desarrollo. Lo
- * que no está catalogado sale como "low", por trazabilidad y sin alarmar.
- *
- * Datos puros, sin escaneo. Vivía en el escáner nativo, y sobrevivió a su eliminación porque el
- * criterio no depende de quién descubra el puerto.
- *
- * Los de macOS (548 AFP, 5353 mDNS, 7000 AirPlay) están abiertos en cualquier Mac de fábrica: son
- * funcionalidades que el usuario activó al usar AirPlay o compartir archivos, así que van a
- * "info". El 8021 en macOS es un servicio interno del sistema; en Linux no tiene uso estándar y,
- * si algún día se soportan perfiles de servidor, ahí habría que subirlo.
+ * Severidad por puerto para un PC personal, con el mismo criterio que las de Lynis. "high" es riesgo inmediato (credenciales
+ * en claro, escritorio remoto, puertos de backdoor), "medium" servicio legítimo expuesto sin necesidad e "info" lo normal en
+ * un equipo de uso diario. Lo no catalogado sale "low". Datos puros, sin escaneo.
+ * Los puertos de macOS (548, 5353, 7000) están abiertos en cualquier Mac de fábrica, por eso van a "info". El 8021 en macOS
+ * es interno del sistema; en Linux no tiene uso estándar y en un perfil de servidor habría que subirlo.
  */
 const PORT_CATALOG = {
   21:    { service: "FTP",        severity: "high" },
