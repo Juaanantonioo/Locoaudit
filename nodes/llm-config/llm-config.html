@@ -108,7 +108,9 @@
                         if (!r || !r.ok) {
                             // El backend ya separa servidor caído de otros fallos con `kind`.
                             useFallback();
-                            setMsg("#a33", "✗ " + ((r && r.error) || "No se pudo obtener la lista de modelos.") +
+                            // r.error puede traer el reason phrase del servidor de la URL, que
+                            // es texto ajeno: se escapa antes de pasar por setMsg, que pinta HTML.
+                            setMsg("#a33", "✗ " + $("<div>").text((r && r.error) || "No se pudo obtener la lista de modelos.").html() +
                                 "<br>Puedes escribir el modelo a mano para guardar la configuración.");
                             return;
                         }
