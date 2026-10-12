@@ -109,6 +109,7 @@ El instalador de Nmap registra la ruta del programa en el PATH del sistema (`HKL
 ### Qué NO se hace
 
 - **El asistente no se ejecuta como administrador**, y **Node-RED tampoco**. Es una decisión deliberada de seguridad: Node-RED lanza herramientas de auditoría y sirve un panel web en el puerto 1880; ejecutarlo con privilegios elevados ampliaría la superficie de ataque sin ninguna necesidad. Principio de mínimo privilegio.
+- **Node-RED no se abre a la red.** El asistente lo arranca con `launcher/node-red-settings.js`, que escucha solo en `127.0.0.1` y rechaza peticiones que lleguen desde otra web abierta en tu navegador. Con el `settings.js` de fábrica escucharía en todas las interfaces, sin contraseña y con CORS abierto. Tu `settings.js` no se modifica; si quieres acceder desde otro equipo, arranca `node-red` a mano después de configurar `adminAuth`.
 - **LoCoAudit no modifica el PATH del usuario ni del sistema por su cuenta.** No usa `setx` ni escribe en el registro. Quien registra la ruta es el instalador oficial de Nmap, haciendo exactamente lo mismo que si lo instalases a mano.
 
 ### Si prefieres no dar el permiso
