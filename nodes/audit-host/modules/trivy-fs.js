@@ -198,12 +198,22 @@ async function runTrivyFs(opts = {}) {
     : await scanHomeByChildren(target, skipDirs, resolvedFrom);
 }
 
+/**
+ * La orden de Trivy como array, sin shell. La carpeta es un nombre del home o una ruta de la
+ * configuración, y ninguna de las dos la controla LoCoAudit: interpolada en una línea de /bin/sh,
+ * una carpeta llamada `$(orden)` ejecutaba la orden al lanzar la auditoría. El "--" impide además
+ * que un nombre que empiece por "-" se lea como opción.
+ */
+function trivyFsArgs(file, target, skipArgs) {
+  return ["trivy", "fs", "--format", "json", "--quiet", "--scanners", "vuln", ...skipArgs, "-o", file, "--", target];
+}
+
 /** Una sola invocación de Trivy sobre `target`. */
 async function scanSingle(target, skipDirs, resolvedFrom) {
-  const skipFlag = skipDirs.length ? ` --skip-dirs "${absSkipDirs(target, skipDirs).join(",")}"` : "";
+  const skipArgs = skipDirs.length ? ["--skip-dirs", absSkipDirs(target, skipDirs).join(",")] : [];
   const started = Date.now();
   const parsed = await runTrivyCommand(
-    (file) => `trivy fs --format json --quiet --scanners vuln${skipFlag} -o "${file}" "${target}"`,
+    (file) => trivyFsArgs(file, target, skipArgs),
     TIMEOUT_MS
   );
   if (parsed.skipped) return parsed;
@@ -237,7 +247,7 @@ function absSkipDirs(home, skipDirs) {
 async function scanHomeByChildren(home, skipDirs, resolvedFrom) {
   const started = Date.now();
   const absSkip = absSkipDirs(home, skipDirs);
-  const skipFlag = absSkip.length ? ` --skip-dirs "${absSkip.join(",")}"` : "";
+  const skipArgs = absSkip.length ? ["--skip-dirs", absSkip.join(",")] : [];
 
   let entries;
   try {
@@ -268,7 +278,7 @@ async function scanHomeByChildren(home, skipDirs, resolvedFrom) {
 
     const t0 = Date.now();
     const res = await runTrivyCommand(
-      (file) => `trivy fs --format json --quiet --scanners vuln${skipFlag} -o "${file}" "${child}"`,
+      (file) => trivyFsArgs(file, child, skipArgs),
       CHILD_TIMEOUT_MS
     );
     const ms = Date.now() - t0;

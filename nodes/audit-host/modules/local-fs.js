@@ -7,7 +7,7 @@
  * llamada "OneDrive" puede ser un directorio normal.
  */
 
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 
 /** Remotos en Linux (stat -f -c %T). El prefijo "fuse." cubre sshfs, rclone o s3fs sin listarlos;
  *  "fuseblk" se queda fuera a propósito, es ntfs-3g y es disco local. */
@@ -20,13 +20,24 @@ const DARWIN_REMOTE = new Set([
   "smbfs", "nfs", "afpfs", "webdav", "ftp", "macfuse", "osxfuse", "dfsfuse_dfs",
 ]);
 
+const EXEC_OPTS = { timeout: 5000, stdio: ["ignore", "pipe", "ignore"] };
+
 function sh(cmd) {
-  return execSync(cmd, { timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  return execSync(cmd, EXEC_OPTS).toString().trim();
+}
+
+/** Sin shell. Lo que se clasifica son nombres de carpeta del home, que no controla LoCoAudit:
+ *  metidos en una línea de /bin/sh, aunque fuese con JSON.stringify, una carpeta llamada
+ *  `$(orden)` ejecutaba la orden. JSON.stringify no escapa ni `$` ni las comillas invertidas.
+ *  Sin "--" a propósito: el xattr de macOS no lo garantiza, y las rutas llegan siempre absolutas,
+ *  así que ninguna empieza por "-". */
+function run(file, args) {
+  return execFileSync(file, args, EXEC_OPTS).toString().trim();
 }
 
 /** Linux: el tipo de sistema de ficheros lo da stat, sin parsear /proc/mounts. */
 function classifyLinux(dir) {
-  const type = sh(`stat -f -c %T ${JSON.stringify(dir)}`).toLowerCase();
+  const type = run("stat", ["-f", "-c", "%T", dir]).toLowerCase();
   if (type.startsWith("fuse.") || LINUX_REMOTE.has(type)) {
     return { local: false, kind: "network", detail: `sistema de ficheros ${type}` };
   }
@@ -40,13 +51,13 @@ function classifyLinux(dir) {
  */
 function classifyDarwin(dir) {
   try {
-    const attrs = sh(`xattr ${JSON.stringify(dir)}`);
+    const attrs = run("xattr", [dir]);
     if (/com\.apple\.file-provider-domain-id/.test(attrs)) {
       return { local: false, kind: "cloud", detail: "dominio de File Provider (nube sincronizada)" };
     }
   } catch (_) { /* sin xattr legibles: se sigue con el montaje */ }
 
-  const mountPoint = sh(`df -P ${JSON.stringify(dir)}`).split("\n").pop().split(/\s+/).slice(5).join(" ");
+  const mountPoint = run("df", ["-P", dir]).split("\n").pop().split(/\s+/).slice(5).join(" ");
   const mounts = sh("mount");
   for (const line of mounts.split("\n")) {
     // "<origen> on <punto> (<tipo>, <opciones…>)"
