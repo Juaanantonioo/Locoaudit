@@ -17,6 +17,13 @@ const {
 /** Timeout de una consulta al modelo. Interno: no se expone en la UI del nodo. */
 const CHAT_TIMEOUT_MS = 120000;
 
+/** Topes del turno. La ruta va sobre httpNode, que adminAuth no protege: sin ellos cualquiera
+ *  que alcance el puerto mandaba un historial de megas y ocupaba el modelo local. Un chat real
+ *  sobre un hallazgo no se acerca a ninguno de los dos. */
+const MAX_HISTORY = 40;
+const MAX_QUESTION_CHARS = 8000;
+const MAX_HISTORY_CHARS = 200000;
+
 module.exports = function (RED) {
   function LlmConfigNode(config) {
     RED.nodes.createNode(this, config);
@@ -127,6 +134,15 @@ function registerChatEndpoint(RED) {
 
       if (!question || typeof question !== "string") {
         res.status(400).json({ ok: false, error: "Falta la pregunta (campo 'question')." });
+        return;
+      }
+      const historyChars = history.reduce(
+        (n, m) => n + (m && typeof m.content === "string" ? m.content.length : 0), 0);
+      if (question.length > MAX_QUESTION_CHARS || history.length > MAX_HISTORY || historyChars > MAX_HISTORY_CHARS) {
+        res.status(413).json({
+          ok: false,
+          error: "La conversación es demasiado larga para el asistente. Cierra el chat y empieza uno nuevo.",
+        });
         return;
       }
 
