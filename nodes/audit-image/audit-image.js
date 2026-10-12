@@ -32,6 +32,11 @@ function parseImageRef(ref) {
 /** El error crudo de Trivy, legible. El original se guarda entero en raw.trivy.failed. */
 function summarizeScanError(err) {
   const e = String(err || "");
+  // Rechazada antes de lanzar trivy: no hay nada de infraestructura que diagnosticar.
+  if (/^INVALID_REF:/.test(e)) {
+    return "La referencia no tiene la forma de una imagen (registro/repositorio:tag o @sha256:digest) y no se ha escaneado. " +
+           "Revisa que no lleve espacios ni otros caracteres, por ejemplo nginx:latest.";
+  }
   // Las causas de infraestructura van primero: el mensaje genérico "revisa el nombre" las tapaba.
   if (/^MAXBUFFER:|maxBuffer/i.test(e)) {
     return "El informe del análisis es demasiado grande para procesarlo (imagen muy voluminosa con cientos de paquetes). " +
