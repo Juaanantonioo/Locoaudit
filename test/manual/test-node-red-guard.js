@@ -10,7 +10,8 @@
  *
  * Bloques:
  *   1. Sin settings.js del usuario: uiHost 127.0.0.1 y flowFile flows.json.
- *   2. El guardián: qué pasa y qué se rechaza.
+ *   2. El guardián: qué pasa y qué se rechaza, en el editor (httpAdmin) y en httpNode.
+ *  2b. El socket.io del dashboard: Host de loopback y el middleware de fábrica.
  *   3. Con settings.js del usuario: se respetan su uiHost y su propio middleware.
  *
  * Uso: node test/manual/test-node-red-guard.js
@@ -82,6 +83,46 @@ for (const [label, headers, esperado] of CASOS) {
   ok(r === esperado, `${label} → ${esperado === "next" ? "pasa" : esperado}`, `obtenido: ${r}`);
 }
 
+ok(Array.isArray(s1.httpNodeMiddleware) && s1.httpNodeMiddleware[0] === chain[0],
+   "el mismo guardián protege httpNode (dashboard y /locoaudit/chat)");
+for (const [label, headers, esperado] of CASOS) {
+  const r = run(s1.httpNodeMiddleware, headers);
+  if (r !== esperado) ok(false, `httpNode: ${label}`, `obtenido: ${r}`);
+}
+
+// ── 2b · socket.io del dashboard ────────────────────────────────────────────────────────────
+console.log("\n── 2b · socket.io del dashboard ──────────────────────────────────\n");
+
+/** Socket falso con lo que miran los dos middlewares. */
+function fakeSocket(host, { websocket = false, xdomain = false } = {}) {
+  const state = { closed: false, disconnected: false };
+  const socket = {
+    request: { headers: host === undefined ? {} : { host } },
+    handshake: { xdomain },
+    client: { conn: { request: { url: websocket ? "/dashboard/socket.io/?EIO=4&transport=websocket" : "/dashboard/socket.io/?EIO=4&transport=polling" },
+                      close() { state.closed = true; } } },
+    disconnect() { state.disconnected = true; },
+  };
+  return { socket, state };
+}
+function runIo(list, host, opts) {
+  const { socket, state } = fakeSocket(host, opts);
+  for (const mw of list) {
+    let result = null;
+    mw(socket, (err) => { result = err ? "error" : "next"; });
+    if (result !== "next") return result || (state.closed ? "closed" : state.disconnected ? "disconnected" : "parado");
+  }
+  return "next";
+}
+const io = (s1.dashboard || {}).ioMiddleware || [];
+ok(io.length === 2, "dos middlewares: control de Host y el de fábrica del dashboard", String(io.length));
+ok(runIo(io, H) === "next", "dashboard normal en 127.0.0.1 → pasa");
+ok(runIo(io, "localhost:1880") === "next", "localhost → pasa");
+ok(runIo(io, "rebind.evil.example:1880") === "error", "DNS rebinding (Host ajeno, mismo origen) → rechazado");
+ok(runIo(io, undefined) === "error", "sin Host → rechazado");
+ok(runIo(io, H, { xdomain: true }) === "disconnected", "otro origen → desconectado, como el de fábrica");
+ok(runIo(io, H, { websocket: true }) === "closed", "websocket directo sin polling → cerrado, como el de fábrica");
+
 // ── 3 · con settings.js del usuario ─────────────────────────────────────────────────────────
 console.log("\n── 3 · Con settings.js del usuario ───────────────────────────────\n");
 const propio = path.join(tmp, "propio");
@@ -97,6 +138,15 @@ ok(run(s3.httpAdminMiddleware, { host: "192.168.1.10:1880" }) === "next",
 ok(run(s3.httpAdminMiddleware, { host: "192.168.1.10:1880", origin: "http://evil.example" }) === 403,
    "pero el origen ajeno sí");
 ok(fs.readFileSync(path.join(propio, "settings.js"), "utf8").includes("0.0.0.0"), "el settings.js del usuario no se modifica");
+
+const conIo = path.join(tmp, "con-io");
+fs.mkdirSync(conIo);
+fs.writeFileSync(path.join(conIo, "settings.js"),
+  "module.exports = { dashboard: { path: 'panel', ioMiddleware: function mio(socket, next) { next(); } } };\n");
+const s4 = load(conIo);
+ok(s4.dashboard.path === "panel", "se conservan los ajustes de dashboard del usuario", s4.dashboard.path);
+ok(s4.dashboard.ioMiddleware.length === 2 && s4.dashboard.ioMiddleware[1].name === "mio",
+   "su ioMiddleware sustituye al de fábrica, detrás del control de Host");
 
 fs.rmSync(tmp, { recursive: true, force: true });
 delete process.env.LCAUDIT_NODE_RED_DIR;
