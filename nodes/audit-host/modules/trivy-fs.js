@@ -198,12 +198,7 @@ async function runTrivyFs(opts = {}) {
     : await scanHomeByChildren(target, skipDirs, resolvedFrom);
 }
 
-/**
- * La orden de Trivy como array, sin shell. La carpeta es un nombre del home o una ruta de la
- * configuración, y ninguna de las dos la controla LoCoAudit: interpolada en una línea de /bin/sh,
- * una carpeta llamada `$(orden)` ejecutaba la orden al lanzar la auditoría. El "--" impide además
- * que un nombre que empiece por "-" se lea como opción.
- */
+/** Orden de Trivy como array, sin shell. El "--" evita que una carpeta que empiece por "-" se lea como opción. */
 function trivyFsArgs(file, target, skipArgs) {
   return ["trivy", "fs", "--format", "json", "--quiet", "--scanners", "vuln", ...skipArgs, "-o", file, "--", target];
 }

@@ -17,9 +17,7 @@ const {
 /** Timeout de una consulta al modelo. Interno: no se expone en la UI del nodo. */
 const CHAT_TIMEOUT_MS = 120000;
 
-/** Topes del turno. La ruta va sobre httpNode, que adminAuth no protege: sin ellos cualquiera
- *  que alcance el puerto mandaba un historial de megas y ocupaba el modelo local. Un chat real
- *  sobre un hallazgo no se acerca a ninguno de los dos. */
+/** Topes del turno del chat: la ruta va sobre httpNode, que adminAuth no protege. */
 const MAX_HISTORY = 40;
 const MAX_QUESTION_CHARS = 8000;
 const MAX_HISTORY_CHARS = 200000;

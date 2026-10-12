@@ -34,11 +34,8 @@ FLOWS_SRC    = os.path.join(PROJECT_ROOT, "examples", "flows.json")
 FLOWS_DST    = os.path.join(NODE_RED_DIR, "flows.json")
 NPM_CMD      = "npm.cmd"      if OS == "Windows" else "npm"
 NODE_RED_CMD = "node-red.cmd" if OS == "Windows" else "node-red"
-# Con el settings.js de fábrica Node-RED escucha en 0.0.0.0 y sin adminAuth, y su API responde
-# con CORS abierto a cualquier origen: la red y cualquier web abierta en el navegador llegaban al
-# editor, que ejecuta código como este usuario. node-red-settings.js carga el settings.js del
-# usuario sin modificarlo y añade la escucha en loopback y el guardián de origen; el porqué está
-# en su cabecera. -u fija el userDir, que con --settings Node-RED no deduciría.
+# node-red-settings.js: escucha solo en loopback y guardián de origen (ver su cabecera).
+# -u fija el userDir, que con --settings Node-RED no deduciría.
 NODE_RED_SETTINGS = os.path.join(LAUNCHER_DIR, "node-red-settings.js")
 NODE_RED_ARGS = [NODE_RED_CMD, "--settings", NODE_RED_SETTINGS, "-u", NODE_RED_DIR]
 

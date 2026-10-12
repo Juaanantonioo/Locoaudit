@@ -1,17 +1,8 @@
 "use strict";
 
 /**
- * test-image-ref.js — Qué referencia de imagen llega a la línea de órdenes de trivy.
- *
- * En modo específico la referencia puede venir de msg, y scanOneImage() la interpolaba en una
- * orden que exec() pasa por el shell: `x; echo INJECTED > fichero; #` creaba el fichero. Ahora
- * lo que no tiene forma de referencia OCI se rechaza antes de construir la orden.
- *
- * Bloques:
- *   1. isValidImageRef(): referencias reales que se aceptan y cadenas con shell que no.
- *   2. runTrivyImage() con una referencia inyectada: la orden NO se ejecuta (un trivy falso en
- *      el PATH deja un testigo si alguien lo llama) y la imagen sale en `failed` con su motivo.
- *
+ * test-image-ref.js: qué referencia de imagen llega a la línea de órdenes de trivy.
+ * Comprueba isValidImageRef() y que una referencia con shell no ejecuta nada.
  * Uso: node test/manual/test-image-ref.js
  */
 

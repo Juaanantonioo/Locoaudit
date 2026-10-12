@@ -66,9 +66,7 @@ function parseNmapFatalError(xml) {
 function attrValue(tag, attr) {
   const re = new RegExp(`\\b${attr}="([^"]*)"`, "i");
   const m  = tag.match(re);
-  // product y version salen del banner del equipo escaneado, y nmap codifica sus saltos de
-  // línea como &#10;. Decodificados acababan en el fix, que el dashboard trocea por líneas:
-  // "\n$ orden" salía como comando copiable. Un atributo de nmap es siempre de una línea.
+  // El banner es externo: un salto de línea decodificado fabricaba un "$ orden" copiable en el fix.
   return m ? decodeXmlEntities(m[1]).replace(/[\x00-\x1f\x7f\u2028\u2029]+/g, " ") : "";
 }
 

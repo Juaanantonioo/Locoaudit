@@ -1,22 +1,10 @@
 "use strict";
 
 /**
- * test-homedir-injection.js — Un nombre de carpeta del home no puede ejecutar órdenes.
- *
- * audit-host recorre las carpetas de primer nivel del home y, antes, metía cada nombre en
- * órdenes que interpretaba /bin/sh (stat, xattr y df en local-fs.js, trivy fs en trivy-fs.js),
- * protegido solo con comillas dobles. Una carpeta llamada `$(touch${IFS}SENTINEL)`, que puede
- * dejar ahí cualquier fichero comprimido descomprimido en ~, ejecutaba la orden al lanzar la
- * auditoría. Ahora esas órdenes van sin shell, con los argumentos en un array.
- *
- * Bloques:
- *   1. classifyDir() sobre la carpeta trampa: no aparece el testigo.
- *   2. execToFile() con array: el argumento llega literal al programa.
- *   3. runTrivyFs() sobre un home falso con un trivy falso en el PATH: el testigo no aparece y
- *      trivy recibe el nombre de la carpeta tal cual, como un solo argumento.
- *
- * No aplica a Windows (cmd.exe no interpreta $(...)): allí el test se salta.
- * Uso: node test/manual/test-homedir-injection.js
+ * test-homedir-injection.js: un nombre de carpeta del home no puede ejecutar órdenes.
+ * Crea carpetas llamadas `$(touch${IFS}SENTINEL)` y con comillas invertidas, y comprueba que
+ * classifyDir(), execToFile() y runTrivyFs() (con un trivy falso) no ejecutan nada.
+ * No aplica a Windows. Uso: node test/manual/test-homedir-injection.js
  */
 
 const fs   = require("fs");

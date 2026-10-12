@@ -1,19 +1,9 @@
 "use strict";
 
 /**
- * test-node-red-guard.js — Ajustes con los que el launcher arranca Node-RED.
- *
- * launcher/node-red-settings.js carga el settings.js del usuario y añade dos cosas: escucha en
- * 127.0.0.1 si el usuario no eligió otra, y un middleware delante de la API del editor que
- * rechaza peticiones de otro origen o con un Host que no es loopback. Sin él, el CORS abierto
- * de @node-red/editor-api dejaba a cualquier web leer /flows y desplegar desde el navegador.
- *
- * Bloques:
- *   1. Sin settings.js del usuario: uiHost 127.0.0.1 y flowFile flows.json.
- *   2. El guardián: qué pasa y qué se rechaza, en el editor (httpAdmin) y en httpNode.
- *  2b. El socket.io del dashboard: Host de loopback y el middleware de fábrica.
- *   3. Con settings.js del usuario: se respetan su uiHost y su propio middleware.
- *
+ * test-node-red-guard.js: ajustes con los que el launcher arranca Node-RED.
+ * Comprueba uiHost en loopback, el guardián de Origin y Host (httpAdmin y httpNode),
+ * el middleware del socket.io del dashboard y que se respete el settings.js del usuario.
  * Uso: node test/manual/test-node-red-guard.js
  */
 

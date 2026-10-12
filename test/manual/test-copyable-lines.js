@@ -1,19 +1,8 @@
 "use strict";
 
 /**
- * test-copyable-lines.js — Datos de terceros no pueden fabricar una línea "$ comando".
- *
- * El dashboard trocea el fix por líneas y ofrece Copiar en las que empiezan por "$ ". Dos datos
- * que no controla el usuario acababan en ese texto con sus saltos de línea intactos:
- *   - PkgName / FixedVersion del JSON de Trivy, que escribe quien publicó la imagen;
- *   - product / version de nmap, que salen del banner del equipo escaneado (nmap los codifica
- *     como &#10; y attrValue() los decodificaba).
- *
- * Bloques:
- *   1. normalizeImage() con un PkgName y un FixedVersion con "\n$ orden" y U+2028.
- *   2. parseNmapXml() con un product que trae &#10;$ orden y &#x2028;.
- *   3. Un fix completo de red construido a partir de ese banner.
- *
+ * test-copyable-lines.js: datos de terceros no pueden fabricar una línea "$ comando" en el fix.
+ * Prueba PkgName y FixedVersion de Trivy y product y version de nmap con saltos de línea.
  * Uso: node test/manual/test-copyable-lines.js
  */
 

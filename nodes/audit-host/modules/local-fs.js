@@ -26,11 +26,7 @@ function sh(cmd) {
   return execSync(cmd, EXEC_OPTS).toString().trim();
 }
 
-/** Sin shell. Lo que se clasifica son nombres de carpeta del home, que no controla LoCoAudit:
- *  metidos en una línea de /bin/sh, aunque fuese con JSON.stringify, una carpeta llamada
- *  `$(orden)` ejecutaba la orden. JSON.stringify no escapa ni `$` ni las comillas invertidas.
- *  Sin "--" a propósito: el xattr de macOS no lo garantiza, y las rutas llegan siempre absolutas,
- *  así que ninguna empieza por "-". */
+/** Sin shell: el nombre de la carpeta es externo. Sin "--" porque las rutas son absolutas y el xattr de macOS no lo garantiza. */
 function run(file, args) {
   return execFileSync(file, args, EXEC_OPTS).toString().trim();
 }
