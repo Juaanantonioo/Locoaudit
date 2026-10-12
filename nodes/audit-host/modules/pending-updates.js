@@ -210,7 +210,7 @@ async function fromSoftwareUpdate() {
   const updates = parseSoftwareUpdateList(stdout);
 
   // Ni lista ni el mensaje de "no hay nada": la salida no se ha entendido, y eso no puede pasar
-  // por "cero pendientes". Es el falso verde que la regla de CLAUDE.md prohíbe.
+  // por "cero pendientes". Es el falso verde que la regla del proyecto prohíbe.
   if (updates.length === 0 && !macosSaysNoUpdates(stdout)) {
     return {
       skipped: true,

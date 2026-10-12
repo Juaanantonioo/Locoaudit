@@ -222,7 +222,7 @@ check("acceso denegado → HOST-SEC-WIN-PERM info, sin 'sin eventos'", () => {
   assert.strictEqual(perm.length, 1);
   assert.strictEqual(perm[0].severity, "info");
   // El fix NO puede recomendar ejecutar Node-RED como administrador: es
-  // justo lo que CLAUDE.md descarta ("Elevación UAC en Windows"). La vía con
+  // justo lo que el proyecto descarta ("Elevación UAC en Windows"). La vía con
   // mínimo privilegio es el grupo integrado de lectores del registro.
   assert.ok(!/Node-RED como administrador/i.test(perm[0].fix));
   assert.ok(/Event Log Readers|Lectores del registro de eventos/.test(perm[0].fix));

@@ -11,7 +11,7 @@
  *
  * El caso que lo hacía visible: en Windows sin WSL no hay binario de Lynis, así
  * que el módulo caía en "not installed" y abortaba la auditoría entera — siendo
- * un límite conocido y documentado en CLAUDE.md, no un olvido de instalación.
+ * un límite conocido y documentado, no un olvido de instalación.
  *
  * Uso:
  *   node test/manual/test-lynis-skip-kind.js

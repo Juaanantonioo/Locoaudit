@@ -1033,7 +1033,7 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
     # se imprime dentro del bloque de error, que es donde hace falta.
     if elevar and not _uac_notice_shown:
         _uac_notice_shown = True
-        # La justificación completa de la elevación vive en README.md y CLAUDE.md.
+        # La justificación completa de la elevación vive en README.md.
         # Aquí solo lo que el usuario necesita para decidir en ese momento.
         warn(f"Windows va a pedirte permisos de administrador para instalar {label}")
         tip("Solo se usa para este paso — Node-RED seguirá sin privilegios de "
@@ -1817,7 +1817,7 @@ def is_node_red_running() -> bool:
     FUENTE ÚNICA DE VERDAD de ese dato. El texto, el color y el estado de los
     dos botones de la ventana derivan de aquí; ningún widget lo deduce por su
     cuenta. Ya ha mordido dos veces en este proyecto que dos componentes
-    calculen el mismo valor por separado (ver CLAUDE.md).
+    calculen el mismo valor por separado.
     """
     return NODE_RED_PROC is not None and NODE_RED_PROC.poll() is None
 
