@@ -12,7 +12,7 @@
             enableUpdates: { value: true },
             trivyTarget:  { value: "" },
             trivySystemPkgs: { value: true },
-            securityEvents:       { value: false },
+            securityEvents:       { value: true },
             securityEventsWindow: { value: 24, validate: function (v) {
                 const n = parseInt(v, 10);
                 return !isNaN(n) && n >= 1 && n <= 168;

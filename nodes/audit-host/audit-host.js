@@ -60,7 +60,7 @@ module.exports = function (RED) {
       const enableSw = config.enableSw !== false;
       const enableLynis = config.enableLynis !== false;
       const enableTrivy = config.enableTrivy !== false;
-      const enableSecEvents = config.securityEvents === true;
+      const enableSecEvents = config.securityEvents !== false;
       const enableUpdates = config.enableUpdates !== false;
       const secWindow = Math.min(168, Math.max(1, parseInt(config.securityEventsWindow, 10) || 24));
       // Activo POR DEFECTO, al revés que antes: los paquetes del sistema son la parte del
