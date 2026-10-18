@@ -32,6 +32,37 @@ const DEFAULT_SKIP_DIRS = [
   ".npm",                  // caché de npm (≠ node_modules, que sí se escanea)
 ];
 
+/**
+ * Exclusiones de la pasada de secretos, además de las de siempre. Son software de otros (extensiones, dependencias,
+ * cachés de herramientas) y datos de aplicaciones: medido en un home real, ~/Library, ~/.local y las extensiones se
+ * comían el tiempo entero de la pasada sin aportar un solo secreto del usuario. Trivy tampoco busca secretos dentro de
+ * node_modules ni .git, pero los recorre igual: con "**\/" no entra. Los patrones con "**" van relativos a cada
+ * carpeta escaneada, que es como los entiende Trivy.
+ */
+const SECRET_SKIP_DIRS = [
+  ...DEFAULT_SKIP_DIRS,
+  "Library", ".local/share", "Movies", "Music", "Pictures",
+  ".vscode/extensions", ".vscode-server", ".antigravity/extensions", ".cursor/extensions", ".windsurf/extensions",
+  ".m2/repository", ".m2/wrapper", ".gradle", ".rustup", ".nvm", ".pyenv", ".cargo", ".claude/plugins",
+  // Conjuntos de pruebas de seguridad: traen credenciales de ejemplo a propósito y cuestan un minuto de lectura.
+  "nuclei-templates", "SecLists", "PayloadsAllTheThings", "metasploit-framework", "exploitdb",
+  "**/node_modules", "**/.git", "**/.venv", "**/venv", "**/site-packages", "**/__pycache__",
+];
+
+/** Hijos que la pasada de secretos analiza a la vez: usa la caché en memoria, así que no compiten por un bloqueo. */
+const SECRET_CONCURRENCY = 3;
+/** Por hijo, en la pasada de secretos: lee el contenido de los ficheros y no solo los manifiestos. */
+const SECRET_CHILD_TIMEOUT_MS = 180000;
+
+/**
+ * Ficheros sueltos de la raíz del home donde se suelen guardar credenciales. La pasada por hijos no mira los
+ * ficheros de la raíz, así que en la de secretos estos se analizan uno a uno.
+ */
+const ROOT_SECRET_FILES = [
+  ".netrc", ".git-credentials", ".npmrc", ".pypirc", ".env",
+  ".bash_history", ".zsh_history", ".psql_history", ".mysql_history",
+];
+
 /** Error de recorrido del sistema de ficheros (montaje que no responde, permisos). */
 const WALK_ERROR_RE = /walk dir error|fdopendir|operation timed out|permission denied/i;
 
@@ -172,31 +203,49 @@ async function runTrivyFs(opts = {}) {
     ? opts.skipDirs
     : DEFAULT_SKIP_DIRS;
 
+  const scanners = opts.scanners || "vuln";
+
   // Si la carpeta la eligió el usuario va de una pasada: el ámbito lo acotó él y no hay que
   // protegerlo de sus propias unidades de red.
   return resolvedFrom === "config"
-    ? await scanSingle(target, skipDirs, resolvedFrom)
-    : await scanHomeByChildren(target, skipDirs, resolvedFrom);
+    ? await scanSingle(target, skipDirs, resolvedFrom, scanners)
+    : await scanHomeByChildren(target, skipDirs, resolvedFrom, scanners);
 }
 
-/** Orden de Trivy como array, sin shell. El "--" evita que una carpeta que empiece por "-" se lea como opción. */
-function trivyFsArgs(file, target, skipArgs) {
-  return ["trivy", "fs", "--format", "json", "--quiet", "--scanners", "vuln", ...skipArgs, "-o", file, "--", target];
+/**
+ * Secretos (claves, tokens, contraseñas) y configuraciones inseguras (Dockerfile, Kubernetes, Terraform…) en los
+ * ficheros del mismo ámbito que runTrivyFs. Es una pasada aparte y no un escáner más en la de vulnerabilidades: si
+ * esta se corta por tiempo, la otra no pierde su resultado, y cada una llega al informe con su propio estado.
+ */
+async function runTrivySecrets(opts = {}) {
+  return runTrivyFs({ skipDirs: SECRET_SKIP_DIRS, ...opts, scanners: "secret,misconfig" });
+}
+
+/** Orden de Trivy como array, sin shell. El "--" evita que una carpeta que empiece por "-" se lea como opción.
+ *  Las pasadas de secretos usan la caché en memoria: así no compiten por el bloqueo de la caché en disco
+ *  con la de vulnerabilidades y la de paquetes del sistema, que van en paralelo. */
+function trivyFsArgs(file, target, skipArgs, scanners = "vuln") {
+  const cache = scanners === "vuln" ? [] : ["--cache-backend", "memory"];
+  return ["trivy", "fs", "--format", "json", "--quiet", "--scanners", scanners, ...cache, ...skipArgs, "-o", file, "--", target];
 }
 
 /** Una sola invocación de Trivy sobre `target`. */
-async function scanSingle(target, skipDirs, resolvedFrom) {
+async function scanSingle(target, skipDirs, resolvedFrom, scanners = "vuln") {
   const skipArgs = skipDirs.length ? ["--skip-dirs", absSkipDirs(target, skipDirs).join(",")] : [];
   const started = Date.now();
   const parsed = await runTrivyCommand(
-    (file) => trivyFsArgs(file, target, skipArgs),
+    (file) => trivyFsArgs(file, target, skipArgs, scanners),
     TIMEOUT_MS
   );
   if (parsed.skipped) return parsed;
 
+  // Las rutas de Trivy son relativas a lo escaneado: con la raíz se puede decir dónde está cada fichero.
+  for (const r of parsed.Results || []) r.__root = target;
+
   // El dashboard enseña qué carpeta se auditó, así que la procedencia viaja con el resultado.
   parsed.scan = {
     mode: "fs",
+    scanners,
     target,
     skipDirs,
     durationMs: Date.now() - started,
@@ -206,9 +255,25 @@ async function scanSingle(target, skipDirs, resolvedFrom) {
   return parsed;
 }
 
+/** Una pasada de Trivy por carpeta, `n` a la vez. Devuelve nombre → { child, res, ms }. */
+async function scanPool(items, skipArgs, scanners, timeout, n) {
+  const out = new Map();
+  let i = 0;
+  const trabajador = async () => {
+    while (i < items.length) {
+      const { name, child } = items[i++];
+      const t0 = Date.now();
+      const res = await runTrivyCommand((file) => trivyFsArgs(file, child, skipArgs, scanners), timeout);
+      out.set(name, { child, res, ms: Date.now() - t0 });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, n) }, trabajador));
+  return out;
+}
+
 /** En absoluto: al escanear por hijos la raíz cambia en cada pasada y "go/pkg/mod" ya no casaría. */
 function absSkipDirs(home, skipDirs) {
-  return skipDirs.map((d) => (path.isAbsolute(d) ? d : path.join(home, d)));
+  return skipDirs.map((d) => (path.isAbsolute(d) || d.includes("*") ? d : path.join(home, d)));
 }
 
 /**
@@ -217,7 +282,7 @@ function absSkipDirs(home, skipDirs) {
  * Por hijo, el fallo queda en su carpeta. Los hijos que no son almacenamiento local se descartan antes, vía local-fs.js.
  * A cambio, los ficheros sueltos en la raíz del home no se miran.
  */
-async function scanHomeByChildren(home, skipDirs, resolvedFrom) {
+async function scanHomeByChildren(home, skipDirs, resolvedFrom, scanners = "vuln") {
   const started = Date.now();
   const absSkip = absSkipDirs(home, skipDirs);
   const skipArgs = absSkip.length ? ["--skip-dirs", absSkip.join(",")] : [];
@@ -233,6 +298,7 @@ async function scanHomeByChildren(home, skipDirs, resolvedFrom) {
   const scanned = [];
   const skippedChildren = [];
 
+  const pendientes = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;               // los sueltos se quedan sin mirar
     const child = path.join(home, entry.name);
@@ -248,38 +314,98 @@ async function scanHomeByChildren(home, skipDirs, resolvedFrom) {
       skippedChildren.push({ name: entry.name, kind: cls.kind, reason: cls.detail });
       continue;
     }
+    pendientes.push({ name: entry.name, child });
+  }
 
-    const t0 = Date.now();
-    const res = await runTrivyCommand(
-      (file) => trivyFsArgs(file, child, skipArgs),
-      CHILD_TIMEOUT_MS
-    );
-    const ms = Date.now() - t0;
+  // La de vulnerabilidades va de uno en uno (comparte la caché en disco); la de secretos, de tres en tres.
+  const isVuln = scanners === "vuln";
+  const timeout = isVuln ? CHILD_TIMEOUT_MS : SECRET_CHILD_TIMEOUT_MS;
+  const porHijo = await scanPool(pendientes, skipArgs, scanners, timeout, isVuln ? 1 : SECRET_CONCURRENCY);
 
+  // Secretos: una carpeta que agota el tiempo se vuelve a intentar por sus subcarpetas. Medido en un home real:
+  // ~/Desktop, justo donde estaban los proyectos del usuario, no cabía entera en 3 minutos y se quedaba sin revisar.
+  // Los ficheros sueltos de su raíz se quedan sin mirar, como los del home.
+  if (!isVuln) {
+    for (const p of pendientes) {
+      const hit = porHijo.get(p.name);
+      if (!hit.res.skipped || hit.res.kind !== "timeout") continue;
+      let subs;
+      try { subs = fs.readdirSync(p.child, { withFileTypes: true }); } catch (_) { continue; }
+      const subPend = subs
+        .filter((e) => e.isDirectory())
+        .map((e) => ({ name: `${p.name}/${e.name}`, child: path.join(p.child, e.name) }))
+        .filter((x) => !absSkip.includes(x.child) && classifyDir(x.child).local);
+      const subRes = await scanPool(subPend, skipArgs, scanners, timeout, SECRET_CONCURRENCY);
+      porHijo.set(p.name, { ...hit, split: subPend.map((x) => ({ ...x, ...subRes.get(x.name) })) });
+    }
+  }
+
+  // En el orden del directorio, no en el de llegada: el informe sale igual en cada ejecución.
+  for (const { name } of pendientes) {
+    const { child, res, ms, split } = porHijo.get(name);
+    if (split) {
+      let total = 0;
+      for (const sub of split) {
+        if (sub.res.skipped) {
+          skippedChildren.push({ name: sub.name, kind: "error", reason: sub.res.reason, durationMs: sub.ms });
+          continue;
+        }
+        const rs = sub.res.Results || [];
+        for (const r of rs) r.__root = sub.child;
+        merged.Results.push(...rs);
+        total += rs.length;
+      }
+      scanned.push({ name, results: total, durationMs: ms, bySubfolders: split.length });
+      continue;
+    }
     if (res.skipped) {
       // La ganancia de escanear por hijos: el problemático se anota y se sigue.
-      skippedChildren.push({ name: entry.name, kind: "error", reason: res.reason, durationMs: ms });
+      skippedChildren.push({ name, kind: "error", reason: res.reason, durationMs: ms });
       continue;
     }
     const results = res.Results || [];
+    for (const r of results) r.__root = child;
     merged.Results.push(...results);
-    scanned.push({ name: entry.name, results: results.length, durationMs: ms });
+    scanned.push({ name, results: results.length, durationMs: ms });
+  }
+
+  // Solo en la pasada de secretos: los ficheros de credenciales de la raíz, uno a uno.
+  const rootFiles = [];
+  if (scanners.includes("secret")) {
+    for (const name of ROOT_SECRET_FILES) {
+      const file = path.join(home, name);
+      let st;
+      try { st = fs.statSync(file); } catch (_) { continue; }
+      if (!st.isFile()) continue;
+      const res = await runTrivyCommand((out) => trivyFsArgs(out, file, [], scanners), CHILD_TIMEOUT_MS);
+      if (res.skipped) {
+        skippedChildren.push({ name, kind: "error", reason: res.reason });
+        continue;
+      }
+      for (const r of res.Results || []) r.__root = home;
+      merged.Results.push(...(res.Results || []));
+      rootFiles.push(name);
+    }
   }
 
   merged.scan = {
     mode: "fs-by-children",
+    scanners,
     target: home,
     skipDirs,
     durationMs: Date.now() - started,
     resolvedFrom,
     trivyVersion: trivyVersion(),
     children: { scanned, skipped: skippedChildren },
+    rootFiles,
   };
   return merged;
 }
 
 module.exports = {
   runTrivyFs,
+  runTrivySecrets,
+  SECRET_SKIP_DIRS,
   resolveUserHome,
   resolveScanTarget,
   DEFAULT_SKIP_DIRS,

@@ -12,6 +12,7 @@
             enableUpdates: { value: true },
             trivyTarget:  { value: "" },
             trivySystemPkgs: { value: true },
+            enableSecrets:   { value: true },
             securityEvents:       { value: true },
             securityEventsWindow: { value: 24, validate: function (v) {
                 const n = parseInt(v, 10);
@@ -160,6 +161,22 @@
                                 deja un informe que <em>parece</em> completo sin serlo.
                                 Si tu sistema no tiene paquetes que Trivy sepa leer (macOS, Windows, Arch), se indica en el informe
                                 como comprobación no realizada, nunca como cero vulnerabilidades.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; align-items: flex-start; gap: 8px; margin-top: 8px;">
+                        <input type="checkbox" id="node-input-enableSecrets" style="width: auto; margin-top: 2px; flex-shrink: 0;">
+                        <div>
+                            <label for="node-input-enableSecrets" style="width: auto; font-weight: 600; margin: 0; cursor: pointer; font-size: 0.85em;">
+                                Buscar secretos y configuraciones inseguras
+                                <span style="color: #e67e22; font-size: 0.9em; font-weight: normal; margin-left: 4px;">◌ puede tardar</span>
+                            </label>
+                            <div style="color: #555; font-size: 0.8em; margin-top: 3px; line-height: 1.4;">
+                                Busca en la misma carpeta contraseñas, tokens y claves guardados en ficheros, y revisa los Dockerfile,
+                                manifiestos de Kubernetes y ficheros de Terraform de tus proyectos. El informe nunca muestra el valor
+                                completo de un secreto: Trivy lo enmascara.
+                                Una clave privada dentro de <code>~/.ssh</code> se indica como informativa, porque es su ubicación habitual.
                             </div>
                         </div>
                     </div>

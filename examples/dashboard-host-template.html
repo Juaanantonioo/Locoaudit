@@ -1590,6 +1590,8 @@ export default {
         system:        { icon: 'server',  label: 'Sistema & Actualizaciones', order: 4 },
         network:       { icon: 'globe',   label: 'Red & Firewall',            order: 5 },
         'system-logs': { icon: 'list',    label: 'Logs del sistema',          order: 6 },
+        secret:        { icon: 'shield',  label: 'Secretos en ficheros',      order: 7 },
+        misconfig:     { icon: 'tool',    label: 'Configuración de proyectos', order: 8 },
         other:         { icon: 'package', label: 'Otros',                     order: 99 }
       };
       var SEV_ORDER = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
@@ -2091,7 +2093,7 @@ export default {
       var MAP = {
         vulnerability: 'Vulnerab.', cpu: 'CPU', memory: 'RAM',
         system: 'Sistema', network: 'Red', disk: 'Disco',
-        'system-logs': 'Logs', other: 'Otros'
+        'system-logs': 'Logs', secret: 'Secreto', misconfig: 'Config.', other: 'Otros'
       };
       return MAP[(cat || '').toLowerCase()] || cat || '?';
     },

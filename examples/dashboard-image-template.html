@@ -412,7 +412,7 @@
               <button class="finding-row" @click="toggleFinding(f.id || fi)">
                 <!-- Sin modificador de color: el tipo lo dice la palabra, no el tinte. -->
                 <span class="type-badge">
-                  {{ findingIsCVE(f) ? 'CVE' : 'Config' }}
+                  {{ findingIsCVE(f) ? 'CVE' : findingIsSecret(f) ? 'Secreto' : 'Config' }}
                 </span>
                 <span class="sev-badge" :class="f.severity || 'info'">
                   {{ sevLabel(f.severity) }}
@@ -753,6 +753,7 @@ export default {
         if (self.filterSev !== 'all' && f.severity !== self.filterSev) return false;
         if (self.filterType === 'cve' && !self.findingIsCVE(f)) return false;
         if (self.filterType === 'config' && !self.findingIsConfig(f)) return false;
+        if (self.filterType === 'secret' && !self.findingIsSecret(f)) return false;
         return true;
       });
     },
@@ -853,6 +854,7 @@ export default {
       return [
         { val: 'all',    label: 'Todo'     },
         { val: 'cve',    label: 'CVE'    },
+        { val: 'secret', label: 'Secretos' },
         { val: 'config', label: 'Config' }
       ];
     }
@@ -1096,8 +1098,14 @@ export default {
                 (f.cvss != null) || f.cveCount || f.primaryUrl);
     },
 
+    // Secretos que Trivy encontró en los ficheros de la imagen (IMG-SEC).
+    findingIsSecret(f) {
+      return f.id && f.id.startsWith('IMG-SEC');
+    },
+
+    // Configuración: la de los contenedores (IMG-CFG) y la de la propia imagen (IMG-MIS).
     findingIsConfig(f) {
-      return f.id && !f.id.startsWith('IMG-CVE');
+      return f.id && !f.id.startsWith('IMG-CVE') && !f.id.startsWith('IMG-SEC');
     },
 
     // nombre canónico de la imagen, igual que el f.image que pone el normalizer

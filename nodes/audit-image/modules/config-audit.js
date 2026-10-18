@@ -19,7 +19,13 @@ const { createFinding }  = require("../../../lib/finding-schema");
 const INSPECT_TIMEOUT_MS = 8000;
 
 // Nombres de variable que delatan un secreto.
-const SENSITIVE_PATTERNS = ["PASSWORD", "SECRET", "KEY", "TOKEN", "PASS", "CREDENTIAL"];
+const SENSITIVE_PATTERNS = ["PASSWORD", "PASSWD", "SECRET", "TOKEN", "CREDENTIAL", "API_KEY", "APIKEY",
+  "PRIVATE_KEY", "ACCESS_KEY", "AUTH_KEY"];
+
+// Nombres que casan pero no guardan un secreto: huellas de claves públicas (las imágenes oficiales de PHP, Python o
+// Node las declaran en GPG_KEYS para verificar descargas) y la ruta a un fichero de Docker secrets, que es justo la
+// forma recomendada de pasar una contraseña.
+const NOT_SECRET_RE = /^(GPG_KEYS?|.*_KEYRING|.*PUBLIC_KEY.*)$|_FILE$/;
 
 /** null si el inspect falla: un contenedor que se para a mitad de auditoría no rompe el resto. */
 async function inspect(id, format) {
@@ -46,8 +52,14 @@ function findSensitiveEnvVars(envJson) {
   if (!Array.isArray(envList)) return [];
 
   return envList
-    .map((entry) => entry.split("=")[0].toUpperCase())
-    .filter((name) => SENSITIVE_PATTERNS.some((pat) => name.includes(pat)));
+    .map((entry) => {
+      const i = String(entry).indexOf("=");
+      return { name: (i < 0 ? String(entry) : String(entry).slice(0, i)).toUpperCase(), value: i < 0 ? "" : String(entry).slice(i + 1) };
+    })
+    // Una variable vacía no expone nada.
+    .filter(({ name, value }) => value.trim() !== "" && !NOT_SECRET_RE.test(name) &&
+      (SENSITIVE_PATTERNS.some((pat) => name.includes(pat)) || /(^|_)PASS$/.test(name)))
+    .map(({ name }) => name);
 }
 
 /** IDs correlativos por tipo de hallazgo: IMG-CFG-001, IMG-CFG-002… */
@@ -69,10 +81,14 @@ async function auditContainer(container, idx) {
 
   const user = userOut ?? "";
   if (user === "" || user === "root" || user === "0") {
+    // Parado, el riesgo es la configuración con la que volverá a arrancar; en marcha, un proceso con UID 0 ahora mismo.
+    const enMarcha = container.running === true;
     findings.push(createFinding({
       id:       findingId("IMG-CFG-001", idx),
-      title:    `Contenedor ${name} ejecutándose como root`,
-      severity: "high",
+      title:    enMarcha
+        ? `Contenedor ${name} ejecutándose como root`
+        : `Contenedor ${name} configurado para ejecutarse como root (está parado)`,
+      severity: enMarcha ? "high" : "medium",
       evidence: `Usuario del contenedor: ${user === "" ? "(no definido — default root)" : user}`,
       // Gramática del fix, la misma que ya usan host y network: "## " abre rama,
       // "$ " comando copiable, "> " nota, el resto es un paso.
@@ -163,4 +179,4 @@ async function auditDockerConfig(dockerInfo) {
   return results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 }
 
-module.exports = { auditDockerConfig };
+module.exports = { auditDockerConfig, findSensitiveEnvVars };

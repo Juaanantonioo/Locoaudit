@@ -49,6 +49,13 @@ function summarizeScanError(err) {
            "si ves este aviso, comprueba que no haya otro 'trivy' en marcha (otra auditoría de LoCoAudit " +
            "en paralelo o una terminal) y repite el escaneo.";
   }
+  // La caché de Trivy con dueño equivocado (se creó alguna vez con sudo): el análisis se cae al bajar la base de
+  // datos de Java, y el texto crudo lleva "failed to download" y acabaría en el mensaje de red.
+  const perm = e.match(/(\/\S*?\/trivy)\/[^\s:]*: permission denied/i);
+  if (perm) {
+    return `Trivy no puede escribir en su caché (${perm[1]}): pertenece a otro usuario, normalmente porque alguna vez ` +
+           "se ejecutó Trivy con sudo. Devuélvela a tu usuario con 'sudo chown -R $(whoami) " + perm[1] + "' y repite el escaneo.";
+  }
   if (/^TIMEOUT:|context deadline exceeded|ETIMEDOUT|timed out/i.test(e)) {
     return "El análisis excedió el tiempo límite (imagen grande: la descarga puede tardar varios minutos). " +
            "Aumenta el 'Timeout por imagen' en la configuración del nodo.";
@@ -66,6 +73,11 @@ function summarizeScanError(err) {
   if (/unauthorized|authentication required|access.*denied|denied:/i.test(e) || /\b401\b/.test(e)) {
     return "La imagen está en un registro privado que requiere autenticación ('docker login <registro>'). " +
            "LoCoAudit soporta imágenes públicas; los registros privados quedan como trabajo futuro.";
+  }
+  // Antes que "no encontrada": el daemon tiene la imagen, pero le falta una capa y no la puede exportar.
+  if (/unable to export the image|content digest \S+: not found/i.test(e)) {
+    return "La imagen está en Docker pero su copia local está incompleta: le falta una capa y no se puede leer. " +
+           "Vuelve a descargarla con 'docker pull' o bórrala si ya no la usas.";
   }
   if (/MANIFEST_UNKNOWN|manifest unknown|No such image|unable to find the specified image|NAME_UNKNOWN|not found/i.test(e)) {
     return "Imagen o tag no encontrado (ni en local ni en el registro). Revisa el nombre y el tag.";

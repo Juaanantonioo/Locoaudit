@@ -7,7 +7,7 @@ const { getDiskInfo } = require("./modules/disk-storage");
 const { getSwInventory } = require("./modules/sw-inventory");
 const { getOsInfo } = require("./modules/os-info");
 const { runLynis } = require("./modules/lynis");
-const { runTrivyFs } = require("./modules/trivy-fs");
+const { runTrivyFs, runTrivySecrets } = require("./modules/trivy-fs");
 const { runTrivyRootfs, systemPackagesSupport } = require("../../lib/trivy-rootfs");
 const { runSecurityEvents, buildEventList } = require("./modules/security-events");
 const { getPendingUpdates } = require("./modules/pending-updates");
@@ -62,6 +62,7 @@ module.exports = function (RED) {
       const enableTrivy = config.enableTrivy !== false;
       const enableSecEvents = config.securityEvents !== false;
       const enableUpdates = config.enableUpdates !== false;
+      const enableSecrets = config.enableSecrets !== false;
       const secWindow = Math.min(168, Math.max(1, parseInt(config.securityEventsWindow, 10) || 24));
       // Activo POR DEFECTO, al revés que antes: los paquetes del sistema son la parte del
       // equipo que el usuario no puede auditar por su cuenta, y dejarlos fuera por omisión
@@ -84,7 +85,7 @@ module.exports = function (RED) {
         // le llama y ese camino no pasa por aquí.
         const trivyPath = enableSysPkgs ? await commandExists("trivy") : null;
 
-        const [cpuResult, diskResult, swResult, lynisResult, trivyResult, rootfsResult, secResult, updResult] =
+        const [cpuResult, diskResult, swResult, lynisResult, trivyResult, rootfsResult, secResult, updResult, secretsResult] =
           await Promise.allSettled([
             enableCpu ? Promise.resolve(runSystemModule()) : Promise.resolve(null),
             enableDisk ? getDiskInfo() : Promise.resolve(null),
@@ -108,6 +109,10 @@ module.exports = function (RED) {
             enableSecEvents ? runSecurityEvents(secWindow) : Promise.resolve(null),
             // pkgManager por parámetro: audit-host ya lo resolvió arriba y es la fuente única.
             enableUpdates ? getPendingUpdates({ pkgManager }) : Promise.resolve(null),
+            // Mismo ámbito que el análisis de vulnerabilidades, en una pasada aparte con su propio estado.
+            enableSecrets
+              ? runTrivySecrets({ target: config.trivyTarget })
+              : Promise.resolve({ skipped: true, kind: "disabled", reason: "La búsqueda de secretos y configuraciones inseguras está desactivada en las opciones del nodo." }),
           ]);
 
         const cpuMemory = cpuResult.status === "fulfilled" ? cpuResult.value : null;
@@ -217,6 +222,15 @@ module.exports = function (RED) {
           node.warn(`[audit-host] pending-updates falló: ${updResult.reason}`);
         }
 
+        // Como pending-updates: un fallo aquí no invalida el resto, sale como comprobación no realizada.
+        const secretsResolved = secretsResult.status === "fulfilled"
+          ? secretsResult.value
+          : { skipped: true, kind: "error", reason: `La búsqueda de secretos falló: ${String(secretsResult.reason)}.` };
+        const secretsSkipped = !!(secretsResolved && secretsResolved.skipped);
+        if (enableSecrets && secretsSkipped) {
+          avisarOmitido(node, "trivy-secrets", secretsResolved);
+        }
+
         // Un throw vale lo mismo que un skipped kind 'error', igual que en Lynis: si no, un rechazo
         // dejaría swInventory a null y el módulo saldría como ejecutado sin haber inventariado nada.
         const swResolved = swInventory || (
@@ -279,7 +293,7 @@ module.exports = function (RED) {
 
         // Un security-events omitido no es error del nodo, al contrario que Lynis o Trivy:
         // el normalizador lo saca como finding informativo.
-        const raw = { cpuMemory, disk, swInventory: swResolved, lynis, trivy, trivyRootfs: rootfsResolved, securityEvents, pendingUpdates: updResolved };
+        const raw = { cpuMemory, disk, swInventory: swResolved, lynis, trivy, trivyRootfs: rootfsResolved, securityEvents, pendingUpdates: updResolved, trivySecrets: secretsResolved };
 
         const findings = normalizeHost(raw, { platform: process.platform, pkgManager });
         const summary = summarize(findings);
@@ -305,7 +319,7 @@ module.exports = function (RED) {
             // sola cosa —"esto es lo que no se ha mirado"— y no cuatro problemas del equipo.
             checksSkipped: buildSkippedChecksSummary(findings),
             /**
-             * Los siete módulos y qué pasó con cada uno. `modulesRun` no distingue un módulo APAGADO de uno que se CAYÓ, y
+             * Los módulos y qué pasó con cada uno. `modulesRun` no distingue un módulo APAGADO de uno que se CAYÓ, y
              * solo Lynis y Trivy emiten hallazgo al omitirse, así que se deriva aquí y no de los findings.
              */
             modules: [
@@ -317,6 +331,7 @@ module.exports = function (RED) {
               { id: "trivy-rootfs",    label: "Paquetes del sistema",        requested: enableSysPkgs,   ran: enableSysPkgs && !rootfsSkipped,                     kind: rootfsResolved?.kind },
               { id: "security-events", label: "Eventos de seguridad",        requested: enableSecEvents, ran: enableSecEvents && !securityEvents?.skipped,         kind: securityEvents?.kind },
               { id: "pending-updates", label: "Actualizaciones pendientes",  requested: enableUpdates,   ran: enableUpdates && !updSkipped,                        kind: updResolved?.kind },
+              { id: "trivy-secrets",   label: "Secretos y configuraciones",  requested: enableSecrets,   ran: enableSecrets && !secretsSkipped,                    kind: secretsResolved?.kind },
             ].map((m) => ({
               id: m.id,
               label: m.label,
@@ -346,6 +361,7 @@ module.exports = function (RED) {
               enableSysPkgs && !rootfsSkipped && "trivy-rootfs",
               enableSecEvents && !securityEvents?.skipped && "security-events",
               enableUpdates && !updSkipped && "pending-updates",
+              enableSecrets && !secretsSkipped && "trivy-secrets",
             ].filter(Boolean),
             durationMs,
             // Se emite siempre, también con el interruptor apagado: "no analizados" no es "limpios"

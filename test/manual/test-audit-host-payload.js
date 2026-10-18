@@ -39,6 +39,8 @@ let trivyStubResult = null;
 let trivyStubOpts = null;      // últimas opciones recibidas: prueba qué se le pidió
 require.cache[TRIVY_PATH].exports = Object.assign({}, trivyReal, {
   runTrivyFs: async (opts) => { trivyStubOpts = opts; return trivyStubResult; },
+  // La pasada de secretos no es lo que se prueba aquí: sin stub ejecutaría el Trivy del equipo que corre el test.
+  runTrivySecrets: async () => ({ skipped: true, kind: "disabled", reason: "stub" }),
 });
 
 // ── Sustitución de trivy-rootfs ──────────────────────────────────────────────
@@ -132,6 +134,7 @@ const CONFIG_BASE = {
   // Explícito y no heredado: desde que el módulo va activo por defecto, omitirlo
   // haría que cada bloque arrastrase el rootfs sin decirlo.
   trivySystemPkgs: false,
+  enableSecrets: false,
 };
 
 (async () => {
@@ -389,18 +392,18 @@ const CONFIG_BASE = {
   const caidos   = mix.filter((f) => f.kind !== "disabled");
   console.log("  mezcla:", JSON.stringify(mix.map((f) => f.id + "/" + f.kind)));
 
-  ok(apagados.length === 2, "2 apagados (lynis, trivy-fs)", String(apagados.length));
+  ok(apagados.length === 3, "3 apagados (lynis, trivy-fs, trivy-secrets)", String(apagados.length));
   ok(caidos.length === 1 && caidos[0].id === "HOST-OS-CVE-SKIP",
      "1 caído (trivy-rootfs), separable del resto", JSON.stringify(caidos.map((f) => f.id)));
   ok(apagados.length + caidos.length === mix.length, "la partición es exhaustiva");
 
-  console.log("\n── 9 · scanMeta.modules: los OCHO módulos, con su estado ─────────\n");
+  console.log("\n── 9 · scanMeta.modules: los NUEVE módulos, con su estado ────────\n");
 
   const mods = r.msg && r.msg.payload.scanMeta.modules;
   console.log("  " + (mods || []).map((m) => m.id + "=" + m.status).join(" · "));
 
-  ok(Array.isArray(mods) && mods.length === 8,
-     "los 8 módulos del nodo aparecen siempre, se ejecuten o no", String(mods && mods.length));
+  ok(Array.isArray(mods) && mods.length === 9,
+     "los 9 módulos del nodo aparecen siempre, se ejecuten o no", String(mods && mods.length));
   // Esto es lo que hace que la línea al pie cubra los módulos que NO dejan
   // finding al apagarse (cpu, disco, inventario, eventos, actualizaciones):
   // derivarla de los findings cubriría dos de ocho.
