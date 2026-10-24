@@ -1,13 +1,8 @@
 "use strict";
 
 /**
- * test-nmap-servicefp.js — Un servicio que nmap no reconoce del todo NO se lee como "unknown".
- *
- * Bug preexistente (61206c9, 2026-04-12): `-sV` mete un atributo `servicefp` con la huella del servicio y esa huella lleva
- * barras ("HTTP/1\.1"). El regex `/<service\s([^/]*)\/?>/` no cruza barras, dejaba de casar y el servicio caía a "unknown".
- * Se pierden name, product, version y extrainfo (y con ellos el fix por servicio); el puerto y su severidad no cambian.
- * El fixture es una captura real de 2026-08-12 y el test no depende del análisis NSE. El efecto sobre tunnel="ssl" se
- * comprueba en test-nse-parse.js.
+ * test-nmap-servicefp.js — Un servicio que nmap no reconoce del todo no se lee como "unknown".
+ * El atributo `servicefp` de -sV lleva barras ("HTTP/1\.1") y el parser tiene que cruzarlas.
  * Uso: node test/manual/test-nmap-servicefp.js
  */
 
@@ -28,8 +23,7 @@ const fixture = (n) => fs.readFileSync(path.join(__dirname, "../fixtures/nmap", 
 
 console.log("\n── Un servicefp con barras no puede tapar el nombre del servicio ──\n");
 
-// scan-ports-open.xml: captura real de nmap 7.99 contra 127.0.0.1. El 5000 es AirTunes, que -sV
-// sondea sin llegar a identificar, así que emite la huella entera.
+// Captura real de nmap 7.99; el 5000 (AirTunes) no se identifica y emite la huella entera.
 const xml    = fixture("scan-ports-open.xml");
 const p5000  = parseNmapXml(xml).find((p) => p.port === 5000);
 
@@ -38,9 +32,7 @@ ok(/servicefp="[^"]*\//.test(xml), "y el fixture trae de verdad una huella con b
 ok(p5000.service === "rtsp",
    "el servicio se lee del atributo name, no del fallback 'unknown'", p5000.service);
 
-// La regresión concreta, escrita como la comprobaría quien la sufrió: el patrón viejo, aplicado
-// al bloque real, NO CASA. Va aquí para que el día que alguien "simplifique" el regex el test
-// diga qué se rompe y por qué, en vez de solo cambiar de color.
+// El patrón que no cruza barras no casa con el bloque real: documenta qué se rompería.
 const bloque = xml.match(/<port\s[^>]*portid="5000">[\s\S]*?<\/port>/)[0];
 ok(bloque.match(/<service\s([^/]*)\/?>/) === null,
    "el patrón ANTIGUO no casaba con este bloque: de ahí salía el 'unknown'");

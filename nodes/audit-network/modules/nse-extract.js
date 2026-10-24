@@ -1,10 +1,7 @@
 "use strict";
 
-/**
- * Del subárbol NSE de un puerto a un resumen ya interpretado.
- * Existe aquí porque el normalizador (lib/normalizer.js) necesita las tablas de severidad de nse-catalog.js, y `lib/` no
- * importa de `nodes/`. Este módulo lee el XML ya parseado y resuelve la severidad; el normalizador solo hace ids, esquema y textos.
- */
+// Resume el subárbol NSE de un puerto con su severidad ya resuelta.
+// Vive aquí porque lib/ no importa de nodes/; el normalizador solo pone ids y textos.
 
 const { fromCvss, max } = require("../../../lib/severity-map");
 const { findScript, tablesByKey, elemValue, elemList } = require("./nmap-xml");
@@ -12,11 +9,8 @@ const {
   TLS_GRADE_SEVERITY, sshAlgoSeverity, hasVersion, OFFERED_NOT_NEGOTIATED,
 } = require("./nse-catalog");
 
-/**
- * Los CVE de vulners, agrupados por CPE. La severidad del grupo es la del CVE más alto, no la media (diez bajos esconderían un crítico).
- * Los tipos que no son 'cve' (exploitdb, packetstorm, githubexploit…) no generan hallazgo propio, pero se cuentan aparte
- * porque "existe exploit público" cambia la urgencia.
- */
+// CVE de vulners por CPE. El grupo toma la severidad del peor CVE, no la media.
+// Los exploits no generan hallazgo propio, pero se cuentan porque cambian la urgencia.
 function extractVulns(scripts) {
   const node = findScript(scripts, "vulners");
   if (!node) return [];
@@ -47,8 +41,7 @@ function extractVulns(scripts) {
       cves.push({
         id,
         cvss: Number.isFinite(cvss) ? cvss : null,
-        // Un 'cvss' que no llega o llega a 0 no baja el hallazgo a 'low': fromCvss lo manda a
-        // 'medium' justamente para que no se cuele por la puerta de atrás.
+        // Sin cvss o con 0, fromCvss da 'medium' para no rebajarlo.
         severity: fromCvss(cvssTxt),
         isExploit: esExploit,
         sourceUrl: outputUrls.get(String(id).toUpperCase()) || null,
@@ -68,11 +61,7 @@ function extractVulns(scripts) {
   return grupos;
 }
 
-/**
- * La nota TLS y con qué se sostiene. Se usa la `least strength` que calcula ssl-enum-ciphers (la peor suite aceptada) en
- * vez de recalcularla. Una nota fuera de la tabla, incluida 'unknown', devuelve `severity: null`, que el llamante trata
- * como "no se pudo comprobar"; mapearla a 'info' sería un falso verde.
- */
+// Nota TLS de ssl-enum-ciphers (least strength). Fuera de la tabla, severity null = no comprobado.
 function extractTls(scripts) {
   const node = findScript(scripts, "ssl-enum-ciphers");
   if (!node) return null;
@@ -82,7 +71,7 @@ function extractTls(scripts) {
     .filter((c) => c.type === "table" && c.key)
     .map((c) => c.key);
 
-  // Las suites peor calificadas, para que el hallazgo diga qué hay que quitar y no solo la nota.
+  // Suites flojas, para que el hallazgo diga qué quitar y no solo la nota.
   const flojas = [];
   for (const proto of node.children.filter((c) => c.type === "table" && c.key)) {
     for (const tablaCiphers of tablesByKey(proto, "ciphers")) {
@@ -114,7 +103,7 @@ function extractTls(scripts) {
   };
 }
 
-/** Los grupos de ssh2-enum-algos que sí son algoritmos. Los demás (`compression`) no se juzgan. */
+// Grupos de ssh2-enum-algos que se evalúan; compression no.
 const SSH_GRUPOS = [
   ["kex_algorithms",              "intercambio de claves"],
   ["server_host_key_algorithms",  "clave de servidor"],
@@ -122,12 +111,7 @@ const SSH_GRUPOS = [
   ["mac_algorithms",              "integridad (MAC)"],
 ];
 
-/**
- * Los algoritmos SSH ofrecidos, con los débiles separados.
- *
- * `severity` es la del peor encontrado, e 'info' cuando no hay ninguno débil: en ese caso el
- * hallazgo sigue existiendo como INVENTARIO —qué ofrece este SSH— y no como problema.
- */
+// Algoritmos SSH ofrecidos; sin débiles queda en 'info' como inventario.
 function extractSsh(scripts) {
   const node = findScript(scripts, "ssh2-enum-algos");
   if (!node) return null;
@@ -156,24 +140,14 @@ function extractSsh(scripts) {
   };
 }
 
-/**
- * Los cuatro estados de vulnerabilidad de un puerto: no "¿tiene CVE?" sino "¿qué sabemos de si los tiene?".
- *   found                salieron CVE.
- *   clean                anunció versión, el canario confirma que la fuente respondió y no vino ningún CVE.
- *                        Es la única combinación que autoriza a decir "sin vulnerabilidades conocidas".
- *   no-version           no anunció versión: nada que consultar. Alcance, no hueco.
- *   source-unavailable   anunció versión y la fuente no está confirmada. Hueco: ámbar.
- */
+// found, no-version, clean o source-unavailable. Solo clean (versión y canario ok) permite decir "sin vulnerabilidades".
 function portVulnState(p, vulns, canaryOk) {
   if (vulns && vulns.length) return "found";
   if (!hasVersion(p)) return "no-version";
   return canaryOk ? "clean" : "source-unavailable";
 }
 
-/**
- * El resumen NSE de un puerto, listo para que el normalizador lo convierta en findings sin
- * volver a tocar XML ni tablas.
- */
+// Resumen listo para el normalizador, sin volver a tocar el XML.
 function summarizePort(p, opts = {}) {
   const scripts  = (p && p.nse) || [];
   const canaryOk = Boolean(opts.canaryOk);

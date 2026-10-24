@@ -2,14 +2,7 @@
 
 /**
  * test-network-ports.js — La lista de puertos y el rango de cada modo de audit-network.
- *
- * Dos cambios que fija este test:
- *   - El campo "Puertos a escanear" iba tal cual a `-p ${portSpec}` en la línea de nmap, como iba
- *     la IP antes de validateTarget(): `22; orden` era una orden más. Ahora lo valida
- *     validatePortSpec(), y a nmap le llega la lista normalizada, nunca el texto del campo.
- *   - El modo Completo se paraba en el puerto 10000. Ahora son los 65535, y el tiempo máximo del
- *     modo completo y del personalizado sale del número de puertos (scanTimeoutMs). Antes el
- *     personalizado tenía 90 s fijos: 1-65535 no podía terminar nunca.
+ * A nmap le llega la lista normalizada, nunca el texto del campo; el tiempo máximo escala con los puertos.
  *
  * Bloques:
  *   1. validatePortSpec(): qué se acepta, qué se rechaza y cómo se normaliza.

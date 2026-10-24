@@ -1,17 +1,12 @@
 "use strict";
 
-/**
- * Wrapper de Trivy sobre el sistema de ficheros. El ámbito es solo el HOME del usuario en las tres plataformas: escanear
- * territorio del gestor de paquetes daba lockfiles empaquetados de terceros (campo `origin` en lib/finding-schema.js).
- * Los paquetes del SO son otra pregunta y viven en lib/trivy-rootfs.js.
- * Cuando no se puede escanear devuelve { skipped, kind, reason } y quien llama decide por `kind`: 'unsupported' no es un
- * error; 'not-installed' y 'error' sí.
- */
+/** Trivy sobre el HOME del usuario (los paquetes del SO van en lib/trivy-rootfs.js).
+ *  Si no puede escanear devuelve { skipped, kind, reason }; 'unsupported' no es un error. */
 
 const os = require("os");
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 const { execToFile, execCommand, commandExists } = require("../../../lib/executor");
 const { classifyDir } = require("./local-fs");
 
@@ -19,11 +14,8 @@ const TIMEOUT_MS = 120000;
 // Por hijo: así una carpeta que no responde se lleva su tiempo, no el del escaneo entero.
 const CHILD_TIMEOUT_MS = 90000;
 
-/**
- * Exclusiones por defecto, relativas al objetivo (trivy 0.72.0: valen igual relativas y absolutas, separador coma, una ruta
- * inexistente no molesta). El sufijo "/*" excluye los hijos pero no el directorio, por eso ninguna entrada lo lleva.
- * node_modules se queda dentro a propósito: son dependencias reales del usuario.
- */
+/** Exclusiones por defecto, relativas al objetivo. Sin sufijo "/*", que dejaría fuera los hijos pero no el directorio.
+ *  node_modules se queda dentro: son dependencias reales del usuario. */
 const DEFAULT_SKIP_DIRS = [
   ".cache",                // cachés de herramientas: nada que parchear
   ".local/share/Trash",    // papelera: ficheros ya descartados
@@ -32,19 +24,14 @@ const DEFAULT_SKIP_DIRS = [
   ".npm",                  // caché de npm (≠ node_modules, que sí se escanea)
 ];
 
-/**
- * Exclusiones de la pasada de secretos, además de las de siempre. Son software de otros (extensiones, dependencias,
- * cachés de herramientas) y datos de aplicaciones: medido en un home real, ~/Library, ~/.local y las extensiones se
- * comían el tiempo entero de la pasada sin aportar un solo secreto del usuario. Trivy tampoco busca secretos dentro de
- * node_modules ni .git, pero los recorre igual: con "**\/" no entra. Los patrones con "**" van relativos a cada
- * carpeta escaneada, que es como los entiende Trivy.
- */
+/** Exclusiones extra de la pasada de secretos: software de terceros y datos de aplicaciones que solo gastan tiempo.
+ *  Los patrones con "**" son relativos a cada carpeta escaneada. */
 const SECRET_SKIP_DIRS = [
   ...DEFAULT_SKIP_DIRS,
   "Library", ".local/share", "Movies", "Music", "Pictures",
   ".vscode/extensions", ".vscode-server", ".antigravity/extensions", ".cursor/extensions", ".windsurf/extensions",
   ".m2/repository", ".m2/wrapper", ".gradle", ".rustup", ".nvm", ".pyenv", ".cargo", ".claude/plugins",
-  // Conjuntos de pruebas de seguridad: traen credenciales de ejemplo a propósito y cuestan un minuto de lectura.
+  // Juegos de pruebas de seguridad: traen credenciales de ejemplo a propósito.
   "nuclei-templates", "SecLists", "PayloadsAllTheThings", "metasploit-framework", "exploitdb",
   "**/node_modules", "**/.git", "**/.venv", "**/venv", "**/site-packages", "**/__pycache__",
 ];
@@ -54,10 +41,7 @@ const SECRET_CONCURRENCY = 3;
 /** Por hijo, en la pasada de secretos: lee el contenido de los ficheros y no solo los manifiestos. */
 const SECRET_CHILD_TIMEOUT_MS = 180000;
 
-/**
- * Ficheros sueltos de la raíz del home donde se suelen guardar credenciales. La pasada por hijos no mira los
- * ficheros de la raíz, así que en la de secretos estos se analizan uno a uno.
- */
+/** Ficheros de la raíz del home donde suele haber credenciales; la pasada por hijos no los ve. */
 const ROOT_SECRET_FILES = [
   ".netrc", ".git-credentials", ".npmrc", ".pypirc", ".env",
   ".bash_history", ".zsh_history", ".psql_history", ".mysql_history",
@@ -73,13 +57,14 @@ const HOME_BASE = { darwin: "/Users", linux: "/home" };
 function homeForUser(user) {
   if (!user || process.platform === "win32") return null;
 
+  // Sin shell: SUDO_USER es un dato del entorno y no puede acabar interpretado.
   const probes = process.platform === "darwin"
-    ? [`dscl . -read /Users/${user} NFSHomeDirectory`]
-    : [`getent passwd ${user}`];
+    ? [["dscl", [".", "-read", `/Users/${user}`, "NFSHomeDirectory"]]]
+    : [["getent", ["passwd", user]]];
 
-  for (const cmd of probes) {
+  for (const [file, args] of probes) {
     try {
-      const out = execSync(cmd, { timeout: 5000, stdio: ["ignore", "pipe", "ignore"] })
+      const out = execFileSync(file, args, { timeout: 5000, stdio: ["ignore", "pipe", "ignore"] })
         .toString().trim();
       // dscl da "NFSHomeDirectory: /Users/ana"; getent, "ana:x:1000:1000::/home/ana:/bin/bash".
       const home = process.platform === "darwin"
@@ -94,8 +79,7 @@ function homeForUser(user) {
   return guess && fs.existsSync(guess) ? guess : null;
 }
 
-/** El home de quien audita, no el del proceso: con Node-RED como servicio (systemd, launchd)
- *  os.homedir() da /root o /var/lib/node-red y se auditaría un directorio vacío. */
+/** El home de quien audita, no el del proceso: como servicio, os.homedir() da /root o /var/lib/node-red. */
 function resolveUserHome() {
   // Con sudo el home real es el del usuario original, no el de root.
   const sudoUser = process.env.SUDO_USER;
@@ -123,7 +107,7 @@ function resolveScanTarget(configured) {
   return { target: raw, resolvedFrom: "config" };
 }
 
-/** Se guarda en el resultado: si la forma de los hallazgos cambia, dice si fue Trivy o nosotros. */
+/** Versión de Trivy, guardada con el resultado para diagnosticar cambios en su salida. */
 function trivyVersion() {
   try {
     const out = execSync("trivy --version", { timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }).toString();
@@ -134,16 +118,12 @@ function trivyVersion() {
   }
 }
 
-/**
- * Ejecuta un comando de Trivy y devuelve su JSON parseado, o { skipped, kind, reason }.
- * `buildCmd` recibe la ruta de un temporal y devuelve la línea con su `-o`: la salida va a fichero (ver execToFile()).
- */
+/** Ejecuta Trivy vía execToFile y devuelve su JSON, o { skipped, kind, reason }. */
 async function runTrivyCommand(buildCmd, timeoutMs) {
   const parsed = await execToFile(buildCmd, timeoutMs, { prefix: "lcaudit-trivy-fs-" });
   if (!parsed.skipped) return parsed;
 
-  // Un buffer rebasado NO es un JSON corrupto: el fichero está bien y lo que falló es nuestro
-  // límite de captura. Confundirlos manda a diagnosticar Trivy, que no tiene nada que ver.
+  // Un buffer rebasado es un límite nuestro, no un JSON corrupto de Trivy.
   if (parsed.kind === "output-too-large") {
     return {
       skipped: true,
@@ -155,16 +135,13 @@ async function runTrivyCommand(buildCmd, timeoutMs) {
   }
 
   if (parsed.kind === "invalid-json") {
-    // Trivy escribe sus errores en texto plano en el mismo sitio: el principio del fichero suele
-    // ser el mensaje real, y por eso execToFile lo conserva en `reason`.
+    // Trivy escribe sus errores en el mismo fichero: el principio suele ser el mensaje real.
     const detail = parsed.reason || "";
     if (WALK_ERROR_RE.test(detail)) return walkErrorResult(detail);
     return { skipped: true, kind: "invalid-json", reason: detail };
   }
 
-  // 'error', 'timeout' y 'empty-output' llegan con el motivo real de execToFile. Una carpeta que
-  // no responde mata el escaneo entero, y su salida para el usuario no es la de "trivy no está
-  // instalado": aquí lo que toca es acotar la carpeta a auditar.
+  // Una carpeta que no responde tiene mensaje propio: la acción es acotar la carpeta, no reinstalar.
   const detail = parsed.reason || "unknown error";
   if (WALK_ERROR_RE.test(detail)) return walkErrorResult(detail);
   return { skipped: true, kind: parsed.kind || "error", reason: `Trivy terminó con error: ${detail}` };
@@ -172,8 +149,7 @@ async function runTrivyCommand(buildCmd, timeoutMs) {
 
 /** Carpeta que no responde: mensaje propio, porque la acción del usuario es distinta. */
 function walkErrorResult(stderr) {
-  // El primer path absoluto del mensaje. Un "with (\S+)" genérico capturaba "traversal", de
-  // "analyze with traversal:", que no dice nada.
+  // El primer path absoluto del mensaje (un patrón genérico capturaba "traversal").
   const m = stderr.match(/(\/[^\s:]+)/);
   return {
     skipped: true,
@@ -188,10 +164,7 @@ function walkErrorResult(stderr) {
   };
 }
 
-/**
- * Escaneo del HOME, y solo del HOME (los paquetes del sistema son lib/trivy-rootfs.js).
- * El commandExists sigue aquí porque audit-image también llama a Trivy y no se puede dar por hecho quién llama.
- */
+/** Escaneo del HOME. El commandExists va aquí porque audit-image también llama a Trivy. */
 async function runTrivyFs(opts = {}) {
   const available = await commandExists("trivy");
   if (!available) {
@@ -205,25 +178,20 @@ async function runTrivyFs(opts = {}) {
 
   const scanners = opts.scanners || "vuln";
 
-  // Si la carpeta la eligió el usuario va de una pasada: el ámbito lo acotó él y no hay que
-  // protegerlo de sus propias unidades de red.
+  // Si la carpeta la eligió el usuario, va de una pasada: el ámbito ya lo acotó él.
   return resolvedFrom === "config"
     ? await scanSingle(target, skipDirs, resolvedFrom, scanners)
     : await scanHomeByChildren(target, skipDirs, resolvedFrom, scanners);
 }
 
-/**
- * Secretos (claves, tokens, contraseñas) y configuraciones inseguras (Dockerfile, Kubernetes, Terraform…) en los
- * ficheros del mismo ámbito que runTrivyFs. Es una pasada aparte y no un escáner más en la de vulnerabilidades: si
- * esta se corta por tiempo, la otra no pierde su resultado, y cada una llega al informe con su propio estado.
- */
+/** Secretos y configuraciones inseguras en el mismo ámbito que runTrivyFs. Pasada aparte: si se corta,
+ *  la de vulnerabilidades no pierde su resultado. */
 async function runTrivySecrets(opts = {}) {
   return runTrivyFs({ skipDirs: SECRET_SKIP_DIRS, ...opts, scanners: "secret,misconfig" });
 }
 
-/** Orden de Trivy como array, sin shell. El "--" evita que una carpeta que empiece por "-" se lea como opción.
- *  Las pasadas de secretos usan la caché en memoria: así no compiten por el bloqueo de la caché en disco
- *  con la de vulnerabilidades y la de paquetes del sistema, que van en paralelo. */
+/** Orden de Trivy como array, sin shell; "--" evita que una carpeta que empiece por "-" se lea como opción.
+ *  Los secretos usan la caché en memoria para no competir por el bloqueo de la de disco. */
 function trivyFsArgs(file, target, skipArgs, scanners = "vuln") {
   const cache = scanners === "vuln" ? [] : ["--cache-backend", "memory"];
   return ["trivy", "fs", "--format", "json", "--quiet", "--scanners", scanners, ...cache, ...skipArgs, "-o", file, "--", target];
@@ -239,10 +207,10 @@ async function scanSingle(target, skipDirs, resolvedFrom, scanners = "vuln") {
   );
   if (parsed.skipped) return parsed;
 
-  // Las rutas de Trivy son relativas a lo escaneado: con la raíz se puede decir dónde está cada fichero.
+  // Las rutas de Trivy son relativas a lo escaneado: con la raíz se sabe dónde está cada fichero.
   for (const r of parsed.Results || []) r.__root = target;
 
-  // El dashboard enseña qué carpeta se auditó, así que la procedencia viaja con el resultado.
+  // El dashboard muestra qué carpeta se auditó.
   parsed.scan = {
     mode: "fs",
     scanners,
@@ -271,17 +239,13 @@ async function scanPool(items, skipArgs, scanners, timeout, n) {
   return out;
 }
 
-/** En absoluto: al escanear por hijos la raíz cambia en cada pasada y "go/pkg/mod" ya no casaría. */
+/** En absoluto: al escanear por hijos la raíz cambia en cada pasada. */
 function absSkipDirs(home, skipDirs) {
   return skipDirs.map((d) => (path.isAbsolute(d) || d.includes("*") ? d : path.join(home, d)));
 }
 
-/**
- * Una pasada por hijo de primer nivel. Con una sola invocación, un directorio que no responde (p. ej. CloudStorage/GoogleDrive)
- * aborta todo el escaneo y --skip-dirs no lo evita, porque Trivy recorre antes de filtrar (probado con cuatro variantes).
- * Por hijo, el fallo queda en su carpeta. Los hijos que no son almacenamiento local se descartan antes, vía local-fs.js.
- * A cambio, los ficheros sueltos en la raíz del home no se miran.
- */
+/** Una pasada por hijo de primer nivel: así un directorio que no responde solo falla él (--skip-dirs no lo evita).
+ *  Los hijos que no son almacenamiento local se descartan antes con local-fs.js. */
 async function scanHomeByChildren(home, skipDirs, resolvedFrom, scanners = "vuln") {
   const started = Date.now();
   const absSkip = absSkipDirs(home, skipDirs);
@@ -303,7 +267,7 @@ async function scanHomeByChildren(home, skipDirs, resolvedFrom, scanners = "vuln
     if (!entry.isDirectory()) continue;               // los sueltos se quedan sin mirar
     const child = path.join(home, entry.name);
 
-    // Mismo criterio que --skip-dirs, aplicado aquí porque a un hijo entero ni hace falta entrar.
+    // Mismo criterio que --skip-dirs, sin llegar a entrar en el hijo.
     if (absSkip.includes(child)) {
       skippedChildren.push({ name: entry.name, kind: "excluded", reason: "en la lista de exclusiones" });
       continue;
@@ -322,9 +286,7 @@ async function scanHomeByChildren(home, skipDirs, resolvedFrom, scanners = "vuln
   const timeout = isVuln ? CHILD_TIMEOUT_MS : SECRET_CHILD_TIMEOUT_MS;
   const porHijo = await scanPool(pendientes, skipArgs, scanners, timeout, isVuln ? 1 : SECRET_CONCURRENCY);
 
-  // Secretos: una carpeta que agota el tiempo se vuelve a intentar por sus subcarpetas. Medido en un home real:
-  // ~/Desktop, justo donde estaban los proyectos del usuario, no cabía entera en 3 minutos y se quedaba sin revisar.
-  // Los ficheros sueltos de su raíz se quedan sin mirar, como los del home.
+  // Secretos: una carpeta que agota el tiempo se reintenta por subcarpetas (sus ficheros sueltos no se miran).
   if (!isVuln) {
     for (const p of pendientes) {
       const hit = porHijo.get(p.name);
@@ -386,6 +348,18 @@ async function scanHomeByChildren(home, skipDirs, resolvedFrom, scanners = "vuln
       merged.Results.push(...(res.Results || []));
       rootFiles.push(name);
     }
+  }
+
+  // Si no se pudo analizar nada y hubo fallos, es un escaneo fallido, no un home limpio.
+  const fallidas = skippedChildren.filter((c) => c.kind === "error");
+  if (scanned.length === 0 && rootFiles.length === 0 && fallidas.length > 0) {
+    return {
+      skipped: true,
+      kind: "error",
+      reason:
+        `Trivy falló en todas las carpetas del home (${fallidas.length}). ` +
+        `Primer error, en ${fallidas[0].name}: ${fallidas[0].reason}`,
+    };
   }
 
   merged.scan = {

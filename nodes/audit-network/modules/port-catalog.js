@@ -1,12 +1,7 @@
 "use strict";
 
-/**
- * Severidad por puerto para un PC personal, con el mismo criterio que las de Lynis. "high" es riesgo inmediato (credenciales
- * en claro, escritorio remoto, puertos de backdoor), "medium" servicio legítimo expuesto sin necesidad e "info" lo normal en
- * un equipo de uso diario. Lo no catalogado sale "low". Datos puros, sin escaneo.
- * Los puertos de macOS (548, 5353, 7000) están abiertos en cualquier Mac de fábrica, por eso van a "info". El 8021 en macOS
- * es interno del sistema; en Linux no tiene uso estándar y en un perfil de servidor habría que subirlo.
- */
+// Severidad por puerto para un PC personal: high riesgo inmediato, medium expuesto sin necesidad, info normal.
+// Lo no catalogado sale "low".
 const PORT_CATALOG = {
   21:    { service: "FTP",        severity: "high" },
   23:    { service: "Telnet",     severity: "high" },

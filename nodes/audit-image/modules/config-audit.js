@@ -1,17 +1,7 @@
 "use strict";
 
-/**
- * Configuraciones inseguras de los contenedores en marcha, todo con `docker inspect`.
- *
- * En "high" va lo que da escalada de privilegios o expone credenciales: correr como root, porque
- * un proceso comprometido tiene UID 0 y desde ahí se intenta el escape al host, y los secretos en
- * variables de entorno, visibles para cualquier proceso del contenedor, para quien pueda hacer
- * `docker inspect` y además grabados en el historial de capas de la imagen.
- *
- * En "medium", lo que amplía la superficie sin comprometer nada por sí solo: publicar en 0.0.0.0
- * cuando casi siempre bastaría 127.0.0.1, y montar /var/run/docker.sock, que da control del
- * daemon del host y equivale en la práctica a root fuera del contenedor.
- */
+// Configuración insegura de los contenedores, con `docker inspect`.
+// high: root y secretos en variables de entorno; medium: puertos en 0.0.0.0 y docker.sock montado.
 
 const { execCommand }    = require("../../../lib/executor");
 const { createFinding }  = require("../../../lib/finding-schema");
@@ -22,12 +12,10 @@ const INSPECT_TIMEOUT_MS = 8000;
 const SENSITIVE_PATTERNS = ["PASSWORD", "PASSWD", "SECRET", "TOKEN", "CREDENTIAL", "API_KEY", "APIKEY",
   "PRIVATE_KEY", "ACCESS_KEY", "AUTH_KEY"];
 
-// Nombres que casan pero no guardan un secreto: huellas de claves públicas (las imágenes oficiales de PHP, Python o
-// Node las declaran en GPG_KEYS para verificar descargas) y la ruta a un fichero de Docker secrets, que es justo la
-// forma recomendada de pasar una contraseña.
+// Casan pero no son secretos: claves públicas (GPG_KEYS de las imágenes oficiales) y rutas *_FILE de Docker secrets.
 const NOT_SECRET_RE = /^(GPG_KEYS?|.*_KEYRING|.*PUBLIC_KEY.*)$|_FILE$/;
 
-/** null si el inspect falla: un contenedor que se para a mitad de auditoría no rompe el resto. */
+// null si el inspect falla; quien llama lo convierte en hallazgo de comprobación no realizada.
 async function inspect(id, format) {
   try {
     const out = await execCommand(
@@ -40,7 +28,17 @@ async function inspect(id, format) {
   }
 }
 
-/** Sobre el ["VAR=value", …] que devuelve `docker inspect --format "{{json .Config.Env}}"`. */
+// JSON de una lista; "null" vale (sin variables o sin montajes).
+function isJsonList(out) {
+  try {
+    const v = JSON.parse(out || "null");
+    return v === null || Array.isArray(v);
+  } catch (_) {
+    return false;
+  }
+}
+
+// Recibe el ["VAR=value", …] de `{{json .Config.Env}}` y devuelve los nombres sensibles.
 function findSensitiveEnvVars(envJson) {
   if (!envJson) return [];
   let envList;
@@ -62,26 +60,59 @@ function findSensitiveEnvVars(envJson) {
     .map(({ name }) => name);
 }
 
-/** IDs correlativos por tipo de hallazgo: IMG-CFG-001, IMG-CFG-002… */
+// Sufijo correlativo por contenedor: IMG-CFG-001-001, -002…
 function findingId(base, n) {
   return `${base}-${String(n + 1).padStart(3, "0")}`;
 }
 
-/** Los cuatro chequeos sobre un contenedor. El idx solo sirve para numerar los IDs. */
+// Comprobación no realizada: se informa, no se da por buena.
+function inspectFailedFinding(name, idx, checks, reason) {
+  return createFinding({
+    id:        findingId("IMG-CFG-SKIP", idx),
+    title:     `Configuración del contenedor ${name}: no se ha podido comprobar`,
+    severity:  "info",
+    evidence:  `No se ha podido leer la configuración del contenedor (${checks.join(", ")}): ${reason}. ` +
+               "Que no aparezcan hallazgos de esa parte no significa que esté bien configurado.",
+    fix:       "Vuelve a lanzar la auditoría. Si se repite, comprueba que Docker responde.\n" +
+               `$ docker inspect ${name}`,
+    category:  "image",
+    source:    "native",
+    isCommand: false,
+    skipped:   true,
+    kind:      "error",
+  });
+}
+
+// Los cuatro chequeos de un contenedor; idx solo numera los IDs.
 async function auditContainer(container, idx) {
   const findings = [];
   const name = container.name || container.id;
 
-  // En paralelo: son cuatro procesos `docker inspect` independientes.
+  // En paralelo: son tres `docker inspect` independientes.
   const [userOut, envOut, bindsOut] = await Promise.all([
     inspect(container.id, "{{.Config.User}}"),
     inspect(container.id, "{{json .Config.Env}}"),
     inspect(container.id, "{{json .HostConfig.Binds}}"),
   ]);
 
+  // Sin dato no se afirma nada, ni root ni lo contrario. Un JSON ilegible cuenta como sin dato.
+  const fallidas = [];
+  if (userOut === null)  fallidas.push("usuario");
+  if (envOut === null)   fallidas.push("variables de entorno");
+  if (bindsOut === null) fallidas.push("montajes");
+  const ilegibles = [];
+  if (envOut !== null && !isJsonList(envOut))     ilegibles.push("variables de entorno");
+  if (bindsOut !== null && !isJsonList(bindsOut)) ilegibles.push("montajes");
+  if (fallidas.length) {
+    findings.push(inspectFailedFinding(name, idx, [...fallidas, ...ilegibles],
+      ilegibles.length ? "docker inspect no respondió o devolvió datos ilegibles" : "docker inspect no respondió"));
+  } else if (ilegibles.length) {
+    findings.push(inspectFailedFinding(name, idx, ilegibles, "docker inspect devolvió datos que no se pueden leer"));
+  }
+
   const user = userOut ?? "";
-  if (user === "" || user === "root" || user === "0") {
-    // Parado, el riesgo es la configuración con la que volverá a arrancar; en marcha, un proceso con UID 0 ahora mismo.
+  if (userOut !== null && (user === "" || user === "root" || user === "0")) {
+    // Parado solo es la configuración con la que volverá a arrancar: por eso baja a medium.
     const enMarcha = container.running === true;
     findings.push(createFinding({
       id:       findingId("IMG-CFG-001", idx),
@@ -90,8 +121,7 @@ async function auditContainer(container, idx) {
         : `Contenedor ${name} configurado para ejecutarse como root (está parado)`,
       severity: enMarcha ? "high" : "medium",
       evidence: `Usuario del contenedor: ${user === "" ? "(no definido — default root)" : user}`,
-      // Gramática del fix, la misma que ya usan host y network: "## " abre rama,
-      // "$ " comando copiable, "> " nota, el resto es un paso.
+      // Gramática del fix: "## " rama, "$ " comando, "> " nota, el resto pasos.
       fix:      "Crea un usuario sin privilegios en el Dockerfile y declara USER antes del CMD.\n" +
                 "Reconstruye la imagen y vuelve a arrancar el contenedor.\n" +
                 "> El usuario tiene que existir dentro de la imagen: un USER que no está creado hace fallar el arranque.",
@@ -107,8 +137,7 @@ async function auditContainer(container, idx) {
       title:    `Variables de entorno sensibles en ${name}: ${sensitiveVars.join(", ")}`,
       severity: "high",
       evidence: `Variables con nombres sensibles detectadas: ${sensitiveVars.join(", ")}`,
-      // Dos caminos EXCLUYENTES según lo que haya dentro de la variable: encadenarlos
-      // en una lista los hacía pasar por pasos consecutivos.
+      // Dos ramas excluyentes según lo que contenga la variable.
       fix:      "## Si el valor es un secreto\n" +
                 "Móntalo con Docker secrets o con un gestor de secretos, y retíralo del Dockerfile.\n" +
                 "Rota el valor: el anterior ya está expuesto.\n" +
@@ -122,8 +151,7 @@ async function auditContainer(container, idx) {
   }
 
   if (container.ports && container.ports.includes("0.0.0.0:")) {
-    // El binding se cambia al arrancar el contenedor, en `docker run` o en Compose, no con
-    // comandos del host: por eso aquí no se anexa el fix de proceso.
+    // El binding se fija al arrancar el contenedor; por eso no se añade el fix de proceso del host.
     const portsFix =
       "## Si el servicio solo se usa desde el propio equipo\n" +
       "Publica el puerto únicamente en el bucle local y vuelve a arrancar el contenedor.\n" +
@@ -144,7 +172,7 @@ async function auditContainer(container, idx) {
   }
 
   let binds = [];
-  try { binds = JSON.parse(bindsOut || "[]"); } catch (_) { /* ignorar */ }
+  try { binds = JSON.parse(bindsOut || "[]"); } catch (_) { /* sin montajes legibles */ }
   const hasSock = Array.isArray(binds) &&
     binds.some((b) => typeof b === "string" && b.includes("/var/run/docker.sock"));
 
@@ -165,7 +193,7 @@ async function auditContainer(container, idx) {
   return findings;
 }
 
-/** Sin Docker devuelve el array vacío: quien avisa de su ausencia es el nodo, con un finding. */
+// Sin Docker devuelve []: el aviso de ausencia lo emite el nodo con IMG-DOCKER-OFF.
 async function auditDockerConfig(dockerInfo) {
   if (!dockerInfo || dockerInfo.skipped) return [];
 
@@ -176,7 +204,10 @@ async function auditDockerConfig(dockerInfo) {
     containers.map((c, i) => auditContainer(c, i))
   );
 
-  return results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+  return results.flatMap((r, i) => (r.status === "fulfilled"
+    ? r.value
+    : [inspectFailedFinding(containers[i].name || containers[i].id, i, ["usuario", "variables de entorno", "montajes"],
+        String((r.reason && r.reason.message) || r.reason || "error inesperado"))]));
 }
 
 module.exports = { auditDockerConfig, findSensitiveEnvVars };

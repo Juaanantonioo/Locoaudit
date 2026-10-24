@@ -1,16 +1,11 @@
 "use strict";
 
-/**
- * Inventario de imágenes y contenedores por CLI, no por el socket. El socket daría JSON sin
- * parsear, pero pide una librería con soporte de Unix sockets o un http.request con socketPath, y
- * con Docker Desktop en macOS y Windows el socket puede estar en rutas no estándar. La CLI se
- * comporta igual en los tres sistemas y con --format sale delimitada. Sin docker o sin daemon,
- * { skipped: true }: dentro de este nodo Docker es requisito, no herramienta opcional.
- */
+// Inventario de imágenes y contenedores por la CLI: se comporta igual en los tres sistemas, el socket no.
+// Sin docker o sin daemon devuelve { skipped, kind, reason }.
 
 const { execCommand, commandExists } = require("../../../lib/executor");
 
-/** Docker escribe "45.2MB", "1.2GB", "512kB" o "1.024 kB"; lo que no se reconozca vale 0. */
+// "45.2MB", "1.2GB", "512kB"… a bytes; lo que no se reconozca vale 0.
 function parseSizeBytes(sizeStr) {
   if (!sizeStr) return 0;
   const s = sizeStr.trim().replace(/\s+/g, "");
@@ -23,7 +18,7 @@ function parseSizeBytes(sizeStr) {
   return Math.round(value * (multipliers[unit] ?? 0));
 }
 
-/** Salida de `docker images --format "{{.ID}}|{{.Repository}}|{{.Tag}}|{{.Size}}|{{.CreatedAt}}"`. */
+// Salida de `docker images --format "{{.ID}}|{{.Repository}}|{{.Tag}}|{{.Size}}|{{.CreatedAt}}"`.
 function parseImages(stdout) {
   const images = [];
   for (const line of stdout.trim().split("\n")) {
@@ -41,7 +36,7 @@ function parseImages(stdout) {
   return images;
 }
 
-/** Salida de `docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}"`. */
+// Salida de `docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}"`.
 function parseContainers(stdout) {
   const containers = [];
   for (const line of stdout.trim().split("\n")) {
@@ -61,15 +56,14 @@ function parseContainers(stdout) {
   return containers;
 }
 
-/** { skipped: true } si falta el CLI o el daemon no contesta: son dos fallos distintos. */
+// Distingue CLI ausente (not-installed) de daemon que no contesta (daemon-down).
 async function getDockerInfo() {
   const available = await commandExists("docker");
   if (!available) {
     return { skipped: true, kind: "not-installed", reason: "Docker no está instalado en este equipo" };
   }
 
-  // La versión del motor ya se pedía para saber si el daemon contesta; se descartaba.
-  // Guardarla no cuesta una llamada más y es lo que permite reproducir el informe.
+  // Sirve para saber si el daemon contesta y se guarda para poder reproducir el informe.
   let serverVersion = null;
   try {
     serverVersion = String(await execCommand('docker info --format "{{.ServerVersion}}"', 10000)).trim() || null;
@@ -77,25 +71,28 @@ async function getDockerInfo() {
     return { skipped: true, kind: "daemon-down", reason: "Docker está instalado pero su servicio no responde" };
   }
 
+  // Si un listado falla se guarda el motivo: una lista vacía parecería "no hay nada".
   let images = [];
+  let imagesError = null;
   try {
     const imgOut = await execCommand(
       'docker images --format "{{.ID}}|{{.Repository}}|{{.Tag}}|{{.Size}}|{{.CreatedAt}}"',
       15000
     );
     images = parseImages(imgOut);
-  } catch (_) { /* devolver array vacío, no propagar */ }
+  } catch (e) { imagesError = String((e && e.message) || e || "sin detalle"); }
 
   let containers = [];
+  let containersError = null;
   try {
     const psOut = await execCommand(
       'docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}"',
       15000
     );
     containers = parseContainers(psOut);
-  } catch (_) { /* devolver array vacío, no propagar */ }
+  } catch (e) { containersError = String((e && e.message) || e || "sin detalle"); }
 
-  return { skipped: false, images, containers, serverVersion };
+  return { skipped: false, images, containers, serverVersion, imagesError, containersError };
 }
 
 module.exports = { getDockerInfo, parseSizeBytes };

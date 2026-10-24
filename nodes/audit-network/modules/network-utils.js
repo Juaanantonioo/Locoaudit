@@ -1,11 +1,10 @@
 "use strict";
 
-// Parar un servicio systemd con su .socket tiene una sola definición: duplicarla aquí acabaría
-// divergiendo de la de los fixes de proceso.
+// Las órdenes de parada salen de process-fix para no duplicarlas.
 const { systemdDisable, getFixForProcess, unitFor } = require("../../../lib/process-fix");
 const os = require("os");
 
-/** "80,443,8000-8080" a números ordenados; null si la cadena viene vacía. */
+// "80,443,8000-8080" a números ordenados; null si viene vacía.
 function parsePortsList(input) {
   const s = (input || "").trim();
   if (!s) return null;
@@ -31,7 +30,7 @@ function parsePortsList(input) {
   return Array.from(ports).sort((x, y) => x - y);
 }
 
-/** Targets separados por coma, punto y coma o salto de línea, sin duplicados. */
+// Objetivos separados por coma, punto y coma o salto de línea, sin duplicados.
 function parseTargets(input) {
   const raw = String(input || "")
     .split(/[\n,;]/)
@@ -40,12 +39,8 @@ function parseTargets(input) {
   return Array.from(new Set(raw));
 }
 
-/**
- * ¿Es `input` una lista de puertos válida para -p? Devuelve { ok: true, spec, count } o { ok: false, empty, reason }.
- * Antes iba tal cual a la línea de nmap, así que se valida y lo que no se entiende se rechaza, no se descarta.
- * Admite elementos separados por comas, cada uno un puerto o un rango (1-65535, inicio <= fin); sin prefijos T:/U:, nombres ni comodines.
- * `count` son los puertos distintos y de él sale el tiempo máximo del escaneo (scanTimeoutMs).
- */
+// Valida la lista para -p (va a la línea de nmap): lo que no se entiende se rechaza, no se descarta.
+// Devuelve { ok, spec, count } o { ok: false, empty, reason }; count alimenta scanTimeoutMs().
 function validatePortSpec(input) {
   const raw = String(input == null ? "" : input).trim();
   if (!raw) return { ok: false, empty: true, reason: "No se ha indicado ningún puerto." };
@@ -89,10 +84,7 @@ function validatePortSpec(input) {
   return { ok: true, spec, count };
 }
 
-/**
- * Tiempo máximo de nmap, sin contar NSE. Rápido y estándar conservan los valores medidos (90 s y 240 s); completo y
- * personalizado escalan a 62 ms por puerto (la proporción medida contra un equipo con cortafuegos). Nunca menos de 90 s.
- */
+// Tiempo máximo de nmap sin NSE: 62 ms por puerto, medido contra un equipo con cortafuegos.
 const MS_PER_PORT = 62;
 function scanTimeoutMs(scanMode, portCount) {
   if (scanMode === "rapido")   return 90000;
@@ -101,13 +93,8 @@ function scanTimeoutMs(scanMode, portCount) {
   return Math.max(90000, n * MS_PER_PORT);
 }
 
-/**
- * ¿Es `input` la dirección IPv4 de UN equipo? Devuelve { ok: true, ip } o { ok: false, reason }.
- * Un rango mezclaría en parseNmapXml() los puertos de varios equipos como si fueran de uno, y el texto sin filtrar era
- * una orden más para la shell. Solo admite cuatro octetos decimales 0-255 sin ceros a la izquierda (nmap lee `010` como octal).
- * Rechaza 0.0.0.0/8, multidifusión, reservada (incluye 255.255.255.255) y la red o difusión de una subred propia.
- * No hay IPv6 porque el comando no lleva -6. Esta función decide; audit-network.html solo pinta el campo.
- */
+// Solo una IPv4 de un equipo de una red propia: el valor acaba en la línea de nmap y un rango mezclaría hosts.
+// Esta función decide; audit-network.html solo marca el campo. Sin ceros a la izquierda (nmap los lee en octal).
 function validateTarget(input, interfaces = os.networkInterfaces()) {
   const raw = String(input == null ? "" : input).trim();
   if (!raw) {
@@ -143,16 +130,20 @@ function validateTarget(input, interfaces = os.networkInterfaces()) {
     return { ok: false, reason: `${ip} es una dirección reservada o de difusión, no la de un equipo.` };
   }
 
-  // Red y difusión de las subredes propias. /31 y /32 no tienen ninguna de las dos (RFC 3021).
+  // /31 y /32 no tienen dirección de red ni de difusión (RFC 3021).
   const toInt = (parts) => parts.reduce((acc, o) => ((acc << 8) | o) >>> 0, 0);
   const target = toInt(n);
+  let inOwnSubnet = false;
   for (const [name, addrs] of Object.entries(interfaces || {})) {
     for (const addr of addrs || []) {
       if (addr.family !== "IPv4" && addr.family !== 4) continue;
       if (addr.internal) continue;
       const mask = toInt(addr.netmask.split(".").map(Number));
+      // Máscara 0.0.0.0 haría de cualquier IP "su red".
+      if (mask === 0) continue;
+      const network = (toInt(addr.address.split(".").map(Number)) & mask) >>> 0;
+      if (((target & mask) >>> 0) === network) inOwnSubnet = true;
       if (mask >= 0xFFFFFFFE) continue;
-      const network   = (toInt(addr.address.split(".").map(Number)) & mask) >>> 0;
       const broadcast = (network | (~mask >>> 0)) >>> 0;
       if (target === network) {
         return { ok: false, reason: `${ip} es la dirección de la red ${addr.cidr || ip} (interfaz ${name}), no la de un equipo.` };
@@ -163,28 +154,32 @@ function validateTarget(input, interfaces = os.networkInterfaces()) {
     }
   }
 
+  // Ser privada no basta: tiene que ser loopback o de una subred de este equipo.
+  if (n[0] !== 127 && !inOwnSubnet) {
+    return {
+      ok: false,
+      reason: `${ip} no está en la misma red que este equipo. Solo se auditan equipos de una red a la que ` +
+              "esté conectado este equipo.",
+    };
+  }
+
   return { ok: true, ip };
 }
 
-/** Decide si el objetivo es este equipo, y con eso si se ejecutan lsof y el descubrimiento. */
+// Si es este equipo se usa lsof y se omite el descubrimiento.
 function isLocalTarget(target) {
   const t = (target || "").trim().toLowerCase();
   return t === "127.0.0.1" || t === "localhost" || t === "::1";
 }
 
-/** URL base, con el puerto omitido si es el que corresponde al protocolo. */
+// URL base, sin el puerto si es el del protocolo.
 function toBaseUrl(protocol, host, port) {
   const defaultPort = protocol === "https" ? 443 : 80;
   const showPort = port !== defaultPort;
   return `${protocol}://${host}${showPort ? ":" + port : ""}`;
 }
 
-/**
- * Las entradas de FTP y telnet para macOS de lib/process-fix.js —fichero que no se edita desde
- * aquí— tienen esta forma exacta: comando en la primera línea y explicación detrás del salto.
- * Se traducen a "paso + $ comando + > nota" sin adivinar nada: el troceo es por \n, no por
- * el aspecto del texto.
- */
+// Los textos de macOS de process-fix traen el comando en la primera línea y la nota detrás.
 function comandoYNota(texto) {
   const [cmd, ...resto] = String(texto || "").split("\n").map((l) => l.trim()).filter(Boolean);
   const out = ["Identifica el servicio real y deshabilítalo:", `$ ${cmd}`];
@@ -192,21 +187,14 @@ function comandoYNota(texto) {
   return out.join("\n");
 }
 
-/**
- * Fix por puerto conocido y plataforma; null si no hay uno específico.
- * Gramática de los `fix` que lee el dashboard: "## " rama excluyente, "$ " comando, "> " nota sin numerar, el resto pasos.
- * Los subtítulos llevan el servicio delante porque buildPortFix() concatena este texto tras su propia pareja de ramas.
- * Límite conocido: para 80, 443, 3306, 5432, 6379 y 27017 solo win32 tiene rama propia, y macOS recibe los comandos de Linux.
- */
+// Fix por puerto y plataforma, o null. Gramática del dashboard: "## " rama, "$ " comando, "> " nota, resto pasos.
+// Los subtítulos llevan el servicio porque buildPortFix() los concatena tras sus propias ramas.
 function getFixForPort(port, platform, pkgManager) {
   const plat = platform || process.platform;
   const m = pkgManager || null;
-  // Las órdenes salen de process-fix.js, la misma tabla que usa el fix por proceso. Antes este
-  // switch repetía el texto a mano y la copia se desincronizó: macOS recibía las órdenes de Linux
-  // (systemctl, /etc/mysql) en los puertos 80, 443, 3306, 5432, 6379 y 27017.
+  // Las órdenes salen de process-fix.js, la misma tabla que el fix por proceso.
   const lines = (texto) => String(texto).split("\n").map((l) => l.trim()).filter(Boolean);
-  // A la gramática del dashboard: una línea que empieza por sudo es el comando del paso; "texto:
-  // sudo …" es un paso con su comando; la primera línea sin comando es el paso; el resto, notas.
+  // "sudo …" es comando, "texto: sudo …" paso con comando, la primera línea el paso y el resto notas.
   const cmdAndNotes = (texto) => {
     const out = [];
     lines(texto).forEach((l, i) => {
@@ -226,10 +214,8 @@ function getFixForPort(port, platform, pkgManager) {
                "Desactiva el servicio OpenSSH en Servicios del sistema (services.msc → OpenSSH SSH " +
                "Server → Detener y deshabilitar).";
       }
-      // PasswordAuthentication no sin una clave ya configurada deja al usuario fuera del equipo:
-      // la versión anterior lo recomendaba sin avisar. `sshd -T` muestra la configuración
-      // efectiva, que es la que cuenta: un fichero de /etc/ssh/sshd_config.d/ puede imponerse
-      // al principal.
+      // Sin una clave ya configurada, `PasswordAuthentication no` deja fuera al usuario: por eso se avisa.
+      // `sshd -T` muestra la configuración efectiva, incluida la de sshd_config.d/.
       const harden = [
         "Edita /etc/ssh/sshd_config → PermitRootLogin no.",
         "Si ya entras con clave SSH, añade PasswordAuthentication no. Sin una clave configurada, ese cambio te dejaría sin acceso.",
@@ -266,8 +252,7 @@ function getFixForPort(port, platform, pkgManager) {
                "FileZilla Server): identifícalo con netstat -ano | findstr :21.";
       }
       if (plat === "darwin") {
-        // macOS no trae servidor FTP, así que el label real se desconoce: ver process-fix.js.
-        // Ese texto tiene el comando en la 1ª línea y la explicación detrás del salto.
+        // macOS no trae servidor FTP, así que no se conoce el label real.
         return "## FTP: si no lo necesitas\n" + comandoYNota(getFixForProcess("vsftpd", "darwin"));
       }
       return "## FTP: si no lo necesitas\n" +
@@ -330,8 +315,7 @@ function getFixForPort(port, platform, pkgManager) {
       return ["## MongoDB: limita el acceso", ...cmdAndNotes(getFixForProcess("mongod", plat, m))].join("\n");
 
     default:
-      // La guía genérica la arma buildPortFix() en el normalizador, con el bind real y el
-      // proceso detectado. Repetirla aquí daba dos versiones divergentes de los mismos pasos.
+      // La guía genérica la arma buildPortFix() con el bind y el proceso reales.
       return null;
   }
 }

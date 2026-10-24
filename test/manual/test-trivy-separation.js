@@ -1,13 +1,8 @@
 "use strict";
 
 /**
- * test-trivy-separation.js — La carpeta personal y los paquetes del sistema son DOS auditorías independientes.
- *
- * Historia: un `return runTrivyRootfs()` anterior a resolver el objetivo hacía que marcar "Analizar paquetes del sistema"
- * dejara de auditar la carpeta personal y anulara "Carpeta a auditar". mergeScans() lo arregló mezclando los `Results`
- * de los dos escaneos en un solo array, y ahora son dos módulos con dos entradas del despacho y dos huecos en `raw`.
- * Este fichero fija que trivy-fs no vuelva a saber nada de los paquetes del sistema; la prueba de extremo a extremo
- * está en test-audit-host-payload.js, secciones 5 y 6.
+ * test-trivy-separation.js — La carpeta personal y los paquetes del sistema son dos auditorías independientes.
+ * Fija que trivy-fs no sepa nada de los paquetes del sistema (extremo a extremo: test-audit-host-payload.js, 5 y 6).
  * Uso: node test/manual/test-trivy-separation.js
  */
 
@@ -36,8 +31,7 @@ ok(typeof trivyRootfs.runTrivyRootfs === "function", "trivy-rootfs exporta runTr
 ok(typeof trivyRootfs.systemPackagesSupport === "function",
    "systemPackagesSupport vive ahora junto al módulo cuyo resultado interpreta");
 
-// El fichero, no solo los exports: una función privada acoplada haría el mismo
-// daño sin aparecer en module.exports.
+// Se mira el fichero entero, no solo los exports.
 const fs = require("fs");
 const path = require("path");
 const fuente = fs.readFileSync(
@@ -53,8 +47,7 @@ ok(!/\bsystemPackages\b/.test(codigo),
 
 console.log("\n── 2 · Los dos objetivos son fijos y distintos ───────────────────\n");
 
-// El del sistema es siempre "/" y no lo elige el usuario: el campo del nodo
-// acota la CARPETA PERSONAL, y confundirlos fue el bug original.
+// El del sistema es siempre "/"; el campo del nodo solo acota la carpeta personal.
 ok(trivyRootfs.ROOTFS_SKIP_DIRS.includes("/proc") &&
    trivyRootfs.ROOTFS_SKIP_DIRS.includes("/sys") &&
    trivyRootfs.ROOTFS_SKIP_DIRS.includes("/dev"),
@@ -78,24 +71,20 @@ ok(sinConfig.target !== "/",
 
 console.log("\n── 3 · Un módulo caído no arrastra al otro ───────────────────────\n");
 
-// Ya no hay ningún código que combine los dos resultados, así que la
-// independencia es estructural. Lo que sí se puede comprobar aquí es que el
-// intérprete del estado del sistema no mira NADA del escaneo de la carpeta.
+// El intérprete del estado del sistema no mira nada del escaneo de la carpeta.
 const homeRoto = { skipped: true, kind: "error", reason: "no se pudo leer el home: EACCES" };
 const sistemaOk = { os: { family: "debian", name: "13.6" }, pkgNum: 2056, unfixed: { total: 4078 } };
 
 ok(trivyRootfs.systemPackagesSupport("linux", sistemaOk, { enabled: true }) === "scanned",
    "el sistema sale 'scanned' aunque el escaneo de la carpeta haya fallado");
 
-// Y al revés: el resultado de la carpeta no puede colarse como si fuera el del
-// sistema. Un skipped del home tiene kinds ('error') que aquí significan otra cosa.
+// Y al revés: el resultado de la carpeta no se toma por el del sistema.
 ok(trivyRootfs.systemPackagesSupport("linux", homeRoto, { enabled: true }) === "failed",
    "un resultado fallido nunca se lee como análisis conseguido");
 
 console.log("\n── 4 · Agrupar lo corregible: por PAQUETE, no por CVE ────────────\n");
 
-// Cinco CVE corregidos en la misma versión son UNA orden para el usuario, no
-// cinco tarjetas idénticas.
+// Cinco CVE corregidos en la misma versión dan una sola orden.
 const vulns = [
   { PkgName: "openssl", InstalledVersion: "3.0.11-1", FixedVersion: "3.0.14-1", Severity: "MEDIUM", VulnerabilityID: "CVE-1" },
   { PkgName: "openssl", InstalledVersion: "3.0.11-1", FixedVersion: "3.0.15-1", Severity: "CRITICAL", VulnerabilityID: "CVE-2" },
@@ -110,8 +99,7 @@ const openssl = grupos.find((g) => g.pkg === "openssl");
 ok(openssl && openssl.cves.length === 3, "el grupo de openssl conserva sus 3 CVE como evidencia");
 ok(openssl && openssl.maxSeverity === "CRITICAL",
    "la severidad del grupo es la MÁXIMA: la urgencia la marca la peor", openssl && openssl.maxSeverity);
-// Quedarse con la primera FixedVersion dejaría CVE-2 sin corregir después de
-// actualizar, y la tarjeta afirmaría lo contrario.
+// Se toma la FixedVersion que corrige todos los CVE, no la primera.
 ok(openssl && openssl.fixedVersion === "3.0.15-1",
    "la versión propuesta es la que cubre a TODOS los CVE del grupo, no la primera",
    openssl && openssl.fixedVersion);
@@ -129,10 +117,7 @@ ok(dosVersiones.length === 2,
 
 console.log("\n── 5 · Los ids no colisionan ─────────────────────────────────────\n");
 
-// El id lleva el NOMBRE del paquete para sobrevivir entre ejecuciones, pero el
-// nombre solo no es único: el mismo paquete puede estar instalado en dos
-// versiones. Sin desambiguar, los dos findings salían con el mismo id y el
-// dashboard mostraba uno pisando al otro.
+// El id lleva el nombre del paquete y se desambigua si hay dos versiones instaladas.
 const { normalizeHost } = require("../../lib/normalizer");
 const conRepetido = normalizeHost({
   trivyRootfs: {
@@ -153,8 +138,7 @@ ok(ids.includes("HOST-OS-PKG-openssl"),
 ok(ids.filter((i) => i.startsWith("HOST-OS-PKG-libfoo")).length === 2,
    "el que aparece dos veces se desambigua con la versión instalada", JSON.stringify(ids));
 
-// Y lo corregible SÍ es accionable: sale de la base de datos del gestor, no de
-// un lockfile, así que eleva el riesgo global y trae comando.
+// Lo corregible sí es accionable: eleva el riesgo global y trae comando.
 const { summarize } = require("../../lib/severity-map");
 const resumen = summarize(conRepetido);
 ok(resumen.maxSeverity === "critical",
@@ -165,8 +149,7 @@ ok(conRepetido.every((f) => f.command && f.command.includes("apt")),
 
 console.log("\n── 6 · UNKNOWN es un valor real y no se colapsa ──────────────────\n");
 
-// Trivy usa UNKNOWN de verdad (94 casos en la Debian 13.6 de referencia).
-// Convertirlo en LOW inventaría una valoración que nadie ha hecho.
+// UNKNOWN de Trivy no se convierte en LOW.
 const reparto = trivyRootfs.severityBreakdown([
   { Severity: "CRITICAL" }, { Severity: "LOW" }, { Severity: "UNKNOWN" }, { Severity: "UNKNOWN" }, {},
 ]);

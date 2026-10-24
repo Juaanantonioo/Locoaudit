@@ -2,7 +2,7 @@
 
 /**
  * test-nse-parse.js — El mini-parser de NSE lee lo que nmap emite de verdad.
- * Los fixtures son capturas reales de nmap 7.99, no XML escrito a mano, porque el diseño depende de la FORMA del XML:
+ * Los fixtures son capturas reales de nmap 7.99:
  *   scan-nse-ssh.xml  vulners, ssl-cert, ssh2-enum-algos y banner contra 127.0.0.1 (OpenSSH 10.3), con 11 CVE y su CVSS.
  *   scan-nse-tls.xml  los cinco scripts contra un `openssl s_server` con certificado autofirmado (ssl-cert y ssl-enum-ciphers).
  * Uso: node test/manual/test-nse-parse.js
@@ -67,8 +67,7 @@ ok(decodeXmlEntities("a&#10;b") === "a\nb", "&#10; decimal → salto de línea")
 ok(decodeXmlEntities("&lt;a&gt; &quot;b&quot; &apos;c&apos; &amp;") === "<a> \"b\" 'c' &",
    "las cinco predefinidas");
 
-// Una sola pasada, no cinco encadenadas: encadenar volvería a decodificar lo ya decodificado y
-// este texto —que es el literal "&lt;"— acabaría siendo "<".
+// Una sola pasada: encadenar decodificaría dos veces y el literal "&lt;" acabaría en "<".
 ok(decodeXmlEntities("&amp;lt;") === "&lt;", "no se decodifica dos veces");
 ok(decodeXmlEntities("&#x110000;") === "&#x110000;", "código fuera de rango se deja tal cual");
 ok(decodeXmlEntities(null) === "" && decodeXmlEntities(undefined) === "", "null/undefined → \"\"");
@@ -83,8 +82,7 @@ ok(sshScripts.map((s) => s.id).join(",") === "vulners,ssh2-enum-algos,banner",
    "salen los tres scripts que produjeron algo",
    sshScripts.map((s) => s.id).join(","));
 
-// ssl-cert iba en el comando y NO está en el XML: su portrule no casó con un puerto SSH. Ese
-// hueco es justo lo que appliesTo() tiene que explicar, y por eso no se lee como "limpio".
+// ssl-cert no está en el XML porque su portrule no casó con SSH: no se lee como "limpio".
 ok(findScript(sshScripts, "ssl-cert") === null,
    "ssl-cert no aparece: el portrule no casó, no es un hallazgo vacío");
 
@@ -101,8 +99,7 @@ ok(elemValue(first, "cvss") === "9.4",            "cvss del primero");
 ok(elemValue(first, "type") === "cve",            "type del primero");
 ok(elemValue(first, "is_exploit") === "false",    "is_exploit del primero");
 
-// El 9.4 es el que convierte un puerto en crítico. Si esto deja de salir, el criterio de
-// aceptación 1 deja de tener sujeto.
+// El 9.4 es el que convierte un puerto en crítico.
 const cvsss = cpeTable.children.map((t) => parseFloat(elemValue(t, "cvss")));
 ok(Math.max(...cvsss) === 9.4, "el CVSS máximo del grupo es 9.4", String(Math.max(...cvsss)));
 ok(cvsss.every((n) => Number.isFinite(n)), "los 11 traen CVSS numérico");
@@ -133,8 +130,7 @@ ok(kex.length === 10, "10 algoritmos de intercambio", String(kex.length));
 ok(kex.includes("curve25519-sha256"), "un valor concreto de la lista");
 ok(elemList(tablesByKey(ssh2, "mac_algorithms")[0]).length > 0, "la lista de MAC no viene vacía");
 
-// La distinción entre lista y diccionario es la forma del dato: los hijos de estas tablas NO
-// llevan key, y perder eso sería perder la diferencia.
+// Lista y diccionario se distinguen porque los hijos de estas tablas no llevan key.
 ok(tablesByKey(ssh2, "kex_algorithms")[0].children.every((c) => c.key === null),
    "los elementos de una lista no llevan key");
 
@@ -155,12 +151,10 @@ const cert = findScript(tlsScripts, "ssl-cert");
 ok(cert !== null && elemValue(cert, "sig_algo") !== "", "ssl-cert trae su algoritmo de firma");
 ok(tablesByKey(cert, "validity").length === 1, "y su tabla de vigencia");
 
-// sslv2 iba en el comando y no salió: el servidor no lo soporta. Es el caso "aplicaba y no hubo
-// respuesta" de una fuente 'target', que NO se puede leer como limpio.
+// sslv2 no salió (el servidor no lo soporta): "aplicaba y no hubo respuesta" no es limpio.
 ok(findScript(tlsScripts, "sslv2") === null, "sslv2 no produjo nada contra un servidor moderno");
 
-// -sV mete sus propios scripts en el XML sin que nadie se lo pida. El parser no puede
-// atragantarse con ellos ni confundirlos con los nuestros.
+// -sV añade sus propios scripts al XML; no se confunden con los nuestros.
 ok(findScript(tlsScripts, "fingerprint-strings") !== null,
    "fingerprint-strings, que lo emite -sV y no está en nuestra lista, se parsea sin romper");
 ok(!NSE_SCRIPT_IDS.includes("fingerprint-strings"),
@@ -218,8 +212,7 @@ ok(sshAlgoSeverity("AES256-CBC") === "low", "y sin depender de las mayúsculas")
 ok(sshAlgoSeverity("curve25519-sha256") === "info", "lo actual es inventario, no hallazgo");
 ok(sshAlgoSeverity("") === "info" && sshAlgoSeverity(null) === "info", "vacío no rompe");
 
-// El techo es la decisión, no un detalle: en SSH ningún algoritmo llega a 'high' porque hace
-// falta un cliente que lo elija. Si alguien mete un 'high' aquí, esto se pone rojo.
+// En SSH ningún algoritmo llega a 'high': hace falta un cliente que lo elija.
 ok(Object.values(SSH_WEAK_ALGOS).every((s) => s === "medium" || s === "low"),
    "ningún algoritmo SSH llega a high: el riesgo depende del cliente");
 
@@ -228,8 +221,7 @@ ok(TLS_GRADE_SEVERITY.A === "info" && TLS_GRADE_SEVERITY.B === "low" &&
    TLS_GRADE_SEVERITY.E === "high" && TLS_GRADE_SEVERITY.F === "high",
    "la tabla TLS A-F conserva sus seis valores");
 
-// 'unknown' no es un nivel de riesgo: es "no se pudo comprobar", y darle severidad sería
-// convertir un fallo de la herramienta en un dato.
+// 'unknown' significa "no se pudo comprobar" y no lleva severidad.
 ok(!("unknown" in TLS_GRADE_SEVERITY), "'unknown' no tiene severidad asignada");
 
 // La nota que sale del XML real tiene que existir en la tabla.
@@ -336,16 +328,7 @@ ok(Object.values(e22).concat(Object.values(e14443))
    "solo hay tres estados, y ninguno es 'clean'");
 
 // ── 11. Canario de vulners ───────────────────────────────────────────────────
-/**
- * Los números que descartaron la sonda de red, medidos a mano contra vulners.com el 2026-09-13 (curl, sin proxy). Se guardan
- * aquí porque ningún test del repositorio sale a internet.
- *   GET https://vulners.com/api/v3/burp/software/?software=cpe:/a:openbsd:openssh:7.4&version=7.4&type=cpe
- *   sin User-Agent                  → HTTP 403, "Just a moment..." (reto anti-bot)
- *   User-Agent: LoCoAudit/1.0 (...) → HTTP 403, el mismo reto
- *   User-Agent: Vulners NMAP Plugin 1.7 → HTTP 200, {"result":"OK"}, 45.820 bytes
- * Igual en /api/v3/search/id/ y /api/v3/burp/softwareapi/. La única sonda posible era suplantar al plugin de nmap, así
- * que se descartó y solo queda la inferencia.
- */
+// Sin sonda de red a Vulners (exigiría suplantar al plugin de nmap): solo se infiere del escaneo.
 console.log("\n11. canario");
 
 const PORTS_CON_CVE = [{ port: 22, version: "OpenSSH 10.3", nse: sshScripts }];
@@ -372,9 +355,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   const rApagado = runCanary(PORTS_CON_VER, { hasVersion, nseEnabled: false });
   ok(rApagado.state === "not-run", "con NSE apagado el canario ni se plantea la pregunta");
 
-  // El coste de no tener sonda, dicho en el informe y no solo en un comentario: un equipo al día
-  // cae aquí, y quien lo lea tiene que entender por qué su equipo bien mantenido sale "sin
-  // comprobar" en vez de limpio.
+  // Sin sonda, un equipo al día sale "sin comprobar" y el informe explica por qué.
   ok(/equipo\s+al día/.test(CANARY_DETAIL.unconfirmed) &&
      /resultado ESPERADO/.test(CANARY_DETAIL.unconfirmed),
      "el texto de 'unconfirmed' explica que un equipo actualizado cae justo ahí");
@@ -401,8 +382,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   // ── 12. El comando ─────────────────────────────────────────────────────────
   console.log("\n12. buildScanCommand");
 
-  // La línea EXACTA de antes de este trabajo. Escrita entera y a mano a propósito: si se
-  // derivara de la función bajo prueba, el test aprobaría cualquier cambio.
+  // Línea exacta escrita a mano: derivarla de la función bajo prueba aprobaría cualquier cambio.
   const ANTES_SIN_IFACE = "nmap -sV -T4 -Pn --max-retries 2  -p 1-3000 -oX - 127.0.0.1";
   const ANTES_CON_IFACE = "nmap -sV -T4 -Pn --max-retries 2 -e en0 -p 1-1024 -oX - 192.168.0.30";
 
@@ -423,8 +403,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   ok(!/--script-timeout/.test(conNse),
      "sin --script-timeout: un script matado por timeout se vuelve indistinguible de uno sin hallazgos");
 
-  // El parser del wrapper tiene que traer lo que la aplicabilidad necesita, o appliesTo decide
-  // a ciegas. Es el enganche entre el paso 2 y el paso 7, y se comprueba sobre captura real.
+  // El parser del wrapper trae lo que appliesTo necesita (sobre captura real).
   const puertosTls = parseNmapXml(fixture("scan-nse-tls.xml"));
   ok(puertosTls[0].tunnel === "ssl",
      "el wrapper extrae tunnel=\"ssl\" pese al servicefp lleno de barras", JSON.stringify(puertosTls[0].tunnel));
@@ -440,8 +419,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   // ── 13. Los findings ───────────────────────────────────────────────────────
   console.log("\n13. lib/normalizer: de resumen NSE a findings");
 
-  // Se parte del XML real y se atraviesa TODA la cadena —parser, extractor, normalizador—,
-  // porque los fallos que importan viven en las juntas, no dentro de cada pieza.
+  // Cadena completa sobre el XML real: parser, extractor y normalizador.
   const conResumen = (xml, canaryOk) => {
     const puertos = parseNmapXml(fixture(xml));
     for (const p of puertos) p.nseSummary = summarizePort(p, { canaryOk });
@@ -459,11 +437,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
      "y su severidad es la del peor CVE (9.4), no la media de los once", vulns[0].severity);
   ok(vulns[0].id === "NET-VULN-001" && vulns[0].category === "network" && vulns[0].source === "nmap",
      "con id, categoría y fuente del esquema canónico");
-  // La evidencia ya NO vuelca los CVE uno a uno: los pinta la tabla del hallazgo desde
-  // `vulnerabilities`, y repetirlos obligaba a leer la misma lista dos veces. Lo que la
-  // frase sigue teniendo que decir: cuántos son, cuánto puntúa el peor, y que de cada
-  // uno no hay descripción —sin esa última frase, una tabla de identificadores sin
-  // texto se lee como un dato que falta por cargar—.
+  // Los CVE van en la tabla; la evidencia dice cuántos son, el peor CVSS y que no hay descripción.
   ok(/vulners\.com devuelve 11 CVE para la versión anunciada/.test(vulns[0].evidence),
      "la evidencia dice cuántos CVE son y quién los devuelve");
   ok(/el más grave puntúa 9\.4/.test(vulns[0].evidence),
@@ -563,9 +537,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   ok(ids.includes("NET-VULN") && ids.includes("NET-SVC"), "y detrás va lo de NSE", ids.join(" "));
   ok(conNseF.every((f) => f.scope === "network"), "todo sale sellado con su ámbito");
 
-  // El puerto vale lo que vale el puerto. Hay 11 CVE y uno de 9.4 en ese mismo servicio, y aun
-  // así el NET-PORT no se mueve: heredar la severidad de los CVE convertiría "SSH abierto" en
-  // crítico por un fallo que el backporting quizá ya corrigió.
+  // El NET-PORT no hereda la severidad de los CVE del servicio.
   const port22    = conNseF.find((f) => f.id.startsWith("NET-PORT"));
   const port22Sin = sinNse.find((f) => f.id.startsWith("NET-PORT"));
   ok(port22.severity === port22Sin.severity,
@@ -583,12 +555,8 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
 
   // ── 14. El cableado del nodo y su casilla ──────────────────────────────────
   /**
-   * Estas comprobaciones leen el FUENTE del nodo y de su diálogo, no su comportamiento: un nodo
-   * de Node-RED no se puede instanciar fuera de Node-RED, y la validación de verdad es la
-   * auditoría real. Lo que cubren es lo que una prueba manual no pilla porque "parece que va":
-   * que el defecto siga apagado, que el presupuesto de tiempo se SUME, y que la consulta a Vulners
-   * siga escrita dentro de la casilla. Son las tres cosas que se deshacen solas en una limpieza
-   * de seis meses.
+   * Comprobaciones sobre el fuente del nodo y su diálogo: el defecto apagado, el presupuesto
+   * de tiempo sumado y la consulta a Vulners escrita dentro de la casilla.
    */
   console.log("\n14. nodo y diálogo");
 
@@ -602,9 +570,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   ok(/config\.nseEnabled === true \|\| config\.nseEnabled === "true"/.test(fuenteNodo),
      "y el nodo la lee con el mismo patrón estricto que forceScan, sin colar un string vacío");
 
-  // El presupuesto se suma. Si alguien lo cambia por una sustitución, los límites de
-  // scanTimeoutMs() dejan de cubrir lo que fueron calibrados para cubrir y el escaneo de puertos
-  // se corta.
+  // El presupuesto se suma a scanTimeoutMs(), no lo sustituye.
   ok(/scanTimeoutMs\(scanMode,[^)]*\)\s*\+\s*\(nseEnabled \? nseTimeout : 0\)/.test(fuenteNodo),
      "el tiempo de los scripts se SUMA al del modo, no lo sustituye");
 
@@ -618,8 +584,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   ok(/nseScripts = \[\.\.\.nseAvailability\.available\]/.test(fuenteNodo),
      "y solo se le pide a nmap lo que ese nmap tiene: un nombre inexistente aborta el escaneo entero");
 
-  // La consulta va DENTRO del texto que se marca. Se comprueba sobre el <label> de la casilla, no
-  // sobre el fichero entero: una advertencia en un párrafo aparte no cuenta, porque no se lee.
+  // La consulta tiene que estar dentro del <label> de la casilla, no en un párrafo aparte.
   const etiqueta = fuenteHtml.match(
     /<label for="node-input-nseEnabled"[\s\S]*?<\/label>/);
   ok(etiqueta && /Vulners/i.test(etiqueta[0]) && /base de datos/.test(etiqueta[0]),

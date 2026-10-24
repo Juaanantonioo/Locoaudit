@@ -2,12 +2,7 @@
 
 /**
  * test-declared-severity.js — Los hallazgos 'declared' de host no elevan el riesgo.
- *
- * Trivy leía lockfiles empaquetados dentro de programas de terceros y los presentaba con su CVSS: en macOS, 96 hallazgos
- * 'declared' y RIESGO CRÍTICO por el yarn.lock de una extensión de VS Code de 2019. Ese CVSS describe la vulnerabilidad
- * si se ejecutara, no el estado del equipo, así que queda fuera del riesgo global.
- * El contraste es la mitad del test: en una imagen Docker 'declared' significa lo contrario. Los CVE de paquetes del SO
- * llegan sin PkgPath (0 de 169 en debian:12 con trivy 0.72.0) y se marcan 'declared' aunque estén instalados. Ahí sí elevan.
+ * Un lockfile de un programa de terceros no describe el equipo; en imágenes Docker, en cambio, sí elevan.
  * Uso: node test/manual/test-declared-severity.js (sin framework; sale con 1 si falla)
  */
 
@@ -166,13 +161,7 @@ ok(s96.actionable.total + s96.informative.total === 96,
 
 console.log("\n── 4 · Clasificación por Class: os-pkgs vs lang-pkgs ─────────────\n");
 
-// Trivy NO rellena PkgPath en paquetes del SO. Medido con trivy 0.72.0:
-//   trivy rootfs sobre un árbol Debian 12 → 117 vulnerabilidades, 0 con PkgPath
-//   trivy image  debian:12                → 169 vulnerabilidades, 0 con PkgPath
-// Con la regla `PkgPath ? installed : declared` a secas, openssl instalado por
-// dpkg salía 'declared', quedaba fuera del riesgo global Y el paso de resolución
-// le decía al usuario que "no es software instalado en tu equipo". Ver originOf()
-// en lib/normalizer.js.
+// Trivy no rellena PkgPath en paquetes del SO; aun así deben salir 'installed' (ver originOf()).
 function trivyResult({ cls, type, pkg, pkgPath = null, sev = "CRITICAL", target = "/ (debian 12.5)" }) {
   return {
     Results: [{
@@ -223,8 +212,7 @@ ok(langInstalled[0].origin === "installed", "host · lang-pkgs CON PkgPath → s
 
 console.log("\n── 5 · Salida REAL de trivy rootfs (fixture medido) ──────────────\n");
 
-// test/fixtures/trivy/rootfs-debian.json: recorte de una ejecución real de
-// `trivy rootfs` 0.72.0 sobre un árbol Debian 12 (openssl, libssl3, curl, zlib1g).
+// Fixture: recorte real de `trivy rootfs` sobre Debian 12.
 const rootfsRaw = require(path.join(__dirname, "../fixtures/trivy/rootfs-debian.json"));
 const rootfsFindings = normalizeHost({ trivy: rootfsRaw }, { platform: "linux", pkgManager: "apt" });
 const sRootfs = summarize(rootfsFindings);
@@ -250,24 +238,14 @@ ok(rootfsFindings.every((f) => !/fichero de bloqueo/.test(f.fix || "")),
 
 console.log("\n── 6 · Las declaradas del HOST se colapsan en una sola tarjeta ───\n");
 
-// ⚠️ SINTÉTICO. En la Debian de referencia hay CERO vulnerabilidades declaradas,
-// así que este camino NO se ha podido validar contra hardware: los datos de abajo
-// están construidos a mano con la forma que produce `trivy fs` sobre lockfiles.
-//
-// Enumerarlas llenaba el dashboard de tarjetas sobre versiones anotadas en
-// ficheros de dependencias de programas de terceros: no describen software en
-// ejecución y no tienen ninguna acción asociada. El JSON exportado conserva el
-// detalle completo; lo único que cambia es el renderizado.
+// Datos sintéticos: las declaradas de host se colapsan en resúmenes (el JSON conserva el detalle).
 const mkRes = (target, vulns) => ({ Target: target, Class: "lang-pkgs", Type: "npm", Vulnerabilities: vulns });
 const mkVuln = (id, pkg, sev, fixed) => ({
   VulnerabilityID: id, PkgName: pkg, InstalledVersion: "1.0.0", Severity: sev,
   ...(fixed ? { FixedVersion: fixed } : {}),
 });
 
-// Siete declaradas en tres ficheros, repartidas a propósito por los tres cubos de
-// severidad (critical/high, medium, low): si el colapso se hiciera filtrando los
-// findings ya construidos en vez de sobre allVulns, los resúmenes 'medium' y
-// 'low' de procedencia mixta se escaparían.
+// Siete declaradas en tres ficheros, repartidas por los tres cubos de severidad.
 const declaradoRaw = {
   Results: [
     mkRes("proyectos/api/package-lock.json", [
@@ -316,9 +294,7 @@ ok(!colapsado.some((f) => /^HOST-CVE-(\d|MED|LOW)/.test(f.id)),
 
 console.log("\n── 7 · La IMAGEN conserva su detalle intacto ─────────────────────\n");
 
-// El mismo fromTrivyJson() sirve a audit-image, y ahí las declaradas SON el
-// contenido del informe. El colapso va por flag explícito del llamante
-// (collapseDeclared), que normalizeImage no pasa.
+// En audit-image no se colapsa: normalizeImage no pasa collapseDeclared.
 const declaradasEnImagen = normalizeImage(declaradoRaw, "trivy");
 console.log(`  mismo JSON por normalizeImage → ${declaradasEnImagen.length} findings: ${JSON.stringify(declaradasEnImagen.map((f) => f.id))}`);
 

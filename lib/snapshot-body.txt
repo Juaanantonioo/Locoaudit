@@ -1,23 +1,18 @@
-      // Snapshot del DOM ya renderizado del dashboard: fidelidad exacta, no
-      // puede divergir (el export ES el dashboard, sin re-render alternativo).
+      // El export es una foto del DOM ya renderizado, así no puede divergir del dashboard.
       var payload = this.auditData || {};
       var auditType = payload.auditType || '';
-      // 1. CSS del propio dashboard (sentinel por nodo) — fuente ÚNICA de estilo.
+      // 1. CSS del propio dashboard, localizado por su sentinel.
       var css = '', i, styles = document.querySelectorAll('style');
       var tag = 'LCA-STYLE-DASH:' + auditType;
       for (i = 0; i < styles.length; i++) { if (styles[i].textContent.indexOf(tag) >= 0) { css = styles[i].textContent; break; } }
       if (!css) for (i = 0; i < styles.length; i++) { if (styles[i].textContent.indexOf('LCA-STYLE-DASH') >= 0) { css = styles[i].textContent; break; } }
       if (!css) for (i = 0; i < styles.length; i++) { if (styles[i].textContent.length > css.length) css = styles[i].textContent; }
-      // 2. Foto del contenedor de resultados de ESTE dashboard (this.$el primero,
-      //    por si hay varios dashboards en la misma página).
+      // 2. Contenedor de ESTE dashboard; this.$el primero por si hay varios en la página.
       var root = (this.$el && this.$el.querySelector && this.$el.querySelector('.lca-report-root')) || document.querySelector('.lca-report-root') || this.$el;
       var clone = root.cloneNode(true);
       // Quitar lo que necesita servidor (chat IA) y los botones de descarga.
       clone.querySelectorAll('.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn,[class*="chat"]').forEach(function (n) { n.remove(); });
-      // 3. Convertir los grupos y hallazgos en acordeón interactivo (como el
-      //    ui_template): la cabecera lleva data-lca-acc y su cuerpo (el hermano
-      //    siguiente) se abre/cierra con el toggle vanilla embebido. Estado
-      //    inicial = igual que el dashboard: grupos ABIERTOS, detalles CERRADOS.
+      // 3. Acordeón con el toggle embebido: grupos abiertos y detalles cerrados, como el dashboard.
       clone.querySelectorAll('[class*="group-header"]').forEach(function (h) {
         h.setAttribute('data-lca-acc', 'g');
         var b = h.nextElementSibling;
@@ -29,11 +24,8 @@
         var b = h.nextElementSibling;
         if (b) { b.classList.remove('open'); b.setAttribute('data-lca-open', '0'); }
       });
-      // 4. CSS extra del export + toggle/copiar (vanilla) + documento autocontenido.
-      // El detalle del alcance (subcarpetas analizadas / excluidas / sin
-      // analizar) va plegado en el dashboard con v-show, así que en el clon
-      // llega con display:none. En un informe descargado no hay nada que
-      // desplegar: se fuerza visible y se retira su botón.
+      // 4. CSS extra, toggle/copiar y documento autocontenido.
+      // El detalle del alcance llega oculto por v-show; en el informe se fuerza visible y sin botón.
       var extra = '.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn,.scope-toggle{display:none!important}'
         + '.scope-detail{display:block!important}'
         + '[data-lca-acc]{cursor:pointer}.command-btn,.ia-copy-btn{cursor:pointer}'

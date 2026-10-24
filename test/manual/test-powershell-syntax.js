@@ -3,8 +3,6 @@
 /**
  * test-powershell-syntax.js — Los scripts de PowerShell que LoCoAudit GENERA compilan.
  *
- * Bug de un informe real de Windows: `$ErrorActionPreference='Stop' try { … }` ("Token 'try' inesperado"). WINDOWS_PS_SCRIPT
- * unía un array con " " y el script nunca compilaba, así que la consulta a Windows Update fallaba siempre.
  *   A) Estructural, en cualquier plataforma: unión por saltos de línea, llaves equilibradas, sin dos sentencias pegadas.
  *   B) Compilación real con [ScriptBlock]::Create(), solo si hay powershell o pwsh. Se salta con aviso explícito, nunca en silencio.
  * Uso: node test/manual/test-powershell-syntax.js
@@ -25,14 +23,12 @@ function ok(cond, label, detail) {
 }
 
 // ── Los scripts bajo prueba ──────────────────────────────────────────────────
-// Se leen del módulo real, no se copian aquí: una copia se queda vieja y el test
-// pasaría sobre un script que ya no es el que se ejecuta.
+// Se leen del módulo real, no se copian aquí.
 const pendingSrc = fs.readFileSync(
   path.join(__dirname, "../../nodes/audit-host/modules/pending-updates.js"), "utf8");
 const { PS_UTF8_PRELUDE } = require("../../lib/executor");
 
-/** Extrae una constante array-join del fuente y la evalúa. Sin require del módulo entero: en
- *  macOS/Linux no hace falta cargar sus dependencias solo para leer una cadena. */
+/** Extrae y evalúa una constante array-join del fuente, sin cargar el módulo entero. */
 function scriptFromSource(src, nombre) {
   const re = new RegExp("const " + nombre + " = \\[([\\s\\S]*?)\\]\\.join\\((\"[^\"]*\")\\);");
   const m = src.match(re);
@@ -43,8 +39,7 @@ function scriptFromSource(src, nombre) {
 
 const winUpdate = scriptFromSource(pendingSrc, "WINDOWS_PS_SCRIPT");
 
-// security-events.js construye el suyo con una plantilla multilínea, no con join: se le pide
-// al módulo, que es quien lo genera de verdad.
+// security-events.js usa una plantilla multilínea: se le pide el script al propio módulo.
 const secModule = require("../../nodes/audit-host/modules/security-events");
 
 const SCRIPTS = [
@@ -67,9 +62,7 @@ ok(winUpdate.separador === "\n",
    "WINDOWS_PS_SCRIPT se une con saltos de línea, no con espacios",
    `separador actual: ${JSON.stringify(winUpdate.separador)}`);
 
-// Y la forma exacta que falló.
-// `[^\S\n]` y no `\s`: \s incluye el salto de línea, así que la versión arreglada —donde
-// 'Stop' y try están en líneas distintas— también casaba y el test fallaba en verde.
+// La forma exacta que fallaba; `[^\S\n]` y no `\s`, que también casaría con el salto de línea.
 ok(!/'Stop'[^\S\n]+try[^\S\n]*\{/.test(winUpdate.texto),
    "no queda `$ErrorActionPreference='Stop' try {` en una sola línea",
    JSON.stringify(winUpdate.texto.split("\n").slice(0, 2)));
@@ -81,8 +74,7 @@ for (const { nombre, texto } of SCRIPTS) {
   const parens = (texto.match(/\(/g) || []).length - (texto.match(/\)/g) || []).length;
   ok(parens === 0, `[${nombre}] paréntesis equilibrados`, `diferencia: ${parens}`);
 
-  // Ninguna línea puede tener una sentencia seguida de una palabra clave de bloque: es
-  // exactamente la firma del bug. `} catch {` y `} else {` sí son válidas y se excluyen.
+  // Ninguna sentencia seguida de palabra clave de bloque (`} catch {` y `} else {` sí valen).
   const pegadas = texto.split("\n").filter((l) => {
     const t = l.trim();
     if (!t || t.startsWith("}")) return false;
@@ -118,9 +110,7 @@ if (!shell) {
 } else {
   console.log(`  Compilando con: ${shell}\n`);
   for (const { nombre, texto } of SCRIPTS) {
-    // Se compila SIN ejecutar: ScriptBlock::Create parsea y lanza si la sintaxis es inválida.
-    // El script va por fichero para no pelearse con el escapado de la línea de comandos, que es
-    // justo la clase de problema que este test existe para detectar.
+    // Se compila sin ejecutar; el script va por fichero para evitar el escapado de la línea de órdenes.
     const tmp = path.join(os.tmpdir(), `lcaudit-syntax-${process.pid}-${Math.random().toString(16).slice(2)}.ps1`);
     fs.writeFileSync(tmp, "﻿" + texto, "utf8");
     const comprobador = path.join(os.tmpdir(), `lcaudit-check-${process.pid}-${Math.random().toString(16).slice(2)}.ps1`);

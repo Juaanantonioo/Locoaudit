@@ -1,19 +1,8 @@
 "use strict";
 
 /**
- * test-audit-host-payload.js — El nodo emite payload cuando debe.
- *
- * Fija el arreglo del bug que dejaba el dashboard en blanco:
- *
- *   audit-host.js trataba CUALQUIER trivy.skipped como fatal salvo el literal
- *   "trivy not installed". Como el `return` del gate va antes del send(msg), un
- *   límite conocido de la herramienta —Trivy no analiza pacman— abortaba la
- *   auditoría entera y el dashboard se quedaba enseñando la ejecución anterior.
- *   Reproducido en las dos plataformas, con dos textos distintos para el mismo
- *   caso: "rootfs solo aplica en Linux" (macOS) y "Trivy no soporta pacman" (Arch).
- *
- * Se carga el nodo real con un RED falso y solo se sustituye trivy-fs, para que
- * el gate, el normalizador y la construcción del payload sean los de producción.
+ * test-audit-host-payload.js — El nodo emite payload aunque Trivy omita una parte.
+ * Carga el nodo real con un RED falso y solo sustituye los módulos de Trivy.
  *
  * Uso:
  *   node test/manual/test-audit-host-payload.js
@@ -30,8 +19,7 @@ function ok(cond, label, detail) {
 }
 
 // ── Sustitución de trivy-fs ──────────────────────────────────────────────────
-// Se inyecta en require.cache ANTES de cargar el nodo. systemPackagesSupport se
-// mantiene el real: es la función bajo prueba en el payload.
+// Se inyecta en require.cache antes de cargar el nodo; systemPackagesSupport es el real.
 const TRIVY_PATH = require.resolve("../../nodes/audit-host/modules/trivy-fs");
 const trivyReal = require(TRIVY_PATH);
 
@@ -44,9 +32,7 @@ require.cache[TRIVY_PATH].exports = Object.assign({}, trivyReal, {
 });
 
 // ── Sustitución de trivy-rootfs ──────────────────────────────────────────────
-// Módulo aparte desde que los paquetes del sistema dejaron de viajar dentro del
-// resultado de trivy-fs. systemPackagesSupport() se mantiene el REAL: es la
-// función bajo prueba cuando se mira scanMeta.systemPackages.
+// systemPackagesSupport() es el real: se prueba al mirar scanMeta.systemPackages.
 const ROOTFS_PATH = require.resolve("../../lib/trivy-rootfs");
 const rootfsReal = require(ROOTFS_PATH);
 
@@ -56,9 +42,7 @@ require.cache[ROOTFS_PATH].exports = Object.assign({}, rootfsReal, {
   runTrivyRootfs: async () => { rootfsLlamado = true; return rootfsStubResult; },
 });
 
-// commandExists: el despacho lo consulta antes de lanzar el rootfs, y en la
-// máquina que corre el test Trivy puede no estar. Se fuerza a "sí está" para que
-// lo que decida sea el stub y no el equipo de quien ejecuta la batería.
+// commandExists se fuerza a true para que decida el stub y no el equipo que ejecuta el test.
 const EXEC_PATH = require.resolve("../../lib/executor");
 const execReal = require(EXEC_PATH);
 require.cache[EXEC_PATH].exports = Object.assign({}, execReal, {
@@ -97,8 +81,7 @@ function cargarNodo() {
         node.on = (evt, fn) => { node._handler = fn; };
         node.status = (s) => { node._status = s; };
         node.warn = (m) => { (node._warns = node._warns || []).push(m); };
-        // node.log existe en un nodo real de Node-RED. Sin stub, el aviso de un módulo
-        // omitido que NO es un fallo —que ahora va por log y no por warn— reventaba el test.
+        // Stub de node.log, por donde va el aviso de un módulo omitido que no es fallo.
         node.log = (m) => { (node._logs = node._logs || []).push(m); };
       },
       getNode: () => null,
@@ -131,8 +114,7 @@ async function ejecutar(config) {
 const CONFIG_BASE = {
   enableCpu: false, enableDisk: false, enableSw: false,
   enableLynis: false, enableTrivy: true, securityEvents: false,
-  // Explícito y no heredado: desde que el módulo va activo por defecto, omitirlo
-  // haría que cada bloque arrastrase el rootfs sin decirlo.
+  // Explícito porque el módulo va activo por defecto.
   trivySystemPkgs: false,
   enableSecrets: false,
 };
@@ -152,10 +134,7 @@ const CONFIG_BASE = {
       const sp = r.msg.payload.scanMeta.systemPackages;
       ok(sp && typeof sp.status === "string",
          `[${reason}] scanMeta.systemPackages presente (status="${sp && sp.status}")`);
-      // El motivo de scanMeta.systemPackages sale del módulo de paquetes del
-      // sistema, NO del de la carpeta personal: son dos comprobaciones distintas
-      // y mezclar sus motivos fue justo lo que se acaba de separar. Aquí el
-      // rootfs está apagado, así que el que se ve es el suyo.
+      // El motivo sale del módulo de paquetes del sistema, no del de la carpeta personal.
       ok(sp && typeof sp.reason === "string" && sp.reason.includes("desactivado"),
          `[${reason}] scanMeta.systemPackages lleva SU motivo, no el de trivy-fs`,
          `obtenido ${JSON.stringify(sp && sp.reason)}`);
@@ -165,9 +144,7 @@ const CONFIG_BASE = {
          `[${reason}] el análisis omitido queda declarado como finding informativo`,
          JSON.stringify(r.msg.payload.findings.map((f) => f.id)));
     }
-    // Por `log` y no por `warn`: 'unsupported' es un límite del sistema, no un fallo, y el
-    // amarillo del editor de Node-RED contradecía la clasificación 'not-applicable' que el
-    // propio informe le da.
+    // Por `log` y no por `warn`: 'unsupported' es un límite del sistema, no un fallo.
     ok(r.logs.some((w) => w.includes("omitido")),
        `[${reason}] queda anotado en el log del nodo`,
        JSON.stringify({ warns: r.warns, logs: r.logs }));
@@ -196,8 +173,7 @@ const CONFIG_BASE = {
 
   console.log("\n── 3 · scanMeta.systemPackages se emite con el interruptor OFF ───\n");
 
-  // El caso real de CachyOS: nadie activó nada, y aun así el usuario tiene
-  // derecho a saber que sus paquetes de sistema no se han mirado.
+  // Sin activar nada, el informe debe decir que los paquetes del sistema no se miraron.
   trivyStubResult = { Results: [], scan: { mode: "fs-by-children", target: "/home/x" } };
   r = await ejecutar(Object.assign({}, CONFIG_BASE, { trivySystemPkgs: false }));
 
@@ -222,8 +198,7 @@ const CONFIG_BASE = {
 
   console.log("\n── 5 · Los dos módulos aportan, cada uno con su fuente ───────────\n");
 
-  // El interruptor sustituía el escaneo del home en vez de añadirse. Aquí se
-  // comprueba de punta a punta que el payload trae AMBAS procedencias.
+  // El payload trae ambas procedencias: carpeta personal y sistema.
   const HOME_RESULT = {
     Target: "proyectos/api/package-lock.json", Class: "lang-pkgs", Type: "npm",
     Vulnerabilities: [{
@@ -239,8 +214,7 @@ const CONFIG_BASE = {
     }],
   };
 
-  // Los dos módulos, cada uno con su resultado. El del sistema YA NO viaja dentro
-  // del de la carpeta: son dos entradas independientes del despacho.
+  // Dos módulos independientes, cada uno con su resultado.
   trivyStubResult = {
     Results: [HOME_RESULT],
     scan: {
@@ -262,8 +236,7 @@ const CONFIG_BASE = {
   ok(r.err === null && r.msg !== null, "payload emitido");
   ok(porOrigen.declared >= 1, "los findings del HOME siguen ahí (origin 'declared')", JSON.stringify(porOrigen));
   ok(porOrigen.installed >= 1, "los findings del SISTEMA están presentes (origin 'installed')", JSON.stringify(porOrigen));
-  // Las cifras del bloque de alcance salen del informe de Trivy y de ningún otro
-  // sitio: es la fuente única, y por eso se comprueban una a una.
+  // Las cifras de alcance salen solo del informe de Trivy.
   ok(sp5 && sp5.status === "scanned", "status 'scanned'", sp5 && sp5.status);
   ok(sp5 && sp5.packages === 2056, "packages = 2056, del informe de Trivy", sp5 && String(sp5.packages));
   ok(sp5 && sp5.osFamily === "debian" && sp5.osName === "13.6",
@@ -275,8 +248,7 @@ const CONFIG_BASE = {
   ok(sp5 && sp5.requested === true,
      "scanMeta.systemPackages.requested = true (lo pidió el usuario)");
 
-  // El hallazgo agregado de lo no corregible: uno solo, informativo, y con el
-  // total dentro. Ni 4078 tarjetas ni cero.
+  // Lo no corregible se agrega en un único hallazgo informativo con el total.
   const unfixed = (r.msg ? r.msg.payload.findings : []).filter((f) => f.id === "HOST-OS-CVE-UNFIXED");
   ok(unfixed.length === 1, "un ÚNICO finding HOST-OS-CVE-UNFIXED", `encontrados ${unfixed.length}`);
   ok(unfixed[0] && unfixed[0].severity === "info",
@@ -292,10 +264,7 @@ const CONFIG_BASE = {
 
   console.log("\n── 6 · Los dos escaneos son independientes ───────────────────────\n");
 
-  // Antes iban en el mismo módulo y `if (opts.systemPackages) return
-  // runTrivyRootfs()` anulaba en silencio el campo "Carpeta a auditar". Ahora son
-  // dos entradas del despacho y el acoplamiento ya no existe: se comprueba que a
-  // trivy-fs no se le pasa NADA del rootfs.
+  // A trivy-fs no le llega ninguna opción del rootfs.
   trivyStubOpts = null;
   rootfsLlamado = false;
   r = await ejecutar(Object.assign({}, CONFIG_BASE, {
@@ -314,8 +283,7 @@ const CONFIG_BASE = {
 
   console.log("\n── 7 · macOS: 'no se pudo comprobar', nunca 'cero' ───────────────\n");
 
-  // Trivy no reconoce la familia del SO. El escaneo de la carpeta sí se hizo, y
-  // los paquetes del sistema tienen que salir como comprobación NO REALIZADA.
+  // Trivy no reconoce el SO: la carpeta se escanea y los paquetes salen como no realizados.
   trivyStubResult = {
     Results: [HOME_RESULT],
     scan: {
@@ -339,8 +307,7 @@ const CONFIG_BASE = {
   ok(sp7 && sp7.kind === "os-unsupported", "el kind del módulo llega al dashboard", sp7 && sp7.kind);
   ok(sp7 && sp7.reason === "Trivy no ha detectado la familia del sistema operativo",
      "el motivo real viaja hasta el dashboard");
-  // Lo importante: NINGUNA cifra de paquetes. Un 0 aquí se leería como "ningún
-  // paquete vulnerable" cuando lo que pasó es que nadie los miró.
+  // Sin cifras de paquetes: un 0 se leería como "ninguno vulnerable".
   ok(sp7 && sp7.packages === null && sp7 && sp7.unfixedVulns === null,
      "sin cifras: null, no cero. Cero sería un dato y aquí no hay dato",
      JSON.stringify(sp7 && [sp7.packages, sp7.unfixedVulns]));
@@ -358,9 +325,7 @@ const CONFIG_BASE = {
 
   console.log("\n── 8 · Apagado por el usuario ≠ comprobación caída ───────────────\n");
 
-  // El bug: la tarjeta ponía en ámbar "hay comprobaciones caídas" por módulos que
-  // el propio usuario había desactivado. Son cosas distintas y el DATO tiene que
-  // distinguirlas, no el texto de `reason`.
+  // El dato distingue un módulo desactivado de una comprobación caída.
   trivyStubResult = { skipped: true, kind: "disabled", reason: "irrelevante" };
   rootfsStubResult = { skipped: true, kind: "disabled", reason: "irrelevante" };
   r = await ejecutar(Object.assign({}, CONFIG_BASE, {
@@ -374,8 +339,7 @@ const CONFIG_BASE = {
   ok(skips.every((f) => f.kind === "disabled"),
      "todos llevan kind 'disabled' en el finding, no solo en el resultado del módulo",
      JSON.stringify(skips.map((f) => f.kind)));
-  // Sin esto la partición del dashboard es imposible: `skipped:true` a secas solo
-  // dice que falta el dato, no por qué.
+  // `skipped:true` solo dice que falta el dato; el motivo va aparte.
   ok(skips.every((f) => typeof f.kind === "string" && f.kind.length > 0),
      "createFinding conserva el kind (antes se perdía y llegaba undefined)");
 
@@ -404,9 +368,7 @@ const CONFIG_BASE = {
 
   ok(Array.isArray(mods) && mods.length === 9,
      "los 9 módulos del nodo aparecen siempre, se ejecuten o no", String(mods && mods.length));
-  // Esto es lo que hace que la línea al pie cubra los módulos que NO dejan
-  // finding al apagarse (cpu, disco, inventario, eventos, actualizaciones):
-  // derivarla de los findings cubriría dos de ocho.
+  // Cubre también los módulos que no dejan finding al apagarse (cpu, disco, inventario...).
   ok(mods.every((m) => ["ok", "failed", "not-applicable", "not-requested"].includes(m.status)),
      "cuatro estados, ninguno fuera de la lista",
      JSON.stringify([...new Set(mods.map((m) => m.status))]));
@@ -414,9 +376,7 @@ const CONFIG_BASE = {
      "cada uno trae su etiqueta legible, para no escribirla en el HTML");
   ok(mods.find((m) => m.id === "lynis").status === "not-requested",
      "lynis apagado → 'not-requested', NO 'failed'");
-  // 'os-unsupported' es un límite de la plataforma, no un fallo: Trivy no cubre los paquetes de
-  // sistema de macOS ni de Windows y no los va a cubrir. Contarlo como 'failed' ponía un aviso
-  // ámbar sobre algo que nadie puede arreglar.
+  // 'os-unsupported' es un límite de la plataforma (macOS, Windows), no un fallo.
   ok(mods.find((m) => m.id === "trivy-rootfs").status === "not-applicable",
      "trivy-rootfs con os-unsupported → 'not-applicable', NO 'failed'",
      mods.find((m) => m.id === "trivy-rootfs").status);
@@ -430,14 +390,11 @@ const CONFIG_BASE = {
      "trivy-rootfs con kind 'error' → 'failed'",
      modsFallo.find((m) => m.id === "trivy-rootfs").status);
 
-  // pending-updates queda activo en CONFIG_BASE (enableUpdates no se apaga), así
-  // que es el que cubre el caso "se ejecutó".
+  // pending-updates sigue activo en CONFIG_BASE y cubre el caso "se ejecutó".
   ok(mods.find((m) => m.id === "pending-updates").status === "ok",
      "y el que se ejecutó → 'ok'", mods.find((m) => m.id === "pending-updates").status);
 
-  // La razón de ser de este bloque: los módulos que NO dejan finding al apagarse
-  // (cpu, disco, inventario, eventos) constan igual. Derivar la línea al pie de
-  // los findings solo habría cubierto lynis y trivy.
+  // Los módulos que no dejan finding al apagarse constan igual.
   const sinFinding = ["cpu-memory", "disk-storage", "sw-inventory", "security-events"];
   ok(sinFinding.every((id) => mods.find((m) => m.id === id).status === "not-requested"),
      "los 4 módulos que no dejan hallazgo al apagarse constan igual",
@@ -447,9 +404,7 @@ const CONFIG_BASE = {
 
   console.log("\n── 10 · Windows: reinicio pendiente ≠ sistema al día ─────────────\n");
 
-  // La API COM consulta `IsInstalled=0`, que por definición NO devuelve las actualizaciones ya
-  // instaladas esperando un reinicio. Con una de ellas puesta (reproducido con KB5120708), el
-  // informe decía "Sistema al día" sobre un equipo con una corrección de seguridad sin aplicar.
+  // `IsInstalled=0` no incluye las actualizaciones pendientes de reinicio: no es "Sistema al día".
   const { normalizeHost: nh } = require("../../lib/normalizer");
   const baseWin = {
     skipped: false, platform: "win32", source: "Microsoft.Update.Session",

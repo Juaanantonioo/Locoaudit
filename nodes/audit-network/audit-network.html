@@ -19,9 +19,7 @@
                 });
             } },
             scanTarget:   { value: "localhost" },
-            // Solo la FORMA, para marcar el campo en rojo mientras se escribe. Quien decide si se
-            // escanea es validateTarget() en network-utils.js, que además rechaza las direcciones
-            // de red, difusión y multidifusión: esta comprobación no puede sustituirla.
+            // Solo la forma, para pintar el campo en rojo. Quien decide es validateTarget(), que rechaza más casos.
             customTarget: { value: "", validate: function (v) {
                 var mode = $("#node-input-scanTarget").length ? $("#node-input-scanTarget").val() : this.scanTarget;
                 if (mode !== "custom") return true;
@@ -31,10 +29,9 @@
                 });
             } },
             forceScan:    { value: false },
-            // Apagado de fábrica: activarlo manda a un servidor de internet las versiones de
-            // servicio detectadas. Un defecto distinto sería ceder datos sin que nadie lo lea.
+            // Apagado por defecto: activarlo envía a internet las versiones de servicio detectadas.
             nseEnabled:   { value: false },
-            // Tiempo EXTRA para los scripts, encima del presupuesto del modo de escaneo.
+            // Tiempo extra para los scripts, sumado al del modo de escaneo.
             nseTimeout:   { value: 180000, validate: RED.validators.number() },
             llmConfig:    { value: "", type: "llm-config", required: false }
         },
@@ -67,8 +64,7 @@
                 }
             }
 
-            // El tiempo extra solo tiene sentido si hay análisis: con la casilla apagada, ese
-            // campo invita a configurar algo que no se va a ejecutar.
+            // El tiempo extra solo se muestra con el análisis activado.
             function updateNseVisibility() {
                 if ($("#node-input-nseEnabled").is(":checked")) {
                     $("#nse-timeout-row").show();
@@ -144,10 +140,7 @@
         <div style="padding-left: 8px; display: flex; flex-direction: column; gap: 10px;">
 
             <div style="background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px;">
-                <!-- La consulta a Vulners va DENTRO del texto que se marca, no en una nota debajo.
-                     Quien activa una casilla lee la casilla; una nota en un párrafo aparte se
-                     salta, y quien la activa tiene que saber que se consulta una base de datos
-                     externa. -->
+                <!-- La consulta externa va en el propio texto de la casilla para que se lea al marcarla. -->
                 <label for="node-input-nseEnabled" style="width: 100%; font-weight: 600; display: flex; align-items: flex-start; gap: 6px; margin: 0;">
                     <input type="checkbox" id="node-input-nseEnabled" style="width: auto; margin: 3px 0 0 0;">
                     <span>
@@ -157,8 +150,8 @@
                 </label>
                 <div style="color: #555; font-size: 0.82em; margin-top: 8px; line-height: 1.5;">
                     Nmap busca los CVE conocidos de cada servicio en la base de datos de Vulners
-                    a partir de su nombre y versión, y revisa el cifrado, los algoritmos SSH y
-                    los banners. La consulta no incluye la dirección del equipo auditado ni otros
+                    a partir de su nombre y versión, y revisa los certificados, el cifrado y los
+                    algoritmos SSH. La consulta no incluye la dirección del equipo auditado ni otros
                     datos suyos. <strong>Solo en equipos de tu propiedad:</strong> esta opción
                     interroga a los servicios. Tarda más y, si está apagada, no se comprueba esta
                     parte: que no aparezcan vulnerabilidades no significa que no existan.
@@ -211,7 +204,8 @@
                     style="width: 100%; box-sizing: border-box;">
                 <div style="color: #555; font-size: 0.82em; margin-top: 6px; line-height: 1.5;">
                     Introduce la dirección IPv4 de un único equipo, por ejemplo 192.168.1.10.
-                    No se admiten rangos (/24, 1-20), listas ni nombres de equipo.<br>
+                    No se admiten rangos (/24, 1-20), listas ni nombres de equipo, y el equipo
+                    tiene que estar en la misma red que este equipo.<br>
                     Solo audita equipos de tu propiedad.
                 </div>
 

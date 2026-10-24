@@ -2,8 +2,7 @@
   <div>
 
     <!-- ── Sin datos ── -->
-    <!-- Icono en línea y no <use>: el sprite vive DENTRO de .lca-report-root para
-         viajar con el clon del export, y este estado está fuera de esa raíz. -->
+    <!-- Icono en línea: este estado queda fuera de .lca-report-root y no ve el sprite. -->
     <div v-show="state === 'idle'" class="lca-state-center">
       <svg class="icon icon-xl lca-state-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -24,13 +23,8 @@
     <div v-if="state === 'done' && auditData" class="lca-report-root">
 
       <!-- ══ SPRITE DE ICONOS ══ -->
-      <!-- Primer hijo de .lca-report-root A PROPÓSITO: el export clona ESTA raíz, así
-           que el sprite viaja con ella y los <use href="#lca-i-…"> del informe
-           descargado siguen resolviendo. Un sprite colocado fuera se quedaría atrás y
-           el HTML exportado saldría sin un solo icono, en silencio.
-           Su clase no contiene ninguna subcadena que el prune del export borre
-           (dl-group, chat, ai-ask-btn, lca-chat-wrap) ni que el @media print toque
-           (finding-detail, finding-body, group-body, group-findings). No renombrar. -->
+      <!-- Primer hijo de .lca-report-root para que el sprite viaje con el clon del export.
+           No renombrar la clase: no debe casar con el prune del export ni con el @media print. -->
       <svg class="lca-sprite" aria-hidden="true" focusable="false"><defs>
         <symbol id="lca-i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"></path></symbol>
         <symbol id="lca-i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.6-3.6"></path></symbol>
@@ -49,13 +43,8 @@
       </defs></svg>
 
       <!-- ══ HEADER ══ -->
-      <!-- Misma anatomía que host: eyebrow, nombre grande, badge de riesgo con el
-           recuento al lado, rejilla de metadatos etiqueta-sobre-valor, y una columna
-           derecha separada por una línea fina. El hueco que en host ocupa el gauge de
-           Lynis lo ocupa aquí el contador de puertos abiertos, con su desglose por
-           severidad debajo.
-           La barra superior toma el color del riesgo real vía `riskClass`, la misma
-           clase que pinta el badge: no hay dos definiciones del riesgo. -->
+      <!-- Misma anatomía que host; el hueco del gauge lo ocupa el contador de puertos.
+           La barra toma el color del riesgo real (riskClass), igual que el badge. -->
       <div class="header-card" :class="riskClass">
         <div class="header-main">
           <div class="header-eyebrow">LoCoAudit · Auditoría de red</div>
@@ -68,8 +57,7 @@
               <span class="risk-badge-dot"></span>
               {{ riskLabel }}
             </span>
-            <!-- Texto corto: el mismo recuento que la columna derecha enseña en
-                 grande. No es copy nuevo. -->
+            <!-- Mismo recuento que la columna derecha. -->
             <span class="risk-note">{{ noPortData ? 'Sin datos de puertos' : donutTotal + (donutTotal === 1 ? ' puerto abierto' : ' puertos abiertos') }}</span>
           </div>
 
@@ -94,8 +82,7 @@
               <span class="meta-key">Nombre</span>
               <span class="meta-val meta-val-mono">{{ hostnameLabel }}</span>
             </div>
-            <!-- El rango de puertos es una lista larga: en una celda de una columna
-                 se parte en ocho líneas y estira toda la fila de la rejilla. -->
+            <!-- Celda ancha: el rango de puertos es largo y estiraría la fila. -->
             <div class="meta-item meta-item-wide" v-if="rangeLabel">
               <span class="meta-key">Puertos</span>
               <span class="meta-val meta-val-mono">{{ rangeLabel }}</span>
@@ -122,15 +109,11 @@
           </div>
         </div>
 
-        <!-- Columna derecha: puertos abiertos y su reparto por severidad.
-             El desglose sale de `barCols`, EL MISMO computed que alimenta el gráfico
-             de barras de más abajo: dos recuentos de puertos por severidad acabarían
-             divergiendo. -->
+        <!-- Puertos abiertos por severidad, desde barCols (el mismo computed que el gráfico). -->
         <div class="header-aside">
           <span class="aside-label-top">Puertos abiertos</span>
           <div class="port-count-num" :class="{ 'all-info': allInfo && !noPortData, 'no-data': noPortData }">{{ portCountLabel }}</div>
-          <!-- Sin datos no hay desglose que enseñar: un reparto de ceros se lee como
-               "todo comprobado y limpio", que es justo lo que no ocurrió. -->
+          <!-- Sin datos no hay desglose: un reparto de ceros se leería como "limpio". -->
           <div class="port-breakdown" v-if="!noPortData && donutTotal > 0">
             <div class="port-breakdown-row" v-for="col in barCols" :key="'hb-' + col.sev"
                  :class="{ 'is-zero': col.count === 0 }">
@@ -144,15 +127,8 @@
         </div>
       </div>
 
-      <!-- ══ AVISOS ══ ═════════════════════════════════════════════════════════
-           El mismo componente de host (.lca-notice), mismos tres niveles:
-             nivel 1 · VEREDICTO — ¿tengo algo que hacer?
-             nivel 2 · COBERTURA — ¿se miró todo?
-             nivel 3 · CONTEXTO  — ¿qué más conviene saber?
-           `scanWarn` es COBERTURA en los dos casos que produce, porque los dos dicen
-           lo mismo: no se llegó a mirar del todo. Cambia el tono, no el nivel —
-           neutro cuando el objetivo no responde (no hay nada que reprochar) y ámbar
-           cuando el escaneo se quedó a medias. -->
+      <!-- ══ AVISOS ══ .lca-notice en tres niveles, como host. scanWarn es siempre cobertura (nivel 2):
+           neutro si el objetivo no responde, ámbar si el escaneo quedó a medias. -->
       <div class="lca-notice lvl-2" v-if="scanWarn"
            :class="scanWarn.neutral ? 'is-neutral' : 'is-warn'">
         <svg class="icon lca-notice-icon"><use :href="scanWarn.neutral ? '#lca-i-antenna' : '#lca-i-alert'"></use></svg>
@@ -169,9 +145,7 @@
         <!-- 1 · MAPA DE PUERTOS -->
         <section>
           <div class="section-title">Mapa de puertos</div>
-          <!-- 0 puertos NO significa lo mismo en los dos casos:
-               objetivo alcanzable sin puertos = resultado bueno (verde);
-               objetivo que no responde        = no hubo auditoría (neutro). -->
+          <!-- 0 puertos: verde si el objetivo respondió; neutro si no hubo auditoría. -->
           <div class="port-grid" v-if="sortedPorts.length > 0">
             <div v-for="(p, i) in visiblePorts" :key="'pg-'+i"
                  class="port-card" :class="'sev-' + (p.severity || 'info').toLowerCase()">
@@ -268,18 +242,13 @@
         </div>
 
         <!-- 3 · HALLAZGOS, AGRUPADOS POR PUERTO -->
-        <!-- UNA lista. Antes había dos —"Vulnerabilidades por puerto" con anatomía
-             propia y "Hallazgos" con otra—, y el mismo puerto aparecía en las dos sin
-             que nada dijera que era el mismo. El grupo agrupa; NO fusiona: un NET-VULN
-             y el NET-PORT de su puerto siguen siendo dos fichas con su severidad. -->
+        <!-- Una sola lista agrupada por puerto; agrupa, no fusiona: cada hallazgo mantiene su ficha. -->
         <section v-if="findingGroups.length > 0">
           <div class="section-title">Hallazgos</div>
           <div class="findings-list">
             <template v-for="g in findingGroups" :key="g.key">
-              <!-- NO renombrar .group-header ni .group-body: el informe exportado los
-                   busca por subcadena y el cuerpo tiene que seguir siendo el hermano
-                   siguiente de la cabecera. El envoltorio .findings-group los deja
-                   hermanos: la tarjeta la pone él, igual que en host. -->
+              <!-- No renombrar .group-header ni .group-body: el export los busca por subcadena
+                   y el cuerpo debe ser el hermano siguiente de la cabecera. -->
               <div class="findings-group">
                 <div class="group-header" @click="toggleGroup(g.key)">
                   <code v-if="g.port != null" class="group-port">{{ g.port }}/{{ g.protocol }}</code>
@@ -299,8 +268,7 @@
                   <div class="finding-item" v-for="(f, fi) in g.findings" :key="g.key + '-' + fi">
                     <div class="finding-header" @click="toggleFinding(g.key + '-' + fi)">
                       <span class="badge" :class="(f.severity || 'info').toLowerCase()">{{ sevLabel(f.severity) }}</span>
-                      <!-- Tipo, no categoría: "network" era la misma palabra en todas las
-                           fichas. La etiqueta sale del prefijo del id (ver typeLabel). -->
+                      <!-- Tipo según el prefijo del id (ver typeLabel). -->
                       <span class="badge cat" v-if="typeLabel(f)">{{ typeLabel(f) }}</span>
                       <div class="finding-title">{{ f.title }}</div>
                       <code class="finding-id" v-if="f.id">{{ f.id }}</code>
@@ -308,14 +276,12 @@
                     </div>
                     <div class="finding-body" :class="{ open: openFindings[g.key + '-' + fi] }">
                       <div class="detail-stack" v-if="f.evidence || f.fix || cveRows(f).length">
-                        <!-- La evidencia no depende del fix: un hallazgo informativo sin pasos que dar
-                             sigue teniendo algo que contar, y colgarla del mismo v-if la escondía. -->
+                        <!-- La evidencia se muestra aunque no haya fix. -->
                         <div class="detail-col" v-if="f.evidence">
                           <div class="detail-col-title">Evidencia</div>
                           <pre class="detail-evidence">{{ f.evidence }}</pre>
 
-                          <!-- Tira de metadatos: solo los NET-VULN-*, que son los únicos con
-                               datos estructurados detrás (vulners vía NSE). -->
+                          <!-- Tira de metadatos: solo NET-VULN-*, con datos de vulners vía NSE. -->
                           <div v-if="hasMeta(f)" class="meta-strip">
                             <div v-if="f.service" class="meta-cell">
                               <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-antenna"></use></svg> Servicio</span>
@@ -343,8 +309,7 @@
                           </div>
                         </div>
 
-                        <!-- CVE publicados: TODOS, ordenados por nota. Sin recorte y sin scroll
-                             interno, para que el informe impreso los traiga enteros. -->
+                        <!-- Todos los CVE, ordenados por nota y sin scroll interno, para que salgan enteros al imprimir. -->
                         <div class="detail-col" v-if="cveRows(f).length">
                           <div class="detail-col-title">CVE publicados</div>
                           <table class="cve-table">
@@ -374,16 +339,11 @@
 
                         <div class="detail-col" v-if="f.fix">
                           <div class="detail-col-title">Resolución</div>
-                          <!-- Una rama por alternativa ("si no lo necesitas" / "si lo necesitas"):
-                               son caminos EXCLUYENTES, y encadenarlos en una sola lista los hacía
-                               pasar por pasos consecutivos. Dentro de cada rama sí hay orden, y por
-                               eso es un <ol>: el número lo pone el navegador, no un <span>. -->
+                          <!-- Una rama por alternativa excluyente; dentro de cada rama, pasos en orden (<ol>). -->
                           <template v-if="!f.isCommand">
-                            <!-- Un solo parseo por ficha: el v-for sobre un array de un
-                                 elemento evita repetir la llamada en cada bloque. -->
+                            <!-- v-for sobre un array de un elemento: parsea el fix una sola vez. -->
                             <div class="fix-plan" v-for="(fx, xi) in [parseFixSteps(f.fix)]" :key="xi">
-                              <!-- Lo anterior a la primera rama describe el servicio: va sin
-                                   numerar, porque no es un paso que nadie tenga que dar. -->
+                              <!-- La intro describe el servicio y va sin numerar. -->
                               <p v-for="(ln, ii) in fx.intro" :key="'i' + ii" class="fix-intro">{{ ln }}</p>
                               <p v-for="(nt, ni) in fx.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
                               <div class="fix-branch" v-for="(br, bi) in fx.branches" :key="bi">
@@ -419,17 +379,14 @@
                             </button>
                           </div>
                           <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
-                          <!-- UNA nota por ficha, neutra. Antes eran dos cajas ámbar —"no lo
-                               ejecuto" y "pide sudo"— que pintaban de aviso lo que solo es cómo
-                               funciona la herramienta. El ámbar queda para la severidad Media. -->
+                          <!-- Una sola nota neutra por ficha; el ámbar se reserva para la severidad Media. -->
                           <div v-if="fixHasCmd(f)" class="cmd-note cmd-note-safety">
                             <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
                             <span>LoCoAudit no ejecuta estos comandos: cópialos y revísalos antes de ejecutarlos.<template v-if="fixNeedsSudo(f)"> Requieren privilegios de administrador.</template></span>
                           </div>
                         </div>
                       </div>
-                      <!-- Mismos tres textos que en el dashboard de host: sin pasos que dar, lo
-                           honesto es decir si es que no hacen falta o es que no los tenemos. -->
+                      <!-- Mismos tres textos que host: distingue "no hace falta" de "no tenemos el paso". -->
                       <div v-if="!f.fix" class="nofix-note">
                         <template v-if="f.noAction">
                           Este hallazgo es informativo. No requiere acción inmediata.
@@ -450,9 +407,7 @@
                           {{ chatOpen[chatKey(f, g.key + '-' + fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
                         </button>
                         <div class="lca-chat" v-if="chatOpen[chatKey(f, g.key + '-' + fi)]">
-                          <!-- Cabecera con el modelo: /locoaudit/chat/status YA devuelve
-                               `model` (llm-config.js) y hasta ahora se tiraba. Quien lee la
-                               respuesta necesita saber quién la ha escrito. -->
+                          <!-- Cabecera con el modelo, para saber quién ha escrito la respuesta. -->
                           <div class="lca-chat-head">
                             <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
                             <span class="lca-chat-head-title">Asistente</span>
@@ -490,8 +445,7 @@
                                     :disabled="chatLoading[chatKey(f, g.key + '-' + fi)]"
                                     @click.stop="sendChat(chatKey(f, g.key + '-' + fi), f)">Enviar</button>
                           </div>
-                          <!-- El aviso va al pie y no en un modal: se lee después de la
-                               respuesta, que es cuando el usuario decide si actuar. -->
+                          <!-- Aviso al pie: se lee después de la respuesta, antes de actuar. -->
                           <div class="lca-chat-foot">
                             Un modelo de lenguaje puede equivocarse. Contrasta lo que te diga
                             con la evidencia del hallazgo antes de ejecutar nada.
@@ -546,8 +500,7 @@ export default {
       copiedKey: null,
       // Filtro por severidad: clic en una barra de "Exposición por severidad".
       filterSev: 'all',
-      // Grupos plegables de la lista de hallazgos. Nacen ABIERTOS: aquí solo se
-      // guarda lo que el usuario ha cerrado (ver isGroupOpen).
+      // Los grupos nacen abiertos; solo se guarda lo que el usuario cierra (ver isGroupOpen).
       openGroups: {},
       // ── Chat con LLM (asistente IA) ──
       chatOpen: {},        // por findingKey: panel abierto/cerrado
@@ -558,14 +511,8 @@ export default {
       llmAvailable: null,  // null = sin comprobar; true/false tras comprobar
       llmModel: null,      // modelo que responde; /locoaudit/chat/status ya lo devuelve
 
-      // ── Tokens de color leídos del CSS ───────────────────────────────────────
-      // Los colores que acaban en una cadena de estilo (las barras de severidad, los
-      // puntos del desglose) no los alcanza ningún var(), así que antes estaban
-      // escritos a mano aquí abajo. Eso los convertía en una segunda fuente de verdad
-      // para el color, que es exactamente lo que desincronizó el gauge de Lynis en el
-      // dashboard de host. Ahora se LEEN del :root con getComputedStyle.
-      // Vacíos hasta la primera lectura: un valor vacío no pinta nada, mientras que
-      // una constante de respaldo volvería a ser la segunda fuente que sobra.
+      // ── Tokens de color leídos del :root (ver readTokens) para estilos en JS.
+      // Vacíos hasta la primera lectura: sin constantes de respaldo que dupliquen el CSS.
       tok: {
         critical: '', high: '', medium: '', low: '', info: '',
         criticalText: '', highText: '', mediumText: '', lowText: '', infoText: '',
@@ -595,10 +542,8 @@ export default {
       return c.critical === 0 && c.high === 0 && c.medium === 0 && c.low === 0;
     },
 
-    // ── Estado del objetivo ──────────────────────────────────────────────────
-    // Lo decide host-discovery.js (nmap -sn), NUNCA la severidad ni el número
-    // de puertos: 0 puertos en un equipo que no responde no es "sin riesgo",
-    // es "no se ha auditado". Payloads viejos no traen el campo → 'reachable'.
+    // ── Estado del objetivo: lo decide host-discovery.js (nmap -sn), no la severidad.
+    // Payloads antiguos sin el campo: 'reachable'.
     targetState() {
       var meta = this.auditData && this.auditData.scanMeta;
       return (meta && meta.targetState) || 'reachable';
@@ -609,12 +554,8 @@ export default {
       return this.targetState === 'unreachable';
     },
 
-    // ¿Hay un recuento de puertos que enseñar? Dos formas de que no lo haya, y
-    // las dos acaban en la misma cifra: el objetivo no respondió, o el escaneo
-    // no llegó a terminar. Cero puertos por no haber mirado y cero puertos por
-    // no haber ninguno abierto NO pueden renderizarse igual.
-    // `notAudited` se queda para lo que ya decidía (la insignia y los textos de
-    // "No auditado"); esto es solo la pregunta del contador.
+    // Sin recuento si el objetivo no respondió o el escaneo no terminó:
+    // cero por no mirar y cero por no haber puertos no se pintan igual.
     noPortData() {
       var meta = this.auditData && this.auditData.scanMeta;
       return this.notAudited || (meta && meta.scanStatus === 'inconclusive');
@@ -690,8 +631,7 @@ export default {
     },
 
     srcLabel() {
-      // Nmap es el único escáner del nodo: portSource solo vale 'nmap' o 'none'
-      // (cuando Nmap no está instalado y no se ha escaneado nada).
+      // portSource solo vale 'nmap' o 'none' (Nmap no instalado).
       var src = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.portSource;
       return src === 'nmap' ? 'Nmap' : 'Nmap no disponible';
     },
@@ -711,12 +651,9 @@ export default {
     hostnameLabel() {
       var meta = this.auditData && this.auditData.scanMeta;
       var h = meta && meta.hostname;
-      // Sin PTR no se pinta NADA — ni un guion: un guion sugiere "se comprobó y
-      // no tiene nombre", cuando lo que ocurre es que no hay dato que enseñar.
-      // Se comporta como el resto de campos opcionales de la tira.
+      // Sin PTR no se pinta nada, ni un guion, como el resto de campos opcionales.
       if (!h) return null;
-      // Si el PTR repite literalmente el target, la píldora sería la misma
-      // información dos veces seguidas (caso "localhost").
+      // Si el PTR repite el target (p. ej. localhost), se omite.
       if (h === this.targetLabel) return null;
       return h;
     },
@@ -762,15 +699,8 @@ export default {
       });
     },
 
-    // UNA lista de grupos, clave puerto+protocolo. AGRUPA, no fusiona: el NET-VULN
-    // y el NET-PORT de un mismo puerto siguen siendo dos fichas con su severidad y su
-    // resolución; lo único que comparten es la cabecera. Fusionarlos habría convertido
-    // "puerto abierto" (lo que se ve) y "CVE del servicio" (lo que se deduce de una
-    // versión anunciada) en un solo veredicto, que son cosas distintas.
-    //
-    // Los hallazgos SIN puerto —NET-SCAN-WARN, NET-DEP-NMAP, NET-CFG-ERR,
-    // NET-HOST-UNREACHABLE, NET-NSE-SKIP— no cuelgan de ningún servicio: van a un
-    // grupo "General" que abre la lista, porque hablan de si se llegó a mirar.
+    // Grupos por puerto+protocolo: agrupa sin fusionar NET-VULN y NET-PORT del mismo puerto.
+    // Los hallazgos sin puerto van a "General", al principio.
     findingGroups() {
       var rank = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
       var grupos = {};
@@ -794,8 +724,7 @@ export default {
         }
         var g = grupos[key];
         g.findings.push(f);
-        // Servicio y versión los trae el primer hallazgo que los tenga: los NET-VULN y
-        // NET-SVC los llevan, los NET-PORT no siempre.
+        // Servicio y versión del primer hallazgo que los traiga (NET-PORT no siempre).
         if (!g.service && f.service) g.service = f.service;
         if (!g.version && f.version) g.version = f.version;
         var sev = (f.severity || 'info').toLowerCase();
@@ -810,8 +739,7 @@ export default {
         });
         return g;
       }).sort(function (a, b) {
-        // "General" primero: si el escaneo no llegó a mirar algo, eso se lee ANTES que
-        // cualquier recuento, que es la regla de "fallo de herramienta ≠ dato negativo".
+        // "General" primero: si algo no se pudo mirar, se lee antes que cualquier recuento.
         if ((a.port == null) !== (b.port == null)) return a.port == null ? -1 : 1;
         return (rank[b.maxSeverity] || 0) - (rank[a.maxSeverity] || 0) ||
                (a.port || 0) - (b.port || 0);
@@ -820,13 +748,9 @@ export default {
 
     barCols() {
       var ports = this.sortedPorts;
-      // El color va a una cadena de estilo: ningún var() llega ahí, así que se lee
-      // del :root. `low` deja de ser gris y `info` deja de ser el cian de acento:
-      // los dos convergen con la paleta de severidad del proyecto, que es la de host.
+      // Color en cadena de estilo: se lee del :root porque var() no llega ahí.
       var T = this.tok;
-      // Dos colores por columna: `color` rellena la barra —identidad— y `textColor`
-      // pinta la cifra de encima, que es TEXTO sobre blanco y con el tono base no
-      // llega al mínimo legible.
+      // `color` rellena la barra; `textColor` (tono 700) pinta la cifra con contraste suficiente.
       var defs = [
         { sev: 'high',   label: 'Alto',  color: T.high,   textColor: T.highText },
         { sev: 'medium', label: 'Medio', color: T.medium, textColor: T.mediumText },
@@ -880,15 +804,8 @@ export default {
   },
 
   methods: {
-    // ── Lectura de los tokens de color ────────────────────────────────────────
-    // El CSS es la única autoridad del color; esto solo lo consulta para los sitios
-    // que ningún var() alcanza: atributos SVG y cadenas de estilo en JS.
-    //
-    // getPropertyValue devuelve la cadena CON el espacio inicial del CSS y solo
-    // resuelve con el elemento ya en el documento, de ahí el .trim() y el momento de
-    // la llamada: mounted() y, otra vez, al llegar cada payload —síncrono, antes del
-    // re-render, así que el primer pintado ya tiene color—. Si una lectura vuelve
-    // vacía se conserva la anterior: nunca se cae a una constante de respaldo.
+    // ── Lee los tokens del :root para estilos en JS, donde no llega var().
+    // Si una lectura vuelve vacía se conserva la anterior.
     readTokens() {
       var cs;
       try { cs = getComputedStyle(document.documentElement); } catch (e) { return; }
@@ -911,8 +828,7 @@ export default {
     toggleFinding(key) {
       this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
     },
-    // Los grupos nacen abiertos: plegados por defecto esconderían el único contenido
-    // de la página. El estado guarda solo lo que se ha cerrado.
+    // Abiertos por defecto: el estado guarda solo los cerrados.
     isGroupOpen(key) {
       return this.openGroups[key] !== false;
     },
@@ -921,15 +837,7 @@ export default {
         [key]: !this.isGroupOpen(key)
       });
     },
-    // Etiqueta de TIPO, derivada del prefijo del id. Mapeo completo:
-    //   NET-PORT-* → Exposición     · un puerto abierto
-    //   NET-VULN-* → CVE            · CVE publicados del servicio (vulners)
-    //   NET-SVC-*  → Configuración  · cómo está configurado el servicio (NSE)
-    //   NET-TLS-*  → TLS            · nota de ssl-enum-ciphers
-    //   NET-CFG-*  → Configuración  · error de configuración del propio nodo
-    //   NET-SCAN-*, NET-DEP-*, NET-HOST-*, NET-NSE-* → Estado · qué se pudo mirar
-    // Un id que no esté en la tabla NO recibe etiqueta inventada: devuelve cadena vacía
-    // y el v-if no pinta la píldora. Un tipo adivinado informa menos que ninguno.
+    // Tipo según el prefijo del id; un id desconocido devuelve "" y no se pinta píldora.
     typeLabel(f) {
       var M = {
         'NET-PORT': 'Exposición',
@@ -944,10 +852,7 @@ export default {
       };
       return M[String((f && f.id) || '').split('-').slice(0, 2).join('-')] || '';
     },
-    // Las filas de la tabla de CVE: TODAS, ordenadas por nota descendente. Sin recorte
-    // a los N peores —fue lo que hubo que corregir en Trivy cuando el usuario no
-    // encontraba el CVE que le habían citado— y sin scroll interno, para que el PDF
-    // no se coma la mitad de la lista.
+    // Todas las filas de CVE, por nota descendente, sin recorte.
     cveRows(f) {
       var v = f && f.vulnerabilities;
       if (!Array.isArray(v) || !v.length) return [];
@@ -971,8 +876,7 @@ export default {
       this.filterSev = this.filterSev === sev ? 'all' : sev;
     },
 
-    // Origen HONESTO del comando: lo genera LoCoAudit; si el hallazgo vino de una
-    // herramienta, se indica a partir de qué análisis (Trivy/Lynis/Nmap).
+    // Origen del comando: lo genera LoCoAudit a partir del análisis de la herramienta.
     originLabel(source) {
       var M = {
         trivy: '· a partir del análisis de Trivy',
@@ -1019,26 +923,21 @@ export default {
     _buildHtmlReport() {
       try {
         // LCA:SNAPSHOT:START — única fuente: lib/snapshot-body.txt (build-dashboards.js). NO EDITAR.
-      // Snapshot del DOM ya renderizado del dashboard: fidelidad exacta, no
-      // puede divergir (el export ES el dashboard, sin re-render alternativo).
+      // El export es una foto del DOM ya renderizado, así no puede divergir del dashboard.
       var payload = this.auditData || {};
       var auditType = payload.auditType || '';
-      // 1. CSS del propio dashboard (sentinel por nodo) — fuente ÚNICA de estilo.
+      // 1. CSS del propio dashboard, localizado por su sentinel.
       var css = '', i, styles = document.querySelectorAll('style');
       var tag = 'LCA-STYLE-DASH:' + auditType;
       for (i = 0; i < styles.length; i++) { if (styles[i].textContent.indexOf(tag) >= 0) { css = styles[i].textContent; break; } }
       if (!css) for (i = 0; i < styles.length; i++) { if (styles[i].textContent.indexOf('LCA-STYLE-DASH') >= 0) { css = styles[i].textContent; break; } }
       if (!css) for (i = 0; i < styles.length; i++) { if (styles[i].textContent.length > css.length) css = styles[i].textContent; }
-      // 2. Foto del contenedor de resultados de ESTE dashboard (this.$el primero,
-      //    por si hay varios dashboards en la misma página).
+      // 2. Contenedor de ESTE dashboard; this.$el primero por si hay varios en la página.
       var root = (this.$el && this.$el.querySelector && this.$el.querySelector('.lca-report-root')) || document.querySelector('.lca-report-root') || this.$el;
       var clone = root.cloneNode(true);
       // Quitar lo que necesita servidor (chat IA) y los botones de descarga.
       clone.querySelectorAll('.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn,[class*="chat"]').forEach(function (n) { n.remove(); });
-      // 3. Convertir los grupos y hallazgos en acordeón interactivo (como el
-      //    ui_template): la cabecera lleva data-lca-acc y su cuerpo (el hermano
-      //    siguiente) se abre/cierra con el toggle vanilla embebido. Estado
-      //    inicial = igual que el dashboard: grupos ABIERTOS, detalles CERRADOS.
+      // 3. Acordeón con el toggle embebido: grupos abiertos y detalles cerrados, como el dashboard.
       clone.querySelectorAll('[class*="group-header"]').forEach(function (h) {
         h.setAttribute('data-lca-acc', 'g');
         var b = h.nextElementSibling;
@@ -1050,11 +949,8 @@ export default {
         var b = h.nextElementSibling;
         if (b) { b.classList.remove('open'); b.setAttribute('data-lca-open', '0'); }
       });
-      // 4. CSS extra del export + toggle/copiar (vanilla) + documento autocontenido.
-      // El detalle del alcance (subcarpetas analizadas / excluidas / sin
-      // analizar) va plegado en el dashboard con v-show, así que en el clon
-      // llega con display:none. En un informe descargado no hay nada que
-      // desplegar: se fuerza visible y se retira su botón.
+      // 4. CSS extra, toggle/copiar y documento autocontenido.
+      // El detalle del alcance llega oculto por v-show; en el informe se fuerza visible y sin botón.
       var extra = '.dl-group,.ia-dl-group,.lca-chat-wrap,.ai-ask-btn,.ia-ask-btn,.scope-toggle{display:none!important}'
         + '.scope-detail{display:block!important}'
         + '[data-lca-acc]{cursor:pointer}.command-btn,.ia-copy-btn{cursor:pointer}'
@@ -1113,8 +1009,7 @@ export default {
       var titleMap = { image: 'Imagen', host: 'Host', network: 'Red' };
       var auditTitle = titleMap[a.auditType] || 'Auditoría';
 
-      // Misma regla que el dashboard: si el objetivo no respondió, el informe
-      // no puede leerse como "sin hallazgos = seguro".
+      // Si el objetivo no respondió, el informe no puede leerse como "sin hallazgos = seguro".
       var notAudited = meta.targetState === 'unreachable';
       var notice = notAudited
         ? '<div class="notice"><b>Auditoría no realizada.</b> No se pudo contactar con ' +
@@ -1150,29 +1045,8 @@ export default {
         '</body></html>';
     },
 
-    // Gramática de `fix`. Se lee LÍNEA a línea y los marcadores los pone el ORIGEN
-    // (lib/normalizer.js, nodes/audit-network/…), nunca se deducen aquí:
-    //
-    //   "## "  abre una rama alternativa; el resto de la línea es su subtítulo.
-    //   "$ "   comando del ÚLTIMO paso de la rama abierta. No genera paso propio:
-    //          el comando pertenece al paso que lo usa.
-    //   "> "   nota: párrafo neutro que se pinta TRAS la lista de su rama (o tras el
-    //          bloque introductorio). Nunca se numera, porque no es algo que hacer.
-    //   resto  paso nuevo de la rama abierta.
-    //
-    // Regla de intro: si el texto trae al menos una "## ", las líneas anteriores a la
-    // primera forman un párrafo introductorio SIN numerar —describen el servicio, no
-    // piden nada—. Sin ninguna "## ", todo son pasos, como hasta ahora.
-    //
-    // Devuelve { intro: [], notes: [], branches: [{ heading, steps: [{label, cmd}], notes: [] }] }.
-    //
-    // Es una COPIA literal del parser de host: los tres dashboards se editan en su
-    // propio fichero y no comparten código (decisión cerrada), pero la gramática es la
-    // misma porque el origen de los textos es el mismo.
-    //
-    // Lo que había antes y NO vuelve: trocear por ". " un fix de una sola línea
-    // —convertía cualquier párrafo en una secuencia numerada que nadie había escrito—
-    // y adivinar comandos con una lista de verbos (stepCmd).
+    // Gramática de `fix` (marcadores puestos en origen), copia del parser de host:
+    // "## " abre rama, "$ " comando del último paso, "> " nota sin numerar, resto paso nuevo.
     parseFixSteps(fix) {
       var res = { intro: [], notes: [], branches: [] };
       if (!fix) return res;
@@ -1198,8 +1072,7 @@ export default {
           if (!cmd) return;
           if (!actual) abrir(null);
           var ultimo = actual.steps[actual.steps.length - 1];
-          // Comando sin paso al que colgarse (o con el paso ya ocupado): sale igual, con
-          // la etiqueta vacía. Es un fix mal formado en el origen, no un motivo para perderlo.
+          // Comando sin paso libre: se añade con etiqueta vacía para no perderlo.
           if (!ultimo || ultimo.cmd) actual.steps.push({ label: '', cmd: cmd });
           else ultimo.cmd = cmd;
           return;
@@ -1214,15 +1087,12 @@ export default {
       return res;
     },
 
-    // El fix puede traer el comando en la 1ª línea y una nota explicativa debajo.
-    // El botón copia SOLO el comando (finding.command); la nota se muestra aparte,
-    // para que un pegado en terminal nunca arrastre texto no ejecutable.
+    // El botón copia solo el comando; la nota se muestra aparte.
     fixNote(f) {
       if (!f || !f.command || !f.fix) return "";
       return String(f.fix).split("\n").slice(1).join("\n").trim();
     },
-    // Todos los comandos de la ficha: el directo (findings con `command`) y los que
-    // los pasos marcan con "$ ". Una sola fuente para la nota y para el aviso de sudo.
+    // Todos los comandos de la ficha: `command` y los pasos con "$ ".
     fixCommands(f) {
       if (!f || !f.fix) return [];
       var cmds = f.command ? [String(f.command)] : [];
@@ -1237,8 +1107,7 @@ export default {
     fixHasCmd(f) {
       return this.fixCommands(f).length > 0;
     },
-    // ¿Alguno PIDE privilegios? Se mira el comando, no la prosa: el fix que solo
-    // menciona sudo de pasada no debe disparar el aviso.
+    // Se mira el comando, no la prosa, para decidir el aviso de sudo.
     fixNeedsSudo(f) {
       return this.fixCommands(f).some(function (c) { return /^sudo(\s|$)/.test(String(c).trim()); });
     },
@@ -1272,14 +1141,12 @@ export default {
 
     // ── Chat con LLM ──────────────────────────────────────────
 
-    // Clave estable por hallazgo: el historial vive en finding.id, no en la
-    // posición de la lista (que cambia al filtrar por severidad).
+    // Clave por finding.id, no por posición (cambia al filtrar).
     chatKey(f, fi) {
       return (f && f.id) ? 'id:' + f.id : 'idx:' + fi;
     },
 
-    // Escaneo nuevo = findings nuevos: se borran todas las conversaciones para
-    // no arrastrar contexto de hallazgos que ya no existen.
+    // Escaneo nuevo: se borran las conversaciones de hallazgos que ya no existen.
     resetChats() {
       this.chatEpoch++;
       this.chatOpen     = {};
@@ -1371,13 +1238,10 @@ export default {
 
   mounted() {
     this.readTokens();
-    // Segunda pasada en nextTick: si la hoja del componente aún no estuviera en el
-    // head al montar, la primera lectura vuelve vacía y se conserva lo anterior.
+    // Segunda lectura por si la hoja aún no estaba en el head al montar.
     this.$nextTick(this.readTokens);
 
-    // Detecta si hay un nodo llm-config desplegado para mostrar (o no) el chat.
-    // `model` ya venía en la respuesta y se descartaba; ahora lo enseña la cabecera
-    // del chat, para que se sepa quién firma cada contestación.
+    // Comprueba si hay un llm-config desplegado y qué modelo responde.
     var self = this;
     fetch('/locoaudit/chat/status')
       .then(function(r) { return r.json(); })
@@ -1394,21 +1258,9 @@ export default {
   /*LCA-STYLE-DASH:network — fuente única de estilo del export*/
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* ═══ TOKENS ═══════════════════════════════════════════════════════════════
-     El vocabulario es el de host, que es la referencia de diseño del proyecto.
-     Lo que había antes eran los MISMOS conceptos con otros nombres —las 20
-     `--sev-*`— más un tinte celeste propio del chrome. Cuidado con el
-     desplazamiento del renombrado, ya aplicado aquí:
-
-       --sev-X-bg     → --X-bg       (fondo pálido)
-       --sev-X-border → --X          (el COLOR SÓLIDO)
-       --sev-X-badge  → --X-border   (el borde claro)
-       --sev-X-text   → --X          (el token -text vale lo mismo que la base)
-
-     Invertir los dos de en medio intercambia el color sólido con el borde claro. */
+  /* ═══ TOKENS ═══ Mismo vocabulario que host, la referencia de diseño. */
   :root {
-    /* Severidad. Idéntica a la de host. Es lo que lee readTokens() para los
-       colores que acaban en una cadena de estilo. */
+    /* Severidad, idéntica a host; la lee readTokens() para estilos en JS. */
     --critical: #DC2626;
     --critical-bg: #FEF2F2;
     --critical-border: #FECACA;
@@ -1418,35 +1270,24 @@ export default {
     --medium: #D97706;
     --medium-bg: #FFFBEB;
     --medium-border: #FDE68A;
-    /* `low` deja de ser el gris slate que tenía. Era una decisión —severidad
-       despreciable, sin color— y se descarta a conciencia: una escala en la que un
-       nivel no tiene color no se puede leer como escala. */
+    /* `low` con color propio: una escala con un nivel sin color no se lee como escala. */
     --low: #65A30D;
     --low-bg: #F7FEE7;
     --low-border: #D9F99D;
-    /* `info` deja de ser el cian #06B6D4 que también hacía de acento. Un color no
-       puede ser a la vez un nivel de severidad y la identidad de la interfaz. */
+    /* `info` no hace de acento: un color no puede ser severidad e interfaz a la vez. */
     --info: #0EA5E9;
     --info-bg: #F0F9FF;
     --info-border: #BAE6FD;
 
-    /* Tono 700, para cuando el color va como TEXTO.
-       REVOCA la antigua regla `--X-text = var(--X)`, que se decidió por coherencia
-       sin medir. Medido sobre el fondo pálido del propio nivel, el tono base da
-       4,41 / 3,35 / 3,07 / 2,98 / 2,60 (critical / high / medium / low / info) y el
-       mínimo WCAG AA es 4,5: falla en los cinco. Con el 700 son 5,91 / 4,88 / 4,75 /
-       4,82 / 5,57.
-       El tono base sigue siendo la IDENTIDAD —bordes, puntos, rellenos sólidos,
-       arcos, barras—; el 700 es el que se lee. */
+    /* Tono 700 para texto: el tono base no llega a 4,5:1 sobre el fondo pálido de su nivel.
+       El tono base queda para bordes, puntos, rellenos y barras. */
     --critical-text: #B91C1C;
     --high-text: #C2410C;
     --medium-text: #A16207;
     --low-text: #4D7C0F;
     --info-text: #0369A1;
 
-    /* Chrome. Pierde el tinte celeste (--bg #F0F9FF, --card-border #BAE6FD): eran
-       la identidad cromática de network y se retiran a propósito. El módulo se
-       identifica por icono y etiqueta; el color queda para la severidad. */
+    /* Chrome neutro: el módulo se identifica por icono y etiqueta; el color es para la severidad. */
     --bg: #F8FAFC;
     --card: #FFFFFF;
     --text: #1E293B;
@@ -1455,8 +1296,7 @@ export default {
     --surface: #F1F5F9;
     --text-muted: #94A3B8;
 
-    /* Acento compartido por los tres dashboards. El cian de network desaparece del
-       vocabulario: no es un token con otro valor, es un token que deja de existir. */
+    /* Acento compartido por los tres dashboards. */
     --accent: #7C3AED;
     --accent-bg: #F5F3FF;
     --accent-border: #DDD6FE;
@@ -1482,11 +1322,8 @@ export default {
     padding: 24px;
   }
 
-  /* ── Iconos ────────────────────────────────────────────────────────────────
-     Un solo <symbol> por icono, referenciado con <use>. El sprite es el primer
-     hijo de .lca-report-root para que el clon del export se lo lleve; escondido
-     con position/size y no con display:none, que en el informe descargado podría
-     verse pisado por alguna regla !important del CSS extra. */
+  /* ── Iconos: sprite de <symbol> usado con <use>, primer hijo de .lca-report-root.
+     Se oculta por tamaño y no con display:none, que el CSS extra del export podría pisar. */
   .lca-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
   .icon {
     width: 16px; height: 16px;
@@ -1501,11 +1338,7 @@ export default {
   .icon-sm { width: 13px; height: 13px; vertical-align: -2px; }
   .icon-xl { width: 44px; height: 44px; stroke-width: 1.25; }
 
-  /* Sin pasos de resolución: informa de qué falta, sin fingir un veredicto.
-     El color ya no lleva fallback: --text-secondary está declarado arriba. Antes
-     era `var(--text-secondary, #6B7280)` con el token SIN declarar, así que pintaba
-     el gris de Tailwind del fallback mientras el resto del fichero usaba slate: una
-     declaración escondida que no aparecía en ningún :root. */
+  /* Sin pasos de resolución: informa de qué falta, sin fingir un veredicto. */
   .nofix-note {
     padding: 12px 0;
     font-style: italic;
@@ -1514,10 +1347,7 @@ export default {
   }
   .nofix-note a { color: inherit; font-style: normal; text-decoration: underline; }
 
-  /* ═══ CABECERA ═════════════════════════════════════════════════════════════
-     Misma anatomía que host. El fondo oscuro que tenía network desaparece con su
-     identidad cromática: era lo que obligaba a tener una paleta de texto propia
-     (blancos y slate claros) y de ahí venía el bug de contraste del aviso. */
+  /* ═══ CABECERA ═══ Misma anatomía que host. */
   .header-card {
     background: var(--card);
     border-radius: var(--radius);
@@ -1590,10 +1420,7 @@ export default {
     font-weight: 600;
     letter-spacing: .1px;
   }
-  /* Cada nivel con SU familia entera: fondo pálido, texto sólido y borde claro del
-     MISMO color. La versión anterior mezclaba familias —`.high` traía marco naranja
-     (#EA580C) con texto y punto ROJOS (#FCA5A5 / #EF4444)—, así que un `high` se
-     leía como un `critical`. */
+  /* Cada nivel con su familia completa: fondo pálido, texto y borde del mismo color. */
   .risk-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1.5px solid var(--critical-border); }
   .risk-badge.high     { background: var(--high-bg);     color: var(--high-text);     border: 1.5px solid var(--high-border); }
   .risk-badge.medium   { background: var(--medium-bg);   color: var(--medium-text);   border: 1.5px solid var(--medium-border); }
@@ -1627,8 +1454,7 @@ export default {
   .meta-item-wide { grid-column: span 3; }
   @media (max-width: 1100px) { .meta-item-wide { grid-column: span 2; } }
   .meta-item-actions .dl-group { margin-top: 1px; flex-wrap: nowrap; }
-  /* En el informe exportado el prune ELIMINA .dl-group del clon, así que esta celda
-     se quedaría con su etiqueta "Exportar" y nada debajo. */
+  /* En el export se poda .dl-group: sin .dl-btn la celda "Exportar" se oculta entera. */
   .meta-item-actions:not(:has(.dl-btn)) { display: none; }
 
   .dl-group { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1673,9 +1499,7 @@ export default {
   }
   /* Todos los puertos son informativos: no hay nada que arreglar. */
   .port-count-num.all-info { color: var(--low); }
-  /* Objetivo no auditado: gris apagado, nunca el verde de "todo correcto". Un 0
-     grande y verde sobre un escaneo que no ocurrió es el falso verde que la regla
-     "fallo de herramienta ≠ dato negativo" existe para impedir. */
+  /* Objetivo no auditado: gris, nunca el verde de "todo correcto". */
   .port-count-num.no-data { color: var(--text-secondary); }
   .port-count-note { font-size: 11px; color: var(--text-secondary); text-align: center; }
 
@@ -1702,15 +1526,7 @@ export default {
     .header-aside { padding-left: 0; padding-top: 20px; border-left: none; border-top: 1px solid var(--border); align-self: stretch; }
   }
 
-  /* ═══ AVISOS ═══════════════════════════════════════════════════════════════
-     El mismo componente que host: un solo .lca-notice en tres niveles.
-     El nivel manda en el peso, el tono en el color, y son independientes.
-
-     Lo que sustituye —.scan-warn— tenía además un bug de contraste grave: su
-     descripción era #CBD5E1 sobre el fondo claro #F0F9FF, o sea 1,39:1 cuando el
-     mínimo legible es 4,5:1. Los colores venían de cuando el aviso vivía sobre la
-     cabecera oscura y se quedaron ahí al moverlo. El mensaje afectado era "no se ha
-     podido auditar": el más importante del panel, y prácticamente invisible. */
+  /* ═══ AVISOS ═══ Mismo .lca-notice de host: el nivel marca el peso y el tono el color. */
   .lca-notice {
     --notice-accent: var(--text-secondary);
     --notice-bg: var(--card);
@@ -1730,8 +1546,7 @@ export default {
   .lca-notice-lead { font-size: 12.5px; font-weight: 700; color: var(--text); margin-top: 4px; }
   .lca-notice-body { font-size: 12.5px; color: var(--text); line-height: 1.6; margin-top: 6px; }
   .lca-notice-body.is-strong { font-weight: 600; }
-  /* `scanWarn.desc` trae sus propios saltos de línea: son la estructura del texto
-     (causa, causas posibles, qué comprobar), no un accidente del formato. */
+  /* scanWarn.desc trae saltos de línea que forman parte del texto. */
   .lca-notice-body.is-prewrap { white-space: pre-line; }
   .lca-notice-list {
     margin: 8px 0 0; padding-left: 20px;
@@ -1838,9 +1653,7 @@ export default {
     text-transform: uppercase; letter-spacing: 0.06em;
     padding: 2px 7px; border-radius: 10px;
   }
-  /* Fondo pálido y texto 700, igual que en host. Antes el fondo era el BORDE claro
-     (--X-border) y el texto el tono base: `.info` daba 2,09:1, el peor contraste de
-     los tres dashboards. Herencia del renombrado --sev-X-badge → --X-border. */
+  /* Fondo pálido y texto 700, como host, por contraste. */
   .port-sev-badge.high     { background: var(--high-bg);     color: var(--high-text);     border: 1px solid var(--high-border); }
   .port-sev-badge.medium   { background: var(--medium-bg);   color: var(--medium-text);   border: 1px solid var(--medium-border); }
   .port-sev-badge.info     { background: var(--info-bg);     color: var(--info-text);     border: 1px solid var(--info-border); }
@@ -1872,9 +1685,7 @@ export default {
     font-size: 11.5px; color: var(--text-secondary);
     display: flex; align-items: center; gap: 5px;
   }
-  /* Sobre la tarjeta TINTADA por severidad el texto secundario se queda en 4,46:1.
-     La etiqueta es neutra ("Proceso", "Versión"), así que va en el color de texto
-     principal: el peso lo marcan el tamaño y las mayúsculas, no el gris. */
+  /* Sobre la tarjeta tintada el gris secundario no llega a 4,5:1: se usa el texto principal. */
   .port-meta-item .meta-key {
     color: var(--text);
     font-size: 10.5px;
@@ -1969,11 +1780,7 @@ export default {
     bottom: 6px;
     left: 0; right: 0;
   }
-  /* Los números de puerto van DENTRO de la barra, así que su fondo es el relleno de
-     la severidad, y ninguno de esos rellenos es lo bastante oscuro para texto blanco:
-     2,77 sobre info, 3,09 sobre low, 3,19 sobre medium. Una sombra de texto no
-     cuenta como contraste —WCAG mide color contra color—, así que lo que hay debajo
-     tiene que ser oscuro de verdad: una píldora propia. */
+  /* Números dentro de la barra: ningún relleno da contraste con blanco, así que llevan píldora oscura. */
   .bar-port-num {
     font-family: var(--font-mono);
     font-size: 9px;
@@ -2061,26 +1868,14 @@ export default {
   .badge.info     { background: var(--info-bg);     color: var(--info-text);     border: 1px solid var(--info-border); }
   .badge.low      { background: var(--low-bg);      color: var(--low-text);      border: 1px solid var(--low-border); }
   .badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
-  /* Etiqueta de TIPO, no de severidad ni acción: gris con borde. En violeta
-     competía con el badge de severidad y con lo único que sí se pulsa.
-     Fondo --card (no --surface): el secundario sobre #F1F5F9 da 4,34:1. */
+  /* Etiqueta de tipo neutra; fondo --card porque sobre --surface no llega a 4,5:1. */
   .badge.cat      { background: var(--card); color: var(--text-secondary); border: 1px solid var(--border); }
 
   /* ── FINDINGS ────────────────────────────────────────────────── */
   .findings-list { display: flex; flex-direction: column; gap: 10px; }
 
-  /* ── Grupos por puerto ───────────────────────────────────────────────────
-     Cabecera NEUTRA y sin barra lateral de color: en esta lista el color es la
-     severidad, y un tinte por grupo la ahogaba. El violeta queda para lo que se
-     pulsa (Copiar, enlaces, asistente).
-     Fondo de tarjeta y no --surface: sobre el gris #F1F5F9 el texto secundario
-     —la versión— da 4,34:1 y el mínimo es 4,5. Medido, no supuesto.
-     NO renombrar .group-header ni .group-body: lib/snapshot-body.txt los busca por
-     subcadena y el cuerpo tiene que seguir siendo el hermano siguiente.
-     El envoltorio .findings-group es el MISMO de host: la tarjeta la pone él, no
-     la cabecera, y por eso .group-header ya no lleva fondo, borde ni radio propios.
-     Envolver no rompe el informe exportado —cabecera y cuerpo siguen siendo
-     hermanos dentro del envoltorio—, que es la restricción estructural real. */
+  /* ── Grupos por puerto: cabecera neutra, el color queda para la severidad; fondo de tarjeta por contraste.
+     No renombrar .group-header ni .group-body: el export los busca y deben seguir siendo hermanos. */
   .findings-group {
     background: var(--card);
     border: 1px solid var(--border);
@@ -2115,9 +1910,7 @@ export default {
     color: var(--text-secondary);
   }
   .group-sevs { margin-left: auto; display: flex; gap: 4px; }
-  /* Misma píldora que .sev-badge de host: fondo, texto Y borde de la misma
-     familia. El borde es lo que la separa del fondo de la cabecera ahora que
-     la cabecera ya no tiene tarjeta propia. */
+  /* Misma píldora que .sev-badge de host: fondo, texto y borde de la misma familia. */
   .gsev {
     font-size: 10px;
     font-weight: 700;
@@ -2137,9 +1930,7 @@ export default {
     flex: 0 0 auto;
   }
   .group-chevron.open { transform: rotate(180deg); }
-  /* Separado de la cabecera por el mismo borde que usa .group-findings en host.
-     El padding evita que el borde de cada .finding-item choque con el del
-     envoltorio y se lea como un borde doble. */
+  /* El padding evita que el borde de cada .finding-item se lea como borde doble. */
   .group-body {
     display: flex;
     flex-direction: column;
@@ -2195,9 +1986,7 @@ export default {
   }
   .finding-body.open { display: block; }
 
-  /* ── Detalle: UN panel plano con secciones ───────────────────────────────
-     Misma anatomía que host: no dos tarjetas dentro de otra tarjeta, sino un
-     panel con un título por sección y una línea discontinua entre ellas. */
+  /* ── Detalle: un panel plano con secciones, como host. */
   .detail-stack {
     background: var(--card);
     border: 1px solid var(--border);
@@ -2205,8 +1994,7 @@ export default {
     padding: 14px 16px;
     margin-top: 14px;
   }
-  /* Sin caja propia: la sección se delimita por su título y, a partir de la segunda,
-     por una línea discontinua. */
+  /* Sin caja propia: a partir de la segunda sección, línea discontinua. */
   .detail-col + .detail-col {
     margin-top: 14px;
     padding-top: 14px;
@@ -2220,9 +2008,7 @@ export default {
     color: var(--text-secondary);
     margin-bottom: 8px;
   }
-  /* Sans, no mono: la evidencia es una frase, no un valor técnico. La mono se queda
-     donde hay algo que comparar carácter a carácter (puerto, versión, CVE) y en los
-     comandos (.command-text). */
+  /* Sans: la evidencia es una frase; la mono queda para valores y comandos. */
   .detail-evidence {
     /* Es un <pre>: sin `inherit` explícito se cae a la monoespaciada del navegador. */
     font-family: inherit;
@@ -2277,10 +2063,7 @@ export default {
   .meta-link { color: var(--accent); text-decoration: none; font-weight: 600; white-space: nowrap; }
   .meta-link:hover { text-decoration: underline; }
 
-  /* ── Tabla de CVE ────────────────────────────────────────────────────────
-     TODAS las filas, sin max-height y sin scroll interno: un recorte aquí deja
-     la mitad de los CVE fuera del PDF. Sin zebra: el gris secundario de
-     "exploit público" sobre #F8FAFC queda en 4,55:1 y sobre blanco en 4,76. */
+  /* ── Tabla de CVE: todas las filas, sin max-height ni scroll, para que salgan en el PDF. */
   .cve-table { width: 100%; border-collapse: collapse; font-size: 12px; }
   .cve-table th {
     text-align: left;
@@ -2315,8 +2098,7 @@ export default {
   .cve-origin .icon { flex-shrink: 0; margin-top: 2px; }
 
   /* ── Pasos de resolución ── */
-  /* Rama = alternativa excluyente. Su subtítulo es el mismo gris que .detail-col-title,
-     sin mayúsculas: está un nivel por debajo. */
+  /* Rama = alternativa excluyente; subtítulo un nivel por debajo. */
   .fix-branch + .fix-branch { margin-top: 14px; }
   .fix-branch-title {
     font-size: 11px;
@@ -2325,8 +2107,7 @@ export default {
     margin-bottom: 6px;
   }
   .fix-steps {
-    /* El número lo pone el navegador, no un <span>. Tabular para que quede alineado al
-       pasar de 9 a 10, y en gris para que no compita con el texto del paso. */
+    /* Números del navegador, tabulares y en gris. */
     list-style: decimal;
     padding-left: 20px;
     font-variant-numeric: tabular-nums;
@@ -2341,9 +2122,7 @@ export default {
     padding-left: 2px;
   }
   .fix-step + .fix-step { margin-top: 8px; }
-  /* Contexto, no acción: ni marcador ni sangría. La intro va antes de las ramas; la
-     nota, detrás de la lista a la que pertenece. Gris secundario para que ninguna de
-     las dos se lea como un paso pendiente. */
+  /* Intro y notas: contexto sin marcador ni sangría, para no leerse como pasos. */
   .fix-intro { font-size: 12.5px; line-height: 1.5; color: var(--text); }
   .fix-intro + .fix-intro { margin-top: 6px; }
   .fix-intro + .fix-branch, .fix-note-line + .fix-branch { margin-top: 12px; }
@@ -2571,10 +2350,7 @@ export default {
     margin-top: 6px; font-size: 12px; line-height: 1.55; color: var(--text-secondary);
     white-space: pre-wrap;
   }
-  /* Cómo funciona la herramienta, no un riesgo del hallazgo: neutra. Las dos cajas
-     ámbar que había aquí (.cmd-warn y .cmd-sudo, esta última con #92400E, #FEF3C7 y
-     #FCD34D escritos a mano) competían en color con un Medio real, y el ámbar es de
-     la severidad. Fondo --bg y no --surface: el secundario sobre #F1F5F9 da 4,34:1. */
+  /* Nota neutra de funcionamiento; fondo --bg por contraste (sobre --surface no llega a 4,5:1). */
   .cmd-note-safety {
     display: flex; align-items: flex-start; gap: 7px;
     background: var(--bg); color: var(--text-secondary);

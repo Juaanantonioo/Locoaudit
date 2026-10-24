@@ -1,17 +1,8 @@
 "use strict";
 
 /**
- * test-trivy-skip-kind.js — Naturaleza de un `skipped` de trivy-fs.
- *
- * Un `skipped` no siempre es un fallo, y quien llama tenía que distinguirlo
- * comparando el TEXTO de `reason`. Ese texto cambia con la plataforma:
- *
- *   macOS → "rootfs solo aplica en Linux"
- *   Arch  → "Trivy no soporta pacman"
- *
- * Son el mismo caso (esta combinación no se puede analizar) con dos redacciones,
- * así que la comparación de strings los mandaba a la rama de error y abortaba la
- * auditoría entera. Ahora cada `skipped` declara su naturaleza en `kind`.
+ * test-trivy-skip-kind.js — Naturaleza (`kind`) de un `skipped` de trivy-fs.
+ * Quien llama decide por `kind`, no por el texto de `reason`, que cambia con la plataforma.
  *
  * Uso:
  *   node test/manual/test-trivy-skip-kind.js
@@ -64,8 +55,7 @@ ok(!esFatal(macos) && !esFatal(arch), "ninguno aborta la auditoría");
 
 console.log("\n── 3 · Un skipped no rompe el normalizador y queda declarado ─────\n");
 
-// Antes devolvía []: cero CVE por no haber mirado se leía igual que cero CVE
-// tras analizar. Ahora sale un finding informativo que lo dice.
+// Un escaneo omitido deja un finding informativo, para no confundirse con cero CVE.
 for (const forma of FORMAS) {
   const res = Object.assign({ skipped: true }, forma);
   let findings, error = null;
@@ -84,8 +74,7 @@ for (const forma of FORMAS) {
 
 console.log("\n── 3b · En imagen, el aviso general no duplica los errores por imagen ─\n");
 
-// audit-image.js ya emite un IMG-SCAN-ERR-nnn por imagen fallida: el aviso
-// general solo aparece cuando el fallo no trae ese detalle.
+// El aviso general solo aparece si el fallo no trae ya su IMG-SCAN-ERR-nnn.
 const conFallos = normalizeImage(
   { skipped: true, reason: "all image scans failed", failed: [{ ref: "nginx:latest", error: "TIMEOUT" }] },
   "trivy"
@@ -103,10 +92,7 @@ ok(sinFallos.length === 1 && sinFallos[0].severity === "info",
 
 console.log("\n── 4 · El caso pacman llega hasta el estado de alcance ───────────\n");
 
-// El escenario real de CachyOS. Ya no lo decide una lista nuestra de gestores:
-// se ejecuta Trivy, Trivy no reconoce la base de datos de paquetes y devuelve
-// kind 'os-unsupported'. El estado que verá el dashboard es 'unsupported-manager',
-// no un error, y la auditoría no se aborta.
+// Trivy no reconoce los paquetes (CachyOS): 'os-unsupported' → 'unsupported-manager', sin abortar.
 const rootfsArch = {
   skipped: true, kind: "os-unsupported",
   reason: "Trivy no ha detectado la familia del sistema operativo",
@@ -116,9 +102,7 @@ ok(estado === "unsupported-manager",
    `linux + informe sin OS.Family + interruptor activo → "${estado}"`,
    "esperado 'unsupported-manager'");
 
-// Y lo que NO puede pasar: que un informe sin familia de SO acabe contando como
-// análisis conseguido. Cero vulnerabilidades del sistema sobre un sistema que
-// Trivy no supo leer es el falso verde que todo esto existe para evitar.
+// Un informe sin familia de SO no cuenta como análisis conseguido.
 ok(estado !== "scanned", "un informe sin OS.Family jamás sale como 'scanned'");
 
 console.log(`\n${passed} pasados · ${failed} fallidos\n`);

@@ -2,22 +2,13 @@
 
 /**
  * test-host-state.js — Estado del objetivo en audit-network.
- *
- * Fija el comportamiento que arregla el falso verde: auditar una IP que no
- * existe mostraba "Sin puertos expuestos · SIN RIESGO · 0 puertos abiertos",
- * indistinguible de un equipo real sin servicios expuestos.
- *
- * Hay TRES estados y el dashboard solo representaba dos:
- *   1. alcanzable CON puertos abiertos
- *   2. alcanzable SIN puertos abiertos   ← el único que merece verde
- *   3. NO alcanzable                     ← antes se confundía con el 2
+ * Tres estados: alcanzable con puertos, alcanzable sin puertos (el único verde) y no alcanzable.
  *
  * Uso:
  *   node test/manual/test-host-state.js            # solo fixtures (offline)
  *   node test/manual/test-host-state.js --live     # + descubrimiento real
  *
- * Sin framework de tests, como el resto de test/manual/*.js. Sale con código 1
- * si algún assert falla.
+ * Sin framework; sale con código 1 si algún assert falla.
  */
 
 const fs   = require("fs");
@@ -52,11 +43,7 @@ function eq(name, actual, expected) {
   ok(name, actual === expected, `esperado ${JSON.stringify(expected)}, obtenido ${JSON.stringify(actual)}`);
 }
 
-/**
- * Lee un fixture. Devuelve null si no existe: los fixtures que solo se pueden
- * capturar en otra plataforma (host-unreach solo aparece cuando el SO informa
- * de EHOSTUNREACH, típico de Linux) no deben hacer fallar la suite.
- */
+/** Lee un fixture, o null si no existe (algunos solo se capturan en otra plataforma). */
 function fixture(name) {
   const file = path.join(FIXTURES, name);
   if (!fs.existsSync(file)) return null;
@@ -90,10 +77,7 @@ function testDiscovery() {
   eq("salida truncada sin <runstats> → reachable null (ambiguo)", r3.reachable, null);
   eq("ambiguo → targetState 'unknown'", deriveTargetState({ reachable: r3.reachable }), "unknown");
 
-  // nmap abortado: emite <runstats> y <hosts up="0" down="0" total="0"/>, que
-  // antes se leía como "host caído". Es un fallo de la herramienta, no un dato
-  // sobre el objetivo. Caso real de Windows: -e con el nombre amigable del
-  // adaptador ("Wi-Fi"), que el nmap de Windows no entiende.
+  // nmap abortado (hosts total="0"): es un fallo de la herramienta, no un host caído.
   const errXml = '<?xml version="1.0"?><nmaprun><runstats><finished time="1" ' +
     'timestr="x" elapsed="0.05" summary="s" exit="error" errormsg="I cannot ' +
     'figure out what source address to use for device Wi-Fi, does it even ' +
@@ -107,8 +91,7 @@ function testDiscovery() {
   eq("XML vacío → ambiguo, nunca false", parseDiscoveryXml("").reachable, null);
   eq("basura → ambiguo, nunca false", parseDiscoveryXml("<nope/>").reachable, null);
 
-  // Ambiguo NO debe cancelar la auditoría: la regla del nodo es
-  // skipScan = (targetState === 'unreachable' && !forceScan)
+  // Ambiguo no cancela: skipScan = (targetState === 'unreachable' && !forceScan)
   ok(
     "ambiguo NO cancela el escaneo (solo 'unreachable' lo hace)",
     deriveTargetState({ reachable: null }) !== "unreachable"
@@ -129,8 +112,7 @@ function testDiscovery() {
   ok("el descubrimiento NO lleva -Pn (lo anularía)", !cmd.includes("-Pn"), cmd);
   ok("amplía las sondas TCP más allá de 80/443", cmd.includes("-PS22,80,443,8080"), cmd);
 
-  // En Windows os.networkInterfaces() da el nombre amigable ("Wi-Fi"), que el
-  // nmap de Windows no entiende: allí el comando sale sin -e.
+  // En Windows el comando sale sin -e: nmap no entiende el nombre amigable del adaptador.
   const { findInterfaceForTarget } = require("../../nodes/audit-network/modules/nmap-wrapper");
   eq("Windows → sin interfaz para -e", findInterfaceForTarget("192.168.0.30", "win32"), null);
   ok("macOS/Linux → se sigue eligiendo interfaz cuando la hay",
@@ -188,8 +170,7 @@ function testNeverGreenWhenDead() {
   eq("targetState derivado del descubrimiento → 'unreachable'", state, "unreachable");
   ok("targetState NUNCA es 'reachable' para el fixture inalcanzable", state !== "reachable");
 
-  // Y el escaneo de ese mismo host no aporta puertos: 0 puertos + unreachable
-  // = "no auditado", no "sin riesgo".
+  // 0 puertos + unreachable = "no auditado", no "sin riesgo".
   const ports = parseNmapXml(deadScan);
   ok(
     "0 puertos + unreachable ⇒ estado neutro, no verde",
@@ -207,12 +188,7 @@ function testNeverGreenWhenDead() {
 
 // ── 4. Dashboard: cómo interpreta el estado ───────────────────────────────────
 
-/**
- * Carga los computed del ui_template de red desde examples/ (fuente de verdad;
- * el flujo instalado es una copia) y los evalúa sobre un payload como el que
- * emite el nodo. Sin Vue: se resuelven como getters sobre un objeto plano, que
- * es exactamente lo que hace Vue con `computed`.
- */
+/** Evalúa los computed del ui_template de red (examples/) como getters, sin Vue. */
 function loadDashboardVm(scanMeta, ports, summary) {
   const file = path.join(__dirname, "..", "..", "examples", "dashboard-network-template.html");
   const html = fs.readFileSync(file, "utf8");

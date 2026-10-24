@@ -1,8 +1,6 @@
 "use strict";
 
-/** Inventario de software instalado. Cada plataforma tiene su fuente y ninguna es obligatoria.
- *  Que una fuente no llegue a mirar no es un inventario vacío: sale como { skipped, kind, reason },
- *  el mismo contrato que lynis.js y trivy-fs.js, que es el que audit-host.js sabe ramificar. */
+/** Inventario de software instalado. Una fuente que no llega a mirar sale como { skipped, kind, reason }, no como lista vacía. */
 
 const { execCommand, commandExists } = require("../../../lib/executor");
 
@@ -12,14 +10,12 @@ const DPKG_TIMEOUT_MS     = 15000;
 const RPM_TIMEOUT_MS      = 15000;
 const WMIC_TIMEOUT_MS     = 30000;
 
-/** Mismo criterio que lynis.js: child_process mata por timeout con SIGTERM y marca killed.
- *  Un timeout se arregla reintentando, un error no: por eso son kinds distintos. */
+/** Un timeout se arregla reintentando y un error no: por eso son kinds distintos. */
 function isTimeout(err) {
   return Boolean(err && (err.killed || err.signal === "SIGTERM"));
 }
 
-/** Skip a partir de un fallo de exec. `what` va en primera persona del inventario, no el comando:
- *  el comando entra como detalle reproducible, no como el mensaje. */
+/** Skip a partir de un fallo de exec; el comando va como detalle reproducible. */
 function execSkip(err, cmd, what, timeoutMs) {
   if (isTimeout(err)) {
     return {
@@ -39,10 +35,7 @@ function execSkip(err, cmd, what, timeoutMs) {
   };
 }
 
-// Sin Homebrew el inventario se queda en las apps del sistema. No es un fallo: aquí una lista
-// vacía sí significa "no hay paquetes de brew", no "no se pudo mirar". Distinto es que brew esté
-// instalado y no responda (timeout, error): entonces sí hay software que se ha quedado sin listar.
-// El kind 'not-installed' es lo que separa "ausente" de "caído", y mergeDarwin() lo lee.
+// Brew ausente ('not-installed') no es un fallo; brew instalado que no responde, sí.
 async function fromBrew() {
   if (!(await commandExists("brew"))) {
     return {
@@ -82,8 +75,7 @@ async function fromSystemProfiler() {
     return execSkip(err, cmd, "las aplicaciones instaladas del sistema", PROFILER_TIMEOUT_MS);
   }
 
-  // El parseo va aparte del exec a propósito: "el comando no se pudo ejecutar" y "el comando
-  // respondió algo que no se entiende" son dos fallos distintos y el usuario hace cosas distintas.
+  // Parseo aparte del exec: no ejecutarse y responder algo ilegible son fallos distintos.
   let data;
   try {
     data = JSON.parse(stdout);
@@ -107,8 +99,7 @@ async function fromSystemProfiler() {
     }));
 }
 
-// Sin comprobar que dpkg-query existe: eso lo decide el despacho de getSwInventory(), que es
-// quien puede responder 'unsupported' cuando no hay ningún gestor. Ver la nota de allí.
+// La existencia de dpkg-query la comprueba getSwInventory().
 async function fromDpkg() {
   const cmd = "dpkg-query -W -f='${Package} ${Version}\\n'";
   try {
@@ -126,7 +117,7 @@ async function fromDpkg() {
   }
 }
 
-// Igual que fromDpkg: la existencia de rpm la comprueba el despacho, no esta función.
+// La existencia de rpm la comprueba getSwInventory().
 async function fromRpm() {
   const cmd = "rpm -qa --queryformat '%{NAME} %{VERSION}\\n'";
   try {
@@ -145,8 +136,7 @@ async function fromRpm() {
 }
 
 async function fromWmic() {
-  // wmic está deprecado y no viene en Windows 11 24H2 ni posteriores: ausente es el caso esperable,
-  // y sin esta comprobación salía como un error de ejecución cualquiera.
+  // wmic ya no viene en Windows 11 24H2: ausente es lo esperable, no un error.
   if (!(await commandExists("wmic"))) {
     return {
       skipped: true,
@@ -182,40 +172,34 @@ function isSkip(result) {
   return Boolean(result && result.skipped);
 }
 
-/** Una entrada por nombre y orden alfabético, como siempre. */
+/** Una entrada por nombre, en orden alfabético. */
 function dedupeAndSort(pkgs) {
   const map = new Map();
   for (const pkg of pkgs) map.set(pkg.name.toLowerCase(), pkg);
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Skip que no deja agujero: la fuente no está en este equipo, así que tampoco hay software suyo
- *  que se haya quedado sin listar. Es otra cosa que "está y no se ha podido leer". */
+/** ¿La fuente no está instalada? Entonces no queda software suyo sin listar. */
 function isAbsentSource(result) {
   return isSkip(result) && result.kind === "not-installed";
 }
 
-/**
- * macOS suma dos fuentes. Que una esté ausente no deja hueco; que una caiga, sí, y entonces el
- * inventario sigue saliendo con `partial` diciendo qué falta y por qué.
- */
+/** macOS junta brew y system_profiler; si una cae, el inventario sale con `partial`. */
 function mergeDarwin(brew, apps) {
-  // Homebrew ausente no resta nada: system_profiler sigue dando el inventario completo del equipo.
   const brewFailed = isSkip(brew) && !isAbsentSource(brew);
-  // system_profiler es nativo de macOS: no hay comprobación de existencia y nunca sale ausente.
+  // system_profiler es nativo: nunca sale como ausente.
   const appsFailed = isSkip(apps);
 
   if (brewFailed && appsFailed) {
     return {
       skipped: true,
-      // Dos motivos distintos no se resumen en uno: si no coinciden, el kind honesto es 'error'.
+      // Si los motivos no coinciden, el kind es 'error'.
       kind: brew.kind === apps.kind ? brew.kind : "error",
       reason: `${brew.reason} ${apps.reason}`,
     };
   }
 
-  // Brew ausente y system_profiler caído: no queda ninguna fuente. El estado lo pone la que falló,
-  // que es la única de las dos que representa algo que no se pudo mirar.
+  // Brew ausente y system_profiler caído: no queda ninguna fuente.
   if (appsFailed && isSkip(brew)) {
     return { skipped: true, kind: apps.kind, reason: apps.reason };
   }
@@ -230,7 +214,7 @@ function mergeDarwin(brew, apps) {
     };
   }
 
-  // Homebrew ausente y system_profiler bien: inventario completo, array plano y sin envolver.
+  // Brew ausente y system_profiler bien: inventario completo.
   if (isSkip(brew)) return dedupeAndSort(apps);
 
   // brew va detrás en el spread para que su versión pise a la de system_profiler.
@@ -245,15 +229,11 @@ async function getSwInventory() {
     return mergeDarwin(brew, apps);
   }
 
-  // Fuente única: su skip es directamente el del módulo, sin envolver.
   if (platform === "win32") {
     return fromWmic();
   }
 
-  // En Linux la comprobación de existencia vive AQUÍ y solo aquí. No la metas dentro de fromDpkg()
-  // ni de fromRpm(): duplicada, un sistema sin gestor podría salir como 'not-installed' por una
-  // función y como 'unsupported' por el despacho, y solo el segundo describe ese sistema.
-  // (fromBrew y fromWmic sí llevan la suya: allí no está duplicada, es la única.)
+  // En Linux la existencia del gestor se comprueba solo aquí, para que un sistema sin gestor salga 'unsupported'.
   const hasDpkg = await commandExists("dpkg-query");
   if (hasDpkg) return fromDpkg();
 

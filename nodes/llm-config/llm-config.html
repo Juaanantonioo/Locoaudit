@@ -12,8 +12,7 @@
         },
         oneditprepare: function () {
             var $url    = $("#node-config-input-ollamaUrl");
-            // El campo que Node-RED guarda de verdad. Vive siempre en el DOM, aunque solo se vea
-            // en modo respaldo: al guardar, es la única fuente.
+            // El campo que Node-RED guarda: siempre en el DOM, aunque solo se vea en modo respaldo.
             var $model  = $("#node-config-input-model");
             var $select = $("#node-config-select-model");
             var $fbRow  = $("#node-config-model-fallback");
@@ -25,8 +24,7 @@
             // La última URL consultada, para no repetir la petición en cada blur.
             var lastUrl = null;
 
-            /** Ollama guarda `ollama pull qwen3` como "qwen3:latest" y el usuario lo escribe sin
-             *  etiqueta: son el mismo. Misma regla que checkModel() en lib/llm-client.js. */
+            /** "qwen3" y "qwen3:latest" son el mismo modelo, como en checkModel(). */
             function normModel(m) {
                 return String(m || "").trim().toLowerCase().replace(/:latest$/, "");
             }
@@ -40,8 +38,7 @@
                 $msg.html('<span style="color:' + color + ';">' + html + "</span>");
             }
 
-            /** Sin lista utilizable, el campo de texto: con Ollama apagado, el desplegable
-             *  estaría vacío y no habría manera de guardar un modelo. */
+            /** Sin lista, campo de texto: con Ollama apagado también hay que poder guardar un modelo. */
             function useFallback() {
                 $select.hide().prop("disabled", true);
                 $fbRow.show();
@@ -53,8 +50,7 @@
                 $select.show().prop("disabled", false);
             }
 
-            /** Un modelo guardado que ya no esté instalado se añade igual y marcado: cambiar en
-             *  silencio la configuración del usuario al abrir el panel sería peor. */
+            /** Un modelo guardado que ya no está instalado se muestra marcado, sin cambiar la configuración en silencio. */
             function renderModels(models) {
                 var current = $model.val();
                 $select.empty();
@@ -83,8 +79,7 @@
                 setMsg("#3a7d3a", "✓ " + models.length + " modelo(s) disponible(s) en Ollama.");
             }
 
-            /** Contra la URL que haya en el formulario ahora mismo. Cualquier fallo cae a modo
-             *  respaldo con su aviso: el panel nunca se queda inservible. */
+            /** Lista los modelos de la URL del formulario; si falla, modo respaldo con aviso. */
             function loadModels(force) {
                 var url = ($url.val() || "").trim();
 
@@ -97,7 +92,7 @@
                     return;
                 }
 
-                // El blur salta muchas veces y sin esto se reconsultaría el mismo servidor.
+                // El blur salta muchas veces: no se repite la consulta al mismo servidor.
                 if (!force && url === lastUrl) return;
                 lastUrl = url;
 
@@ -106,7 +101,6 @@
                 $.getJSON("locoaudit/llm/models", { url: url })
                     .done(function (r) {
                         if (!r || !r.ok) {
-                            // El backend ya separa servidor caído de otros fallos con `kind`.
                             useFallback();
                             // r.error es texto ajeno y setMsg pinta HTML: se escapa.
                             setMsg("#a33", "✗ " + $("<div>").text((r && r.error) || "No se pudo obtener la lista de modelos.").html() +
@@ -114,8 +108,7 @@
                             return;
                         }
                         if (!r.models || r.models.length === 0) {
-                            // Ollama contesta pero no tiene nada: no es un fallo de conexión y
-                            // lo que hay que hacer es otra cosa.
+                            // Ollama responde pero no tiene modelos: no es un fallo de conexión.
                             useFallback();
                             setMsg("#b5651d",
                                 "Ollama responde, pero no hay ningún modelo instalado. " +
@@ -153,7 +146,7 @@
                 var model = $model.val();
                 $out.css("color", "#888").html('<i class="fa fa-spinner fa-spin"></i> Comprobando…');
 
-                // Probar conexión refresca además la lista: un gesto deja el panel al día.
+                // Probar conexión refresca también la lista.
                 loadModels(true);
 
                 $.getJSON("locoaudit/llm/check", { url: url, model: model })
@@ -192,8 +185,7 @@
         <input type="text" id="node-config-input-ollamaUrl" placeholder="http://127.0.0.1:11434">
     </div>
 
-    <!-- El <select> es el mando; lo que Node-RED guarda vive en #node-config-input-model, que
-         está siempre en el DOM y se enseña como texto cuando no hay lista. -->
+    <!-- El <select> solo elige; lo que se guarda es #node-config-input-model. -->
     <div class="form-row">
         <label for="node-config-select-model">
             <i class="fa fa-cube"></i> Modelo

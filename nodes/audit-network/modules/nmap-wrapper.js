@@ -1,9 +1,7 @@
 "use strict";
 
-/**
- * Único escáner de puertos del nodo. Si nmap no está instalado devuelve { skipped, reason } y el llamante emite el finding.
- * Va con -sV, -T4, -Pn y -oX - (XML por stdout). El "host up" de -Pn no se usa: siempre dice que sí, y decide host-discovery.js.
- */
+// Escáner de puertos del nodo. Sin nmap devuelve { skipped, kind, reason } y el nodo emite el hallazgo.
+// El "host up" de -Pn no se usa: siempre dice que sí; eso lo decide host-discovery.js.
 
 const os                             = require("os");
 const { execCommand, commandExists } = require("../../../lib/executor");
@@ -11,12 +9,12 @@ const { PORT_CATALOG }               = require("./port-catalog");
 const { getFixForPort }              = require("./network-utils");
 const { decodeXmlEntities, parseScripts } = require("./nmap-xml");
 
-/**
- * La interfaz local que comparte subred con el objetivo, para el -e. Hace falta en macOS con varias interfaces en la
- * misma subred (sin -e nmap falla con SO_ERROR 50).
- * En Windows devuelve null: os.networkInterfaces() da el nombre amigable ("Wi-Fi"), nmap responde "I cannot figure out
- * what source address to use" y sale con <hosts up="0">, que el pre-check leía como host caído. Sin -e funciona.
- */
+// Nombre de interfaz que puede ir en la línea de nmap sin comillas.
+const IFACE_NAME_RE = /^[\w.:-]+$/;
+
+// Interfaz para el -e (macOS falla sin ella con varias en la misma subred).
+// En Windows null: el nombre amigable ("Wi-Fi") no lo entiende nmap y sin -e funciona.
+// Un nombre con otros caracteres se descarta: va a la shell y sin -e el escaneo sigue funcionando.
 function findInterfaceForTarget(targetIp, platform = process.platform) {
   if (platform === "win32") return null;
   if (targetIp === "127.0.0.1" || targetIp === "localhost") return null;
@@ -31,17 +29,13 @@ function findInterfaceForTarget(targetIp, platform = process.platform) {
       const sameSubnet = maskParts.every(
         (mask, i) => (addrParts[i] & mask) === (targetParts[i] & mask)
       );
-      if (sameSubnet) return name;
+      if (sameSubnet && IFACE_NAME_RE.test(name)) return name;
     }
   }
   return null;
 }
 
-/**
- * nmap emite <runstats> aunque aborte, con exit="error" y unos <hosts up="0"> que no son un dato:
- * no llegó a sondear nada. Leerlo como "0 puertos" o como "host caído" es el falso verde de
- * siempre, así que quien llama tiene que poder distinguirlo. Lo usa también host-discovery.
- */
+// nmap emite <runstats> aunque aborte; esos ceros no son un dato y no deben leerse como "0 puertos".
 function parseNmapFatalError(xml) {
   const m = String(xml || "").match(/<finished\b([^>]*)>/);
   if (!m) return null;
@@ -53,18 +47,15 @@ function parseNmapFatalError(xml) {
   return msg || `nmap terminó con exit="${exitAt[1]}"`;
 }
 
-/** attrValue('protocol="tcp" portid="22"', "portid") → "22". */
+// attrValue('protocol="tcp" portid="22"', "portid") → "22".
 function attrValue(tag, attr) {
   const re = new RegExp(`\\b${attr}="([^"]*)"`, "i");
   const m  = tag.match(re);
-  // El banner es externo: un salto de línea decodificado fabricaba un "$ orden" copiable en el fix.
+  // Se quitan los saltos: un banner externo podría fabricar una línea "$ orden" en el fix.
   return m ? decodeXmlEntities(m[1]).replace(/[\x00-\x1f\x7f\u2028\u2029]+/g, " ") : "";
 }
 
-/**
- * Los puertos abiertos del XML. Cada uno viene como
- * <port protocol="tcp" portid="22"><state state="open"/><service name="ssh" product="OpenSSH"/></port>.
- */
+// Puertos abiertos del XML de nmap.
 function parseNmapXml(xml) {
   const results    = [];
   const portBlockRe = /<port\s[^>]*>[\s\S]*?<\/port>/g;
@@ -80,36 +71,30 @@ function parseNmapXml(xml) {
     const protocol = attrValue(portTag, "protocol") || "tcp";
     if (isNaN(port)) continue;
 
-    // Sin --open en el comando, este es el único filtro: closed y filtered ahora llegan al XML.
+    // Sin --open, closed y filtered llegan al XML y se filtran aquí.
     const stateMatch = block.match(/<state\s([^/]*)\/?>/);
     const state      = stateMatch ? attrValue(stateMatch[1], "state") : "open";
     if (state !== "open") continue;
 
-    // `[^>]` y no `[^/]`: cuando -sV no reconoce del todo un servicio mete su huella en
-    // `servicefp`, y esa huella lleva barras dentro ("HTTP/1\\.1", "AirTunes/950\\.7\\.1"). Con
-    // `[^/]` el patrón dejaba de casar en cuanto aparecía la primera, y el servicio caía al
-    // fallback "unknown" perdiendo product, version y extrainfo. Un '>' crudo no puede aparecer
-    // dentro de un atributo —nmap lo escapa como &gt;—, así que cortar en '>' es fiable.
+    // `[^>]` y no `[^/]`: servicefp lleva barras, y nmap siempre escapa '>' dentro de un atributo.
     const serviceMatch = block.match(/<service\b([^>]*?)\/?>/);
     const service      = serviceMatch ? attrValue(serviceMatch[1], "name")      : "unknown";
     const product      = serviceMatch ? attrValue(serviceMatch[1], "product")   : "";
     const version      = serviceMatch ? attrValue(serviceMatch[1], "version")   : "";
     const extrainfo    = serviceMatch ? attrValue(serviceMatch[1], "extrainfo") : "";
-    // tunnel="ssl" es lo que dice nmap cuando habló TLS de verdad, y manda sobre cualquier
-    // lista de puertos: un HTTPS en 14443 no está en ninguna tabla y aquí sí se reconoce.
+    // tunnel="ssl" indica TLS real, también en puertos que no están en ninguna tabla.
     const tunnel       = serviceMatch ? attrValue(serviceMatch[1], "tunnel")    : "";
     const versionStr   = [product, version].filter(Boolean).join(" ");
 
-    // Los <cpe> hijos del <service>. Son la clave con la que vulners agrupa sus resultados, así
-    // que hay que conservarlos para poder casar cada grupo de CVE con su software.
+    // Se guardan todos los CPE: vulners agrupa sus CVE por ellos.
     const cpes = [];
     const cpeRe = /<cpe>([^<]*)<\/cpe>/g;
     let cpeMatch;
     while ((cpeMatch = cpeRe.exec(block)) !== null) cpes.push(decodeXmlEntities(cpeMatch[1]));
-    // El de aplicación manda sobre el de sistema operativo: vulners pregunta por software.
+    // El de aplicación tiene prioridad sobre el de sistema operativo.
     const cpe = cpes.find((c) => c.startsWith("cpe:/a")) || cpes[0] || "";
 
-    // El subárbol NSE del puerto. Vacío cuando el escaneo fue sin --script, que es lo normal.
+    // Vacío si el escaneo fue sin --script.
     const nse = parseScripts(block);
 
     results.push({
@@ -121,17 +106,13 @@ function parseNmapXml(xml) {
   return results;
 }
 
-/**
- * El PTR que nmap ya resuelve, porque el escaneo no lleva -n. Solo vale type="PTR": el
- * type="user" es el eco del target que escribió el usuario, y presentarlo sería devolverle su
- * propia entrada disfrazada de descubrimiento.
- */
+// PTR resuelto por nmap. Solo type="PTR": type="user" es el eco de lo que escribió el usuario.
 function parsePtrHostname(xml) {
   const m = String(xml || "").match(/<hostname\s+name="([^"]+)"\s+type="PTR"\s*\/>/);
   return m ? m[1] : null;
 }
 
-/** Severidad del catálogo y fix por puerto; lo que no está en el catálogo queda en "low". */
+// Severidad del catálogo y fix por puerto; fuera del catálogo queda en "low".
 function applyMeta(parsed) {
   const meta = PORT_CATALOG[parsed.port];
   return {
@@ -141,22 +122,18 @@ function applyMeta(parsed) {
   };
 }
 
-/**
- * La línea de nmap, extraída de runNmap() para comprobar en un test que con NSE apagado el comando es el de siempre, byte a byte.
- * No lleva -O (necesita root y dio un SO equivocado), -f (fragmentar es evadir cortafuegos) ni --script-timeout (un script
- * matado desaparece del XML igual que uno sin hallazgos, una causa de silencio que el canario no cierra).
- */
+// Separada de runNmap() para poder probarla. Sin -O (requiere root), -f (evasión) ni --script-timeout,
+// porque un script cortado desaparece del XML igual que uno sin hallazgos.
 function buildScanCommand({ target, portSpec, ifaceFlag = "", nseScripts = [] }) {
   const scriptFlag = nseScripts.length ? ` --script ${nseScripts.join(",")}` : "";
   return `nmap -sV -T4 -Pn --max-retries 2 ${ifaceFlag}${scriptFlag} -p ${portSpec} -oX - ${target}`.trim();
 }
 
-/** Los puertos abiertos del target, o { skipped: true } si nmap no está instalado. */
+// Puertos abiertos del objetivo, o { skipped: true } si nmap no está o el escaneo no terminó.
 async function runNmap(options = {}) {
   const target   = options.target  || "127.0.0.1";
   const scanMode = options.scanMode || "standard";
-  // Con -Pn contra un host tras firewall, 1-1024 ya pasa de 45 s: por debajo de eso el escaneo
-  // se corta y sale un falso "0 puertos". El nodo pasa el suyo según el modo.
+  // Valor de reserva; el nodo pasa el suyo según el modo.
   const timeout  = options.timeout || 90000;
 
   const available = await commandExists("nmap");
@@ -164,9 +141,7 @@ async function runNmap(options = {}) {
     return { skipped: true, kind: "not-installed", reason: "Nmap no está instalado en este equipo" };
   }
 
-  // Rango numérico por modo más los puertos del catálogo por encima; repetir los de dentro da "Duplicate port number(s)".
-  // El coste lo marcan los puertos filtrados (cada uno espera reintentos): 10.000 rondan los 500 s. "full" son todos,
-  // porque parar en el 10000 dejaba fuera servicios reales (27017 de MongoDB). Contra un equipo con cortafuegos pasa de una hora y el editor lo avisa.
+  // Rango del modo más los puertos del catálogo por encima (repetirlos da "Duplicate port number(s)").
   const RANGE_MAX = { rapido: 1024, standard: 3000, full: 65535 };
   let portSpec;
   if (scanMode === "custom" && options.customPorts && options.customPorts.trim()) {
@@ -182,14 +157,9 @@ async function runNmap(options = {}) {
 
   const iface = findInterfaceForTarget(target);
   const ifaceFlag = iface ? `-e ${iface}` : "";
-  // Lista ya podada por nse-scripts.js: aquí no se comprueba nada, solo se escribe. Vacía
-  // cuando el análisis NSE está apagado, que es el defecto.
+  // Lista ya filtrada por nse-scripts.js; vacía con NSE apagado.
   const nseScripts = Array.isArray(options.nseScripts) ? options.nseScripts.filter(Boolean) : [];
-  // --max-retries 2 recorta los reintentos por puerto filtrado sin perder puertos abiertos.
-  // Sin --open, que es un filtro de salida y no cambia el sondeo: medido, 45,92 s con él y
-  // 45,95 s sin él sobre -p 1-200, y el XML solo crece ~300 bytes porque nmap colapsa lo no
-  // abierto en un <extraports>. A cambio vuelven el recuento de filtrados, que es la evidencia
-  // de cortafuegos, y su motivo. Con --open, un host sin puertos abiertos no emitía ni <host>.
+  // Sin --open para conservar <extraports>, que da el recuento de filtrados (evidencia de cortafuegos).
   const cmd = buildScanCommand({ target, portSpec, ifaceFlag, nseScripts });
 
   let stdout;
@@ -197,11 +167,9 @@ async function runNmap(options = {}) {
   try {
     stdout = await execCommand(cmd, timeout);
   } catch (err) {
-    // Hay sistemas donde nmap sale con código distinto de cero y el XML es válido igual, como
-    // con los avisos de permisos de macOS sin sudo.
+    // nmap puede salir con error y dejar XML válido (p. ej. macOS sin sudo).
     stdout = err.stdout || "";
-    // Un escaneo válido termina en <runstats>…<finished>. Sin eso no se puede afirmar
-    // "0 puertos abiertos": sería un falso "sin riesgo".
+    // Sin <runstats>/<finished> no se puede afirmar "0 puertos abiertos".
     if (!stdout.includes("<runstats") && !stdout.includes("/finished")) {
       return {
         skipped: true,
@@ -212,8 +180,7 @@ async function runNmap(options = {}) {
     }
   }
 
-  // Abortado no es "escaneado sin resultado", es no escaneado. Se junta con el camino de
-  // "no concluyente" del timeout, mismo NET-SCAN-WARN, en vez de inventar un estado nuevo.
+  // Abortado es "no escaneado": sale por el mismo camino no concluyente que el timeout.
   const fatalError = parseNmapFatalError(stdout);
   if (fatalError) {
     return {
@@ -224,17 +191,23 @@ async function runNmap(options = {}) {
     };
   }
 
-  // De aquí no sale ningún "hostUp": con -Pn el XML trae siempre up="1" y reason="user-set",
-  // o sea que no se comprobó nada. Eso lo decide host-discovery.
   const completed = stdout.includes("<runstats") || stdout.includes("/finished");
-  // Real desde que se quitó --open: antes este bloque no salía y el recuento era siempre 0.
+  // Código 0 pero XML truncado o vacío: no se puede afirmar "0 puertos".
+  if (!completed) {
+    return {
+      skipped: true,
+      inconclusive: true,
+      reason: "escaneo no concluyente: nmap no devolvió un informe completo",
+      scan: { target, portSpec, scanMode, completed: false, filteredCount: 0, filteredReason: null, hostname: null },
+    };
+  }
   const filteredMatch = stdout.match(/<extraports\s+state="filtered"\s+count="(\d+)"/);
   const filteredCount = filteredMatch ? parseInt(filteredMatch[1], 10) : 0;
-  // El motivo dominante (no-response, host-unreach…) solo afina el mensaje, no decide nada.
+  // El motivo dominante solo afina el mensaje.
   const reasonMatch = stdout.match(/<extrareasons\s+reason="([^"]*)"/);
   const filteredReason = reasonMatch ? reasonMatch[1] : null;
 
-  // nmap ya lo resolvía y se estaba tirando. Null si el objetivo no tiene DNS inverso.
+  // Null si el objetivo no tiene DNS inverso.
   const hostname = parsePtrHostname(stdout);
 
   const parsed = parseNmapXml(stdout);
@@ -248,8 +221,7 @@ async function runNmap(options = {}) {
   };
 }
 
-// findInterfaceForTarget se exporta para que el descubrimiento salga por la misma interfaz que
-// el escaneo: por otra, el -sn podría decir "no alcanzable" sobre una ruta que el escaneo sí tiene.
+// findInterfaceForTarget se exporta para que el descubrimiento use la misma interfaz que el escaneo.
 module.exports = {
   runNmap, parseNmapXml, parsePtrHostname, findInterfaceForTarget, parseNmapFatalError,
   buildScanCommand,

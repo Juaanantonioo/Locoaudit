@@ -1,12 +1,7 @@
 "use strict";
 
-/**
- * Qué scripts NSE están instalados y, tras el escaneo, qué le pasó a cada uno en cada puerto.
- *
- * Hay que preguntar antes: un nombre inexistente en `--script` no degrada el escaneo, lo aborta
- * (nmap 7.99: "failed to initialize the script engine … QUITTING!", exit=1, <hosts up="0">). Una instalación sin
- * `vulners` daría "la red entera sin auditar". Si aun así se colara, parseNmapFatalError() lo recoge como NET-SCAN-WARN.
- */
+// Qué scripts NSE hay instalados y qué pasó con cada uno en cada puerto.
+// Se pregunta antes porque un nombre inexistente en --script aborta el escaneo entero.
 
 const { execCommand }                        = require("../../../lib/executor");
 const { NSE_SCRIPT_IDS, appliesTo, sourceKind } = require("./nse-catalog");
@@ -14,10 +9,7 @@ const { findScript }                         = require("./nmap-xml");
 
 const HELP_TIMEOUT_MS = 15000;
 
-/**
- * Los nombres que `nmap --script-help` reconoció. El ancla es la línea `Categories:` y no el nombre, porque la descripción
- * de un script puede citar a otro (ssl-cert cita ssl-enum-ciphers) y se daría por instalado algo solo mencionado.
- */
+// Se ancla en `Categories:` porque la descripción de un script puede citar a otro.
 function parseScriptHelp(stdout) {
   const lines = String(stdout || "").split(/\r?\n/);
   const found = new Set();
@@ -29,40 +21,37 @@ function parseScriptHelp(stdout) {
   return found;
 }
 
-/** El nombre que nmap señala en 'X' did not match a category, filename, or directory. */
+// Nombre que nmap rechaza en "'X' did not match a category, filename, or directory".
 function parseRejectedName(text) {
   const m = String(text || "").match(/'([^']+)' did not match a category, filename, or directory/);
   return m ? m[1] : null;
 }
 
-/**
- * Qué scripts de la lista están instalados, con UNA llamada. `--script-help` aborta en el primer nombre que no reconoce,
- * así que solo ese caso cuesta un reintento con el resto (una llamada por script AUSENTE).
- * Devuelve { checked, available:Set, missing:[], reason }. `checked:false` es comprobación no realizada, no "no hay scripts".
- */
+// --script-help aborta en el primer nombre desconocido: se reintenta sin él (una llamada por script ausente).
+// checked:false significa que no se pudo comprobar, no que no haya scripts.
 async function scriptExists(nmapPath, ids = NSE_SCRIPT_IDS, timeoutMs = HELP_TIMEOUT_MS) {
   const available = new Set();
   const missing   = [];
   let   pending   = ids.slice();
 
-  // Cota dura: cada vuelta descarta un nombre, así que no puede haber más vueltas que nombres.
+  // Cada vuelta descarta un nombre, así que no hay más vueltas que nombres.
   for (let vuelta = 0; vuelta <= ids.length && pending.length; vuelta++) {
     let stdout = "";
     let stderr = "";
     try {
-      // execCommand resuelve con el stdout en crudo (una cadena) y solo trae stderr cuando falla.
+      // execCommand solo da stderr cuando falla.
       stdout = (await execCommand(`"${nmapPath}" --script-help ${pending.join(",")}`, timeoutMs)) || "";
     } catch (err) {
       stdout = (err && err.stdout) || "";
       stderr = (err && err.stderr) || String((err && err.message) || err);
     }
 
-    // Lo que sí reconoció antes de abortar cuenta: nmap los imprime en orden.
+    // Lo reconocido antes de abortar también cuenta.
     for (const n of parseScriptHelp(stdout)) if (pending.includes(n)) available.add(n);
 
     const rejected = parseRejectedName(stderr) || parseRejectedName(stdout);
     if (!rejected) {
-      // Sin nombre rechazado: o salió todo bien, o falló por algo que no es un script ausente.
+      // Sin nombre rechazado: o fue bien o falló por otra causa.
       const sinRespuesta = pending.filter((n) => !available.has(n));
       if (sinRespuesta.length && !parseScriptHelp(stdout).size) {
         return {
@@ -86,14 +75,8 @@ async function scriptExists(nmapPath, ids = NSE_SCRIPT_IDS, timeoutMs = HELP_TIM
   return { checked: true, available, missing, reason: null };
 }
 
-/**
- * Qué le pasó a cada script en un puerto, después del escaneo:
- *   found           salió en el XML de este puerto. Hay dato.
- *   not-applicable  no le tocaba (puerto no TLS, servicio sin versión…). Es alcance, no hueco, y lleva su motivo.
- *   not-run         le tocaba, o no se sabe, y no hay dato. Esto sí es un hueco.
- * No existe un estado "salió y estaba limpio": un script callado puede ser un handshake que no se completó, y leerlo
- * como limpio es el falso verde que el proyecto prohíbe. Para vulners se apoya en el canario.
- */
+// Estado por script y puerto: found, not-applicable (fuera de alcance) o not-run (hueco).
+// No existe "limpio": un script callado puede ser un diálogo que no terminó.
 function scriptStates(p, availability) {
   const scripts = (p && p.nse) || [];
   const avail   = availability || { checked: false, available: new Set(), missing: [] };
@@ -129,7 +112,7 @@ function scriptStates(p, availability) {
       continue;
     }
 
-    // Le tocaba y no salió. La causa depende de con quién hablaba el script.
+    // Le tocaba y no salió; el motivo depende de con quién hablaba el script.
     states[id] = {
       state: "not-run",
       kind: "no-output",

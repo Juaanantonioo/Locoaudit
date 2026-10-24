@@ -2,15 +2,13 @@
 
 /**
  * cdp.js — Ejecuta JavaScript dentro de un dashboard servido y devuelve el resultado.
- * Validar un dashboard exige mirarlo renderizado (color efectivo, orden de bloques en el DOM, sprite tras el export).
- * Sin dependencias: habla el protocolo de DevTools por WebSocket, que Node 22 trae de serie.
+ * Sin dependencias: usa el protocolo de DevTools por el WebSocket nativo de Node 22.
  *
  *   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu --remote-debugging-port=9333 --user-data-dir=/tmp/lca-chrome about:blank &
  *   node scripts/cdp.js http://127.0.0.1:1881/dashboard/Host scripts/contrast-audit.js
  *
- * El segundo argumento es un FICHERO con una expresión JavaScript (no un script con `return`); se imprime lo que evalúe.
- * Variables: CDP_PORT (9333), CDP_WAIT_MS (9000, el dashboard recibe los datos por websocket y no con el load) y
- * CDP_NO_NAV=1 para no navegar y evaluar en la página ya abierta (cada navegación tira el websocket y un sondeo en bucle no termina).
+ * El segundo argumento es un fichero con una expresión JavaScript (sin `return`); se imprime lo que evalúe.
+ * Variables: CDP_PORT (9333), CDP_WAIT_MS (9000) y CDP_NO_NAV=1 para evaluar en la página ya abierta.
  */
 
 const fs = require("fs");

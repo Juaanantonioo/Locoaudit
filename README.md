@@ -201,7 +201,7 @@ La primera ejecución de `audit-host` puede tardar varios minutos: Lynis recorre
 
 ### Auditar otro equipo de la red
 
-`audit-network` permite indicar una dirección IP distinta de la del propio equipo. Antes del escaneo completo, comprueba si el objetivo responde. Si no lo hace, no ejecuta el análisis de puertos y muestra el estado **No auditado**, en lugar de informar de cero puertos abiertos, que podría interpretarse erróneamente como ausencia de riesgo.
+`audit-network` permite indicar la dirección IP de otro equipo, que tiene que estar en una de las redes a las que está conectado el equipo que audita. Una dirección privada de otra red se rechaza igual que una pública. Antes del escaneo completo, comprueba si el objetivo responde. Si no lo hace, no ejecuta el análisis de puertos y muestra el estado **No auditado**, en lugar de informar de cero puertos abiertos, que podría interpretarse erróneamente como ausencia de riesgo.
 
 Audita únicamente equipos de tu propiedad o para los que dispongas de autorización expresa.
 

@@ -2,11 +2,8 @@
  * contrast-audit.js — Auditoría de contraste sobre un dashboard RENDERIZADO.
  * No es un script de Node sino una expresión que se evalúa en la página con scripts/cdp.js:
  *   node scripts/cdp.js http://127.0.0.1:1881/dashboard/Host scripts/contrast-audit.js
- *
- * Renderizado y no estático porque el fondo efectivo puede venir de un ancestro, de un rgba() a medio componer o de una
- * clase con más alcance del previsto (al quitar el prefijo `ia-` de image, `.critical` pintó de rojo pálido toda la cabecera).
- * Criterio WCAG AA: 4,5:1 texto normal y 3:1 texto grande (≥24px, o ≥18,66px en negrita). Solo elementos con texto propio,
- * visibles y dentro de .lca-report-root; se deduplica por clase+color.
+ * Criterio WCAG AA: 4,5:1 texto normal y 3:1 texto grande (≥24px, o ≥18,66px en negrita).
+ * Solo elementos visibles con texto propio dentro de .lca-report-root; se deduplica por clase+color.
  */
 (function () {
   const parse = (c) => {
@@ -26,9 +23,7 @@
     a: 1,
   });
 
-  // Sube por los ancestros acumulando capas semitransparentes hasta el primer fondo
-  // opaco. Sin esto, un texto sobre rgba(...) se mide contra "transparent" y sale bien
-  // siempre.
+  // Compone las capas semitransparentes de los ancestros hasta el primer fondo opaco.
   const fondoEfectivo = (el) => {
     let acc = { r: 255, g: 255, b: 255, a: 1 };
     const capas = [];

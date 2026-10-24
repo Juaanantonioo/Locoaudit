@@ -1,10 +1,7 @@
 "use strict";
 
-/**
- * Foto fija de los eventos de seguridad de las últimas N horas: logins, sudo/su y sesiones abiertas. No es un HIDS.
- * Lynis mira la configuración de SSH y este módulo los eventos; la severidad la pone el normalizador (severity-map).
- * Sin fuentes devuelve { skipped, reason }; las que fallan sueltas van en `partial`. Nunca pide sudo.
- */
+/** Foto fija de los eventos de seguridad de las últimas N horas (logins, sudo/su, sesiones). No es un HIDS y nunca pide sudo.
+ *  Sin fuentes devuelve { skipped, reason }; las que fallan sueltas van en `partial`. */
 
 const fs = require("fs");
 const { execCommand, commandExists } = require("../../../lib/executor");
@@ -33,7 +30,7 @@ function extractTimestamp(line) {
   return null;
 }
 
-/** El PID identifica la sesión, que es como se deduplican las líneas del mismo intento. */
+/** El PID identifica la sesión y sirve para deduplicar las líneas de un mismo intento. */
 function tagPid(line, tagRe) {
   const m = line.match(tagRe);
   return m ? m[1] : null;
@@ -42,20 +39,15 @@ function tagPid(line, tagRe) {
 /** "sshd-session[5775]:" → "5775"; también sshd y sshd-auth. */
 const SSHD_PID_RE = /sshd(?:-session|-auth)?\[(\d+)\]/;
 
-/**
- * Clave de sesión cuando la línea no trae [PID] (canal OpenSSH/Operational de Windows). IP:puerto sirve porque el puerto de
- * origen es único por conexión TCP. Solo se usa si no hay PID.
- */
+/** Clave de sesión sin [PID] (OpenSSH de Windows): IP:puerto, único por conexión TCP. */
 function connKey(line) {
   let m = line.match(/\bfrom (\S+) port (\d+)/);
   if (!m) m = line.match(/\buser \S+ (\S+) port (\d+)/);
   return m ? `${m[1]}:${m[2]}` : null;
 }
 
-/**
- * Líneas de sshd (Linux y macOS) más "error: PAM: authentication error" de macOS. Un intento fallido emite varias líneas con el
- * mismo PID y solo cuenta "Failed password"; "Invalid user" y "Connection closed" son respaldo, uno por sesión (fallos de publickey).
- */
+/** Líneas de sshd y el error PAM de macOS. Solo cuenta "Failed password"; "Invalid user" y "Connection closed"
+ *  son respaldo, uno por sesión, para los fallos de publickey. */
 function parseSshdLines(text) {
   const accepted = [];
   const failed = [];
@@ -123,10 +115,7 @@ function parseSshdLines(text) {
   return { accepted, failed };
 }
 
-/**
- * Líneas de sudo y su. Un sudo correcto se reconoce por COMMAND=; los fallos, por "incorrect password attempt(s)", "a password
- * is required" o el authentication failure de pam_unix. De su: "session opened for user" y el "BAD SU" de macOS.
- */
+/** Líneas de sudo y su: un sudo correcto lleva COMMAND=; los fallos, los mensajes de contraseña de sudo o pam_unix. */
 function parseSudoLines(text) {
   const ok = [];
   const failed = [];
@@ -171,8 +160,7 @@ function parseSudoLines(text) {
       continue;
     }
 
-    // Solo el su de verdad: el "pam_unix(sudo:session): session opened" se descarta porque la
-    // línea COMMAND= de arriba ya cuenta ese uso. Contar ambas daba el "13 usos" del dashboard.
+    // Solo el su real: la sesión pam de sudo ya la cuenta la línea COMMAND=.
     m = line.match(/session opened for user ([^\s(]+)(?:\(uid=\d+\))? by ([^\s(]+)/);
     if (m && !/pam_unix\(sudo:/.test(line)) {
       ok.push({
@@ -205,13 +193,32 @@ function parseWhoLines(text) {
   return sessions;
 }
 
-/** Si el comando falla, el motivo va a partial[] y la fuente devuelve cadena vacía. */
+// Aviso de journalctl cuando el usuario no puede leer el journal del sistema.
+const JOURNAL_DENIED_RE = /not seeing messages from other users|insufficient permissions|permission denied/i;
+
+/** Si el comando falla, el motivo va a partial[] y devuelve null, para no confundirlo con una salida vacía. */
 async function tryExec(cmd, timeoutMs, sourceName, partial) {
   try {
     return await execCommand(cmd, timeoutMs);
   } catch (err) {
     partial.push({ source: sourceName, reason: err.message || "exec failed" });
-    return "";
+    return null;
+  }
+}
+
+/** journalctl con stderr: { text, denied }, o null si falló. Un fallo por permisos lleva kind propio. */
+async function tryJournal(cmd, sourceName, partial) {
+  try {
+    const { stdout, stderr } = await execCommand(cmd, CMD_TIMEOUT_MS, { withStderr: true });
+    return { text: stdout, denied: JOURNAL_DENIED_RE.test(stderr || "") };
+  } catch (err) {
+    const denied = JOURNAL_DENIED_RE.test(`${err.stderr || ""} ${err.message || ""}`);
+    partial.push({
+      source: sourceName,
+      reason: err.message || "exec failed",
+      ...(denied ? { kind: "no-permission" } : {}),
+    });
+    return null;
   }
 }
 
@@ -219,34 +226,56 @@ async function tryExec(cmd, timeoutMs, sourceName, partial) {
 async function collectLinux(windowHours, sources, partial) {
   let sshText = "";
   let sudoText = "";
+  let logsChecked = false;
 
   if (await commandExists("journalctl")) {
-    // Desde OpenSSH 9.8 la autenticación la registra `sshd-session` (y `sshd-auth` desde la 9.9): con solo _COMM=sshd salen cero
-    // eventos. Los varios _COMM= se combinan con OR. `-o short-iso` y no `-o cat`: hacen falta el timestamp y el [PID] para deduplicar.
-    sshText = await tryExec(
+    // Desde OpenSSH 9.8 autentica `sshd-session` (y `sshd-auth`): hace falta más de un _COMM=.
+    // `-o short-iso` porque para deduplicar hacen falta timestamp y [PID].
+    const sshRes = await tryJournal(
       `journalctl _COMM=sshd _COMM=sshd-session _COMM=sshd-auth --since "-${windowHours}h" --no-pager -o short-iso`,
-      CMD_TIMEOUT_MS, "journalctl(sshd)", partial
+      "journalctl(sshd)", partial
     );
-    sudoText = await tryExec(
+    const sudoRes = await tryJournal(
       `journalctl _COMM=sudo --since "-${windowHours}h" --no-pager -o short-iso`,
-      CMD_TIMEOUT_MS, "journalctl(sudo)", partial
+      "journalctl(sudo)", partial
     );
-    const suText = await tryExec(
+    const suRes = await tryJournal(
       `journalctl _COMM=su --since "-${windowHours}h" --no-pager -o short-iso`,
-      CMD_TIMEOUT_MS, "journalctl(su)", partial
+      "journalctl(su)", partial
     );
-    if (suText) sudoText += "\n" + suText;
-    sources.push("journalctl");
+    sshText = (sshRes && sshRes.text) || "";
+    sudoText = (sudoRes && sudoRes.text) || "";
+    if (suRes && suRes.text) sudoText += "\n" + suRes.text;
+    const hechas = [sshRes, sudoRes, suRes].filter(Boolean);
+    // Sin permisos journalctl sale con 0 pero solo enseña los mensajes propios: no se ven sshd ni sudo.
+    const vistas = hechas.filter((r) => !r.denied);
+    if (hechas.length > vistas.length) {
+      partial.push({
+        source: "journalctl",
+        kind: "no-permission",
+        reason: "journalctl avisa de que no se ven los mensajes de otros usuarios ni del sistema: " +
+                "faltan permisos de lectura del journal (grupos adm o systemd-journal)",
+      });
+    }
+    // Solo cuenta como fuente si alguna consulta llegó a ver el journal completo.
+    if (vistas.length) {
+      sources.push("journalctl");
+      logsChecked = true;
+    }
   } else if (fs.existsSync(AUTH_LOG)) {
-    // El auth.log entero filtrado por proceso: sin año en el timestamp no hay filtro temporal
-    // fino posible. Rota a diario en la mayoría de distros, así que como foto fija sirve.
+    // auth.log no lleva año: se filtra por proceso y no por hora (rota a diario).
     try {
       const content = fs.readFileSync(AUTH_LOG, "utf8");
       sshText = content.split("\n").filter((l) => /sshd/.test(l)).join("\n");
       sudoText = content.split("\n").filter((l) => /\bsudo\b|\bsu[:[]/.test(l)).join("\n");
       sources.push("auth.log");
+      logsChecked = true;
     } catch (err) {
-      partial.push({ source: "auth.log", reason: `no legible: ${err.message}` });
+      partial.push({
+        source: "auth.log",
+        reason: `no legible: ${err.message}`,
+        ...(err.code === "EACCES" || err.code === "EPERM" ? { kind: "no-permission" } : {}),
+      });
     }
   } else {
     partial.push({
@@ -258,8 +287,7 @@ async function collectLinux(windowHours, sources, partial) {
   const ssh = parseSshdLines(sshText);
   const sudo = parseSudoLines(sudoText);
 
-  // lastb suele pedir root, así que solo se intenta si no hubo fallidos por otra vía y su
-  // fracaso es un skip parcial, no un error.
+  // lastb suele pedir root: solo se intenta si no hubo fallidos por otra vía, y su fallo es un skip parcial.
   if (ssh.failed.length === 0 && (await commandExists("lastb"))) {
     try {
       const lastbOut = await execCommand("lastb -20", CMD_TIMEOUT_MS);
@@ -275,37 +303,43 @@ async function collectLinux(windowHours, sources, partial) {
     }
   }
 
-  return { ssh, sudo };
+  return { ssh, sudo, logsChecked };
 }
 
 /** macOS: todo sale del log unificado. */
 async function collectDarwin(windowHours, sources, partial) {
   let sshText = "";
   let sudoText = "";
+  let logsChecked = false;
 
   if (await commandExists("log")) {
-    // Desde OpenSSH 9.8 (Sequoia) cada conexión va a `sshd-session` y los "Accepted" salen a
-    // nivel Info: sin --info y sin ese proceso el predicado antiguo no veía nada.
-    sshText = await tryExec(
+    // Desde OpenSSH 9.8 los "Accepted" salen de `sshd-session` a nivel Info: hace falta --info.
+    const sshOut = await tryExec(
       `log show --style syslog --info --predicate '(process == "sshd") OR (process == "sshd-session")' --last ${windowHours}h`,
       LOG_TIMEOUT_MS, "log(sshd)", partial
     );
-    sudoText = await tryExec(
+    const sudoOut = await tryExec(
       `log show --style syslog --info --predicate 'process == "sudo"' --last ${windowHours}h`,
       LOG_TIMEOUT_MS, "log(sudo)", partial
     );
+    sshText = sshOut || "";
+    sudoText = sudoOut || "";
     // `su` es otro proceso: sus fallos salen como "BAD SU ..." a nivel Default.
     const suText = await tryExec(
       `log show --style syslog --predicate 'process == "su"' --last ${windowHours}h`,
       LOG_TIMEOUT_MS, "log(su)", partial
     );
     if (suText) sudoText += "\n" + suText;
-    sources.push("log");
+    // Solo cuenta como fuente si alguna de las tres consultas funcionó.
+    if (sshOut !== null || sudoOut !== null || suText !== null) {
+      sources.push("log");
+      logsChecked = true;
+    }
   } else {
     partial.push({ source: "log", reason: "comando `log` no disponible" });
   }
 
-  return { ssh: parseSshdLines(sshText), sudo: parseSudoLines(sudoText) };
+  return { ssh: parseSshdLines(sshText), sudo: parseSudoLines(sudoText), logsChecked };
 }
 
 const PS_TIMEOUT_MS = 60000; // Get-WinEvent sobre el canal Security puede tardar
@@ -315,18 +349,9 @@ function toArray(v) {
   return Array.isArray(v) ? v : v == null ? [] : [v];
 }
 
-/**
- * Los dos canales de Windows en una sola invocación de PowerShell, con salida JSON. FilterHashtable con StartTime y TimeCreated
- * como yyyy-MM-dd HH:mm:ss, para no depender del formato regional ni del "/Date(ms)/" de PS 5.1. Properties por índice:
- *   4624: 5=TargetUserName, 7=TargetLogonId, 8=LogonType, 18=IpAddress
- *   4625: 5=TargetUserName, 10=LogonType, 19=IpAddress
- *   4672: 1=SubjectUserName, 3=SubjectLogonId
- * El 4672 no trae IP: su SubjectLogonId se cruza con el TargetLogonId del 4624 (win-logons.js), por eso el logonId va al JSON.
- * Las cuentas de servicio se descartan en `Svc` (`sshd_<PID>` por patrón: es la cuenta de separación de privilegios de sshd).
- * Sin permisos sobre Security, Get-WinEvent devuelve NoMatchingEventsFound igual que con la ventana vacía: se sondea el canal con
- * -ListLog (habilitado, con registros y sin devolver ninguno = permiso, no ausencia) y no se mira si el proceso es administrador.
- * OpenSSH/Operational se lee sin elevar, con el formato de Linux, y se vuelca tal cual a parseSshdLines.
- */
+/** Canales Security y OpenSSH/Operational en una sola invocación de PowerShell, con fechas yyyy-MM-dd HH:mm:ss.
+ *  Properties por índice: 4624 5=user 7=logonId 8=tipo 18=IP; 4625 5=user 10=tipo 19=IP; 4672 1=user 3=logonId.
+ *  Sin permisos, Get-WinEvent responde como con la ventana vacía: por eso se sondea el canal con -ListLog. */
 function buildWinEventsScript(windowHours) {
   return `
 $ErrorActionPreference = 'Stop'
@@ -403,16 +428,12 @@ $out | ConvertTo-Json -Depth 4 -Compress
 `.trim();
 }
 
-/**
- * El JSON del script a la estructura `windows` del módulo. `logonId` se conserva tal cual ("0x3E7"): es la clave de correlación
- * 4624↔4672. La IP pasa por normalizeWinIp (Windows escribe un guion en IpAddress si no hay dirección) y el filtro de cuentas
- * de servicio se repite aquí.
- */
+/** JSON del script a la estructura `windows`. `logonId` se conserva tal cual: es la clave de correlación 4624↔4672. */
 function parseWinEventsJson(jsonText) {
   const data = JSON.parse(String(jsonText).trim());
   return {
     securityLogDenied: data.denied === true,
-    // Del canal OpenSSH, el tipo .NET de la excepción y no su mensaje, que viene traducido.
+    // El tipo .NET de la excepción, no su mensaje, que llega traducido.
     sshLines: toArray(data.ssh).map((l) => String(l)),
     sshLogError: data.sshLog ? String(data.sshLog) : "",
     logons: {
@@ -447,10 +468,8 @@ function parseWinEventsJson(jsonText) {
   };
 }
 
-/**
- * `query user` en la forma que devuelve `who`: cabecera en la primera línea y '>' marcando la sesión propia. Se lee por posición y
- * no por cabecera (cambia con el idioma); las sesiones desconectadas vienen sin SESSIONNAME y desplazan las columnas.
- */
+/** `query user` en la forma de `who`. Se lee por posición (la cabecera cambia con el idioma); las sesiones
+ *  desconectadas no traen SESSIONNAME y desplazan las columnas. */
 function parseQueryUserLines(text) {
   const sessions = [];
   const lines = String(text || "").split("\n");
@@ -478,8 +497,7 @@ function parseQueryUserLines(text) {
   return sessions;
 }
 
-/** `qwinsta`, el respaldo: SESSIONNAME USERNAME ID STATE. Sin hora de entrada, y solo valen las
- *  filas con usuario, o sea las que no traen un número en el segundo token. */
+/** `qwinsta`, de respaldo: sin hora de entrada; solo valen las filas con usuario. */
 function parseQwinstaLines(text) {
   const sessions = [];
   const lines = String(text || "").split("\n");
@@ -498,8 +516,7 @@ function parseQwinstaLines(text) {
   return sessions;
 }
 
-/** Windows: canal Security más sesiones activas, con powershell o pwsh. Si no hay permisos sobre
- *  Security se marca securityLogDenied y se sigue, como con lastb en Linux. */
+/** Windows: canal Security y sesiones activas. Sin permisos sobre Security se marca securityLogDenied y se sigue. */
 async function collectWin32(windowHours, sources, partial) {
   const windows = {
     securityLogDenied: false,
@@ -508,7 +525,7 @@ async function collectWin32(windowHours, sources, partial) {
     privileged: [],
   };
   let sessions = [];
-  // Misma forma que en Linux y macOS: ni el normalizador ni el dashboard preguntan de dónde vino.
+  // Misma forma que en Linux y macOS.
   let ssh = { accepted: [], failed: [] };
 
   let psCmd = null;
@@ -521,9 +538,8 @@ async function collectWin32(windowHours, sources, partial) {
       reason: "ni powershell ni pwsh disponibles en el PATH",
     });
   } else {
-    // Fichero temporal y no -EncodedCommand: Windows limita la línea de comandos a 8191 caracteres y UTF-16LE más base64 multiplican
-    // por 2,67 (unos 3070 de margen; el fallo fue silencioso y total con 3109). No volver a -EncodedCommand ni -Command: lo guarda
-    // test/manual/test-security-events-win32.js. Con BOM porque PowerShell 5.1 lee un .ps1 sin él en ANSI.
+    // Fichero temporal y no -EncodedCommand ni -Command: el límite de 8191 caracteres falla en silencio.
+    // Lo guarda test/manual/test-security-events-win32.js.
     const script = buildWinEventsScript(windowHours);
     let out = "";
     try {
@@ -539,7 +555,7 @@ async function collectWin32(windowHours, sources, partial) {
           )
       );
     } catch (err) {
-      // Ni el fichero se pudo crear: fuente no disponible, nunca un dato de auditoría.
+      // Ni se pudo crear el fichero: fuente no disponible, no un dato de auditoría.
       partial.push({
         source: "Get-WinEvent(Security)",
         reason: `no se pudo escribir el script temporal: ${err.message || err}`,
@@ -549,8 +565,7 @@ async function collectWin32(windowHours, sources, partial) {
       try {
         const parsed = parseWinEventsJson(out);
 
-        // Independiente de Security, se lea ese o no. Que falte es lo normal, porque Windows no
-        // trae OpenSSH Server de fábrica: skip parcial, nunca un hallazgo.
+        // OpenSSH Server no viene de fábrica en Windows: que falte es un skip parcial, nunca un hallazgo.
         if (parsed.sshLogError) {
           partial.push({
             source: "Get-WinEvent(OpenSSH/Operational)",
@@ -588,9 +603,7 @@ async function collectWin32(windowHours, sources, partial) {
     }
   }
 
-  // query user, y qwinsta de respaldo. Los dos son herramientas de Escritorio Remoto y no vienen
-  // en Windows Home, así que sin comprobarlo antes el usuario leía «Command failed: query user —
-  // 'query' no se reconoce como un comando», que suena a avería y no a edición sin la herramienta.
+  // query user y qwinsta no vienen en Windows Home: se comprueban antes para no mostrar un error que parezca una avería.
   const SIN_RDS = "no disponible en esta edición de Windows " +
                   "(herramientas de Servicios de Escritorio Remoto no instaladas)";
   let sessionsChecked = false;
@@ -635,12 +648,8 @@ function tsToEpoch(ts) {
   return 0;
 }
 
-/**
- * El resultado aplanado como lo consume el dashboard: eventos parseados, ts descendente, tope MAX_EVENT_LIST.
- * En Windows, una fila por acceso y no por fuente: sobrevive la de SSH (trae la IP real y el método) y lo que aporta el 4672
- * absorbido va en `detail` y `privileged`. Un 4672 no dice que la sesión estuviera elevada, solo que la cuenta es administradora.
- * La regla de correlación está en win-logons.js, compartida con el normalizador.
- */
+/** Lista plana para el dashboard, ts descendente. En Windows, una fila por acceso: queda la de SSH y lo del 4672
+ *  va en `detail` y `privileged` (cuenta administradora, no sesión elevada). Correlación en win-logons.js. */
 function buildEventList(result) {
   const windowHours = (result && result.windowHours) || 24;
   if (!result || result.skipped) {
@@ -682,8 +691,7 @@ function buildEventList(result) {
 
   if (result.windows) {
     const win = result.windows;
-    // Los `absorbed*` ya están contados en una fila de SSH: emitirlos sería pintar dos veces
-    // la misma sesión.
+    // Los `absorbed*` ya salen en una fila de SSH.
     for (const [i, l] of (((win.logons && win.logons.remote) || [])).entries()) {
       if (corr.absorbedRemote.has(i)) continue;
       push(l.timestamp, "logon-remote", l.user, l.ip,
@@ -729,6 +737,7 @@ async function runSecurityEvents(windowHours = 24) {
   if (platform !== "linux" && platform !== "darwin" && platform !== "win32") {
     return {
       skipped: true,
+      kind: "unsupported",
       reason: `plataforma ${platform} no soportada (los eventos de seguridad requieren Linux, macOS o Windows)`,
       windowHours: hours,
       platform,
@@ -741,11 +750,13 @@ async function runSecurityEvents(windowHours = 24) {
   let sessions = [];
   // Una lista de sesiones vacía no es "no hay nadie" si no se llegó a preguntar.
   let sessionsChecked = false;
+  // Linux y macOS: si no se pudo leer ningún log, `who` solo no basta para decir "sin eventos".
+  let logsChecked = true;
 
   if (platform === "win32") {
     ({ windows, sessions, ssh, sessionsChecked } = await collectWin32(hours, sources, partial));
   } else {
-    ({ ssh, sudo } =
+    ({ ssh, sudo, logsChecked } =
       platform === "linux"
         ? await collectLinux(hours, sources, partial)
         : await collectDarwin(hours, sources, partial));
@@ -763,11 +774,15 @@ async function runSecurityEvents(windowHours = 24) {
   }
 
   // Sin una sola fuente utilizable no hay auditoría que reportar, solo un skipped.
-  if (sources.length === 0) {
+  if (sources.length === 0 || !logsChecked) {
+    // Por permisos solo si todo lo que falló fue por permisos.
+    const fallos = partial.filter((p) => p.source !== "lastb");
+    const sinPermiso = fallos.length > 0 && fallos.every((p) => p.kind === "no-permission");
     return {
       skipped: true,
+      kind: sinPermiso ? "no-permission" : "error",
       reason:
-        "ninguna fuente de eventos disponible: " +
+        (sources.length ? "no se ha podido leer ningún log de autenticación: " : "ninguna fuente de eventos disponible: ") +
         partial.map((p) => `${p.source} (${p.reason})`).join("; "),
       windowHours: hours,
       platform,

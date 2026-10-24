@@ -16,29 +16,28 @@ const { detectPackageManager, managerLabel } = require("../../lib/pkg-manager");
 const { commandExists } = require("../../lib/executor");
 const { summarize } = require("../../lib/severity-map");
 
-/**
- * Avisa de un módulo omitido con el nivel que corresponde a su motivo. `node.warn` pinta en amarillo, y para casos
- * 'not-applicable' (Trivy en macOS) contradiría al informe. El criterio es `esNoAplica()`, el mismo del finding y del estado del módulo.
- */
+/** Avisa de un módulo omitido: log si lo apagó el usuario o no aplica, warn si es un fallo. */
 function avisarOmitido(node, modulo, res) {
   const kind = res && res.kind;
   const texto = `[audit-host] ${modulo} omitido: ${res && res.reason}`;
-  // 'disabled' lo decidió el usuario y 'no aplica' es un límite del sistema: ninguno es un
-  // problema del que haya que avisar en amarillo.
   if (kind === "disabled" || esNoAplica(kind)) node.log(texto);
   else node.warn(texto);
 }
 
-/** Cuántos paquetes inventarió sw-inventory. El módulo devuelve un array plano, o un objeto con
- *  `packages` cuando el inventario salió parcial (macOS con brew caído). */
+/** Resultado de un módulo: si lanzó, un skipped 'error' en vez de null, para que no parezca ejecutado sin datos. */
+function resolveOrSkip(settled, enabled, what) {
+  if (settled.status === "fulfilled") return settled.value;
+  return enabled ? { skipped: true, kind: "error", reason: `${what} falló: ${String(settled.reason)}` } : null;
+}
+
+/** Paquetes inventariados: array plano, u objeto con `packages` si el inventario fue parcial. */
 function swPackageCount(sw) {
   if (Array.isArray(sw)) return sw.length;
   if (sw && Array.isArray(sw.packages)) return sw.packages.length;
   return null;
 }
 
-/** Con qué herramienta los contó ('dpkg', 'rpm', 'brew'…). Cada entrada trae la suya; se toma la
- *  de la primera porque todas las de un inventario vienen del mismo sitio. */
+/** Herramienta que hizo el inventario ('dpkg', 'brew'…); todas las entradas comparten la misma. */
 function swPackageSource(sw) {
   const list = Array.isArray(sw) ? sw : (sw && sw.packages) || [];
   return (list[0] && list[0].source) || null;
@@ -64,41 +63,33 @@ module.exports = function (RED) {
       const enableUpdates = config.enableUpdates !== false;
       const enableSecrets = config.enableSecrets !== false;
       const secWindow = Math.min(168, Math.max(1, parseInt(config.securityEventsWindow, 10) || 24));
-      // Activo POR DEFECTO, al revés que antes: los paquetes del sistema son la parte del
-      // equipo que el usuario no puede auditar por su cuenta, y dejarlos fuera por omisión
-      // producía informes que parecían completos y no lo eran. La casilla ahora DESACTIVA.
+      // Activo por defecto: sin él el informe parecería completo sin serlo.
       const enableSysPkgs = config.trivySystemPkgs !== false;
 
       const startTime = Date.now();
 
       try {
-        // Sin esto los fixes daban apt en Linux y brew en macOS, y en Arch el comando no se podía ejecutar.
-        // Siempre, aunque los paquetes del sistema estén apagados: cuesta un commandExists por candidato
-        // y el bloque de alcance del dashboard lo necesita.
+        // Siempre: los fixes y el bloque de alcance necesitan el gestor real.
         let pkgManager = null;
         try {
           pkgManager = await detectPackageManager(process.platform);
         } catch (_) { /* la detección no puede tumbar la auditoría */ }
 
-        // trivy-rootfs comprueba aquí que Trivy está, y no dentro del módulo: la regla es que el
-        // commandExists vive en el despacho. trivy-fs conserva el suyo porque audit-image también
-        // le llama y ese camino no pasa por aquí.
+        // El commandExists de trivy-rootfs va en el despacho; trivy-fs tiene el suyo porque también lo usa audit-image.
         const trivyPath = enableSysPkgs ? await commandExists("trivy") : null;
 
         const [cpuResult, diskResult, swResult, lynisResult, trivyResult, rootfsResult, secResult, updResult, secretsResult] =
           await Promise.allSettled([
-            enableCpu ? Promise.resolve(runSystemModule()) : Promise.resolve(null),
+            // En un then: si lanza, cuenta como rechazo del módulo y no tumba el nodo entero.
+            enableCpu ? Promise.resolve().then(() => runSystemModule()) : Promise.resolve(null),
             enableDisk ? getDiskInfo() : Promise.resolve(null),
             enableSw ? getSwInventory() : Promise.resolve(null),
             enableLynis
               ? runLynis()
-              // `kind: "disabled"` explícito: un módulo que apagó el usuario NO es una
-              // comprobación caída, y el dashboard tiene que poder separarlos sin
-              // olfatear el texto de `reason`.
+              // kind 'disabled' para que el dashboard no lo confunda con una comprobación caída.
               : Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de hardening del sistema está desactivado en las opciones del nodo." }),
             enableTrivy
-              // Vacío ⇒ el HOME de quien audita. Solo el HOME: los paquetes del sistema son ahora
-              // el módulo de al lado y ya no viajan dentro de este resultado.
+              // Sin target se audita el HOME; los paquetes del sistema van en trivy-rootfs.
               ? runTrivyFs({ target: config.trivyTarget, pkgManager })
               : Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de vulnerabilidades de tu carpeta personal está desactivado en las opciones del nodo." }),
             !enableSysPkgs
@@ -107,25 +98,24 @@ module.exports = function (RED) {
               ? Promise.resolve({ skipped: true, kind: "not-installed", reason: "Trivy no está instalado, y es lo que lee la base de datos de paquetes del sistema." })
               : runTrivyRootfs(),
             enableSecEvents ? runSecurityEvents(secWindow) : Promise.resolve(null),
-            // pkgManager por parámetro: audit-host ya lo resolvió arriba y es la fuente única.
             enableUpdates ? getPendingUpdates({ pkgManager }) : Promise.resolve(null),
-            // Mismo ámbito que el análisis de vulnerabilidades, en una pasada aparte con su propio estado.
+            // Mismo ámbito que trivy-fs, en una pasada aparte.
             enableSecrets
               ? runTrivySecrets({ target: config.trivyTarget })
               : Promise.resolve({ skipped: true, kind: "disabled", reason: "La búsqueda de secretos y configuraciones inseguras está desactivada en las opciones del nodo." }),
           ]);
 
-        const cpuMemory = cpuResult.status === "fulfilled" ? cpuResult.value : null;
-        const disk = diskResult.status === "fulfilled" ? diskResult.value : null;
+        const cpuMemory = resolveOrSkip(cpuResult, enableCpu, "La lectura de procesador y memoria");
+        const disk = resolveOrSkip(diskResult, enableDisk, "La lectura del almacenamiento");
         const swInventory = swResult.status === "fulfilled" ? swResult.value : null;
         const lynis = lynisResult.status === "fulfilled" ? lynisResult.value : null;
-        const trivy = trivyResult.status === "fulfilled" ? trivyResult.value : null;
+        // Un throw de Trivy entra como 'error' y lo recoge la rama TRIVY_FATAL.
+        const trivy = resolveOrSkip(trivyResult, enableTrivy, "El análisis de vulnerabilidades del home");
         const trivyRootfs = rootfsResult.status === "fulfilled" ? rootfsResult.value : null;
-        const securityEvents = secResult.status === "fulfilled" ? secResult.value : null;
+        const securityEvents = resolveOrSkip(secResult, enableSecEvents, "La lectura de eventos de seguridad");
         const pendingUpdates = updResult.status === "fulfilled" ? updResult.value : null;
 
-        // Un throw vale lo mismo que un skipped kind 'error'. Antes iba al revés: el throw dejaba
-        // lynis a null y la auditoría seguía, y el skipped limpio la abortaba.
+        // Un throw cuenta como skipped con kind 'error'.
         const lynisResolved = lynis || (
           lynisResult.status === "rejected" && enableLynis
             ? { skipped: true, kind: "error", reason: String(lynisResult.reason) }
@@ -133,8 +123,7 @@ module.exports = function (RED) {
         );
 
         if (enableLynis && lynisResolved && lynisResolved.skipped) {
-          // Por kind, nunca por el texto de reason: interpola mensajes del SO y cambia de plataforma,
-          // que es lo que rompía la comparación de strings en el gate de Trivy.
+          // Se decide por kind, nunca por el texto de reason, que cambia según la plataforma.
           if (lynisResolved.kind === "not-installed") {
             node.status({ fill: "red", shape: "ring", text: "Lynis no instalado" });
             done(new Error(
@@ -156,14 +145,11 @@ module.exports = function (RED) {
             done(new Error(`Lynis no pudo completar la auditoría. ${lynisResolved.reason}`));
             return;
           }
-          // kind 'unsupported': límite conocido (Windows sin WSL), no fallo. Sigue el resto de
-          // módulos y el motivo viaja en scanMeta.lynis hasta el dashboard.
+          // 'unsupported' (p. ej. Windows sin WSL) no es un fallo: se sigue y el motivo va en scanMeta.lynis.
           avisarOmitido(node, "lynis", lynisResolved);
         }
         if (enableTrivy && trivy && trivy.skipped) {
-          // Por kind, no por reason: el mismo límite se redacta distinto en macOS ("rootfs solo
-          // aplica en Linux") y en Arch ("no soporta pacman"). Comparando textos, el return saltaba
-          // antes del send(msg) y el dashboard se quedaba con los datos de la ejecución anterior.
+          // Por kind, no por reason: el mismo límite se redacta distinto en cada plataforma.
           if (trivy.kind === "not-installed") {
             node.status({ fill: "red", shape: "ring", text: "Trivy no instalado" });
             done(new Error(
@@ -172,10 +158,7 @@ module.exports = function (RED) {
             ));
             return;
           }
-          // 'error' y los tres kinds que puede devolver el ejecutor cuando la salida no sirve.
-          // Los cuatro significan lo mismo para el usuario: el escaneo NO se hizo. Que caigan
-          // aquí y no en el warn de abajo es lo que evita el falso verde: 'unsupported' es un
-          // límite conocido y sigue, pero una salida cortada o ilegible es un escaneo fallido.
+          // Una salida cortada o ilegible es un escaneo fallido, no un límite: así no sale un falso verde.
           const TRIVY_FATAL = ["error", "timeout", "output-too-large", "invalid-json", "empty-output"];
           if (TRIVY_FATAL.includes(trivy.kind)) {
             const label = trivy.walkError
@@ -189,12 +172,10 @@ module.exports = function (RED) {
             done(new Error(`Trivy no pudo completar el escaneo. ${trivy.reason}`));
             return;
           }
-          // kind 'unsupported': límite de esta plataforma o de este gestor. Sigue el resto y el
-          // límite viaja en scanMeta.systemPackages hasta el bloque de alcance.
+          // 'unsupported': límite de la plataforma o del gestor; se sigue con el resto.
           avisarOmitido(node, "trivy-fs", trivy);
         }
 
-        // Sin herramientas externas detrás: no hay nada que pueda faltar.
         const osInfo = getOsInfo();
 
         if (cpuResult.status === "rejected") {
@@ -222,7 +203,7 @@ module.exports = function (RED) {
           node.warn(`[audit-host] pending-updates falló: ${updResult.reason}`);
         }
 
-        // Como pending-updates: un fallo aquí no invalida el resto, sale como comprobación no realizada.
+        // Un fallo aquí no invalida el resto: sale como comprobación no realizada.
         const secretsResolved = secretsResult.status === "fulfilled"
           ? secretsResult.value
           : { skipped: true, kind: "error", reason: `La búsqueda de secretos falló: ${String(secretsResult.reason)}.` };
@@ -231,8 +212,7 @@ module.exports = function (RED) {
           avisarOmitido(node, "trivy-secrets", secretsResolved);
         }
 
-        // Un throw vale lo mismo que un skipped kind 'error', igual que en Lynis: si no, un rechazo
-        // dejaría swInventory a null y el módulo saldría como ejecutado sin haber inventariado nada.
+        // Un throw cuenta como skipped 'error'; si no, el módulo saldría como ejecutado sin datos.
         const swResolved = swInventory || (
           swResult.status === "rejected" && enableSw
             ? {
@@ -243,9 +223,7 @@ module.exports = function (RED) {
             : null
         );
 
-        // Igual que en Lynis y en sw-inventory: un throw vale lo mismo que un skipped kind
-        // 'error'. A diferencia de Lynis, aquí NO se aborta el nodo: no saber si hay
-        // actualizaciones pendientes no invalida el resto de la auditoría.
+        // Un throw cuenta como skipped 'error', pero no aborta el nodo como Lynis.
         const updResolved = pendingUpdates || (
           updResult.status === "rejected" && enableUpdates
             ? {
@@ -255,9 +233,7 @@ module.exports = function (RED) {
               }
             : null
         );
-        // Mismo criterio que en Lynis, sw-inventory y pending-updates: un throw vale lo mismo que
-        // un skipped kind 'error'. Sin esto un rechazo dejaría trivyRootfs a null y el bloque de
-        // alcance diría 'failed' sin poder decir por qué.
+        // Un throw cuenta como skipped 'error', para que el bloque de alcance sepa el motivo.
         const rootfsResolved = trivyRootfs || (
           rootfsResult.status === "rejected"
             ? {
@@ -278,9 +254,7 @@ module.exports = function (RED) {
           avisarOmitido(node, "pending-updates", updResolved);
         }
 
-        // Un solo punto decide si el módulo cuenta como ejecutado y qué estado viaja en scanMeta.
-        // Derivarlo dos veces del mismo valor es lo que ya se corrigió en isCommand y en
-        // targetIsLocal: aquí sale una vez y lo leen los dos sitios.
+        // Se calcula una vez y lo leen modulesRun y scanMeta.
         const swSkipped = !!(swResolved && swResolved.skipped);
         const swPartial = !!(swResolved && swResolved.partial);
         const swStatus = !enableSw
@@ -291,8 +265,7 @@ module.exports = function (RED) {
           ? "partial"
           : "ok";
 
-        // Un security-events omitido no es error del nodo, al contrario que Lynis o Trivy:
-        // el normalizador lo saca como finding informativo.
+        // Un security-events omitido no es error del nodo: el normalizador lo saca como informativo.
         const raw = { cpuMemory, disk, swInventory: swResolved, lynis, trivy, trivyRootfs: rootfsResolved, securityEvents, pendingUpdates: updResolved, trivySecrets: secretsResolved };
 
         const findings = normalizeHost(raw, { platform: process.platform, pkgManager });
@@ -314,17 +287,12 @@ module.exports = function (RED) {
             type: osInfo.type,
           },
           scanMeta: {
-            // Resumen de lo que NO se comprobó, derivado de los propios findings `skipped`. El
-            // dashboard lo enseña junto al Alcance y saca esos hallazgos de la lista: son una
-            // sola cosa —"esto es lo que no se ha mirado"— y no cuatro problemas del equipo.
+            // Lo que no se comprobó, sacado de los findings `skipped`; el dashboard lo muestra junto al Alcance.
             checksSkipped: buildSkippedChecksSummary(findings),
-            /**
-             * Los módulos y qué pasó con cada uno. `modulesRun` no distingue un módulo APAGADO de uno que se CAYÓ, y
-             * solo Lynis y Trivy emiten hallazgo al omitirse, así que se deriva aquí y no de los findings.
-             */
+            // Estado de cada módulo: modulesRun no distingue uno apagado de uno caído.
             modules: [
-              { id: "cpu-memory",      label: "Procesador y memoria",        requested: enableCpu,       ran: enableCpu },
-              { id: "disk-storage",    label: "Almacenamiento",              requested: enableDisk,      ran: enableDisk },
+              { id: "cpu-memory",      label: "Procesador y memoria",        requested: enableCpu,       ran: enableCpu && !cpuMemory?.skipped,                    kind: cpuMemory?.kind },
+              { id: "disk-storage",    label: "Almacenamiento",              requested: enableDisk,      ran: enableDisk && !disk?.skipped,                        kind: disk?.kind },
               { id: "sw-inventory",    label: "Inventario de software",      requested: enableSw,        ran: enableSw && !swSkipped,                              kind: swResolved?.kind },
               { id: "lynis",           label: "Hardening del sistema",       requested: enableLynis,     ran: enableLynis && !lynis?.skipped,                      kind: lynisResolved?.kind },
               { id: "trivy-fs",        label: "Vulnerabilidades del home",   requested: enableTrivy,     ran: enableTrivy && !trivy?.skipped,                      kind: trivy?.kind },
@@ -337,12 +305,8 @@ module.exports = function (RED) {
               label: m.label,
               requested: !!m.requested,
               ran: !!m.ran,
-              // El kind del módulo, para poder separar el límite estructural del fallo real sin
-              // volver a mirar el resultado entero.
               kind: m.kind || null,
-              // Cuatro estados: 'not-requested' (lo apagó el usuario), 'not-applicable' (no tiene sentido en este
-              // sistema), 'failed' (se pidió y no salió: el único agujero) y 'ok'. Fundir los dos primeros con 'failed'
-              // ponía avisos ámbar sobre cosas que nadie puede arreglar.
+              // Solo 'failed' es un agujero real; 'not-requested' y 'not-applicable' no se pueden arreglar.
               status: !m.requested
                 ? "not-requested"
                 : m.ran
@@ -352,8 +316,8 @@ module.exports = function (RED) {
                 : "failed",
             })),
             modulesRun: [
-              enableCpu && "cpu-memory",
-              enableDisk && "disk-storage",
+              enableCpu && !cpuMemory?.skipped && "cpu-memory",
+              enableDisk && !disk?.skipped && "disk-storage",
               // Un inventario parcial sí se ejecutó; solo el skip total lo saca de la lista.
               enableSw && !swSkipped && "sw-inventory",
               enableLynis && !lynis?.skipped && "lynis",
@@ -364,28 +328,20 @@ module.exports = function (RED) {
               enableSecrets && !secretsSkipped && "trivy-secrets",
             ].filter(Boolean),
             durationMs,
-            // Se emite siempre, también con el interruptor apagado: "no analizados" no es "limpios"
-            // y de una lista de hallazgos vacía nadie puede distinguirlo.
-            // El veredicto sale del informe de trivy-rootfs, que es la fuente única. Ya no se
-            // reconstruye de un sub-bloque de trivy-fs ni de una lista de gestores nuestra.
+            // Siempre presente: "no analizados" no es "limpios". El veredicto sale del informe de trivy-rootfs.
             systemPackages: {
               status: systemPackagesSupport(process.platform, rootfsResolved, {
                 enabled: enableSysPkgs,
               }),
-              // Separa "nadie lo pidió" de "lo pediste y no se pudo"; el dashboard lo redacta.
               requested: enableSysPkgs,
               kind: rootfsSkipped ? (rootfsResolved.kind || null) : null,
-              // El gestor lo sigue detectando pkg-manager.js y solo se usa para redactar: la
-              // decisión de si se pudo analizar ya NO depende de él.
+              // Solo para redactar: no decide si se pudo analizar.
               manager: pkgManager,
               managerLabel: pkgManager ? managerLabel(pkgManager) : null,
               reason: rootfsSkipped ? rootfsResolved.reason : null,
-              // Duración real del rootfs, también cuando se omitió: saber que se tiró diez
-              // minutos antes de rendirse es parte del diagnóstico.
+              // También cuando se omitió: ayuda a diagnosticar.
               durationMs: (rootfsResolved && rootfsResolved.durationMs) || null,
-              // Todo lo de abajo sale del informe de Trivy y de ningún otro sitio. Con el módulo
-              // omitido son null, que es distinto de cero: cero paquetes sería un dato, y aquí
-              // no hay dato.
+              // Del informe de Trivy; null si se omitió, que no es lo mismo que cero.
               osFamily: !rootfsSkipped && rootfsResolved ? rootfsResolved.os.family : null,
               osName: !rootfsSkipped && rootfsResolved ? rootfsResolved.os.name : null,
               packages: !rootfsSkipped && rootfsResolved ? rootfsResolved.pkgNum : null,
@@ -396,8 +352,7 @@ module.exports = function (RED) {
               unfixedVulns: !rootfsSkipped && rootfsResolved ? rootfsResolved.unfixed.total : null,
               unfixedBySeverity: !rootfsSkipped && rootfsResolved ? rootfsResolved.unfixed.bySeverity : null,
             },
-            // Espejo de scanMeta.lynis: el estado del módulo, aparte de sus datos. Sale del mismo
-            // swResolved que decide modulesRun, no de una segunda derivación.
+            // Estado del módulo, como scanMeta.lynis.
             swInventory: {
               status: swStatus,
               reason: swSkipped
@@ -406,14 +361,11 @@ module.exports = function (RED) {
                 ? swResolved.partialReason
                 : null,
               kind: swSkipped ? (swResolved.kind || null) : null,
-              // Cuántos paquetes vio ESTE módulo, y con qué herramienta los vio. La cifra viaja
-              // con su fuente porque hay otra al lado, la de trivy-rootfs, que cuenta lo mismo
-              // por otro camino y da otro número. No se intentan cuadrar: son dos medidas de dos
-              // herramientas distintas, y presentarlas como una sola sería inventar una tercera.
+              // La cifra va con su fuente: trivy-rootfs cuenta por otro camino y no se cuadran.
               packages: swSkipped ? null : swPackageCount(swResolved),
               source: swSkipped ? null : swPackageSource(swResolved),
             },
-            // Espejo de scanMeta.lynis. Sale del mismo updResolved que decide modulesRun.
+            // Estado del módulo, como scanMeta.lynis.
             pendingUpdates: {
               status: updStatus,
               reason: updSkipped ? updResolved.reason : null,
@@ -422,9 +374,7 @@ module.exports = function (RED) {
               securityCount: !updSkipped && updResolved ? updResolved.securityCount : null,
               securityDetection: !updSkipped && updResolved ? updResolved.securityDetection : null,
             },
-            // El índice de hardening es métrica de cabecera, no hallazgo: viajaba como
-            // HOST-LYN-IDX y el gauge lo rescataba buscando ese id en el array. La escala va
-            // aquí para que las etiquetas no sigan escritas a mano en el HTML.
+            // El índice de hardening es una métrica de cabecera, no un hallazgo; la escala va con él.
             lynis: {
               status: enableLynis
                 ? (lynisResolved && lynisResolved.skipped ? (lynisResolved.kind || "skipped") : "ok")
@@ -434,9 +384,7 @@ module.exports = function (RED) {
               version: (lynis && lynis.version) || null,
               testsDone: (lynis && lynis.testsDone) || null,
               scale: { deficiente: "<30", mejorable: "30-54", aceptable: ">=55" },
-              // Cobertura REAL sobre los controles que ha devuelto ESTE informe (la tabla cubre lo visto en los informes de
-              // referencia, no todo Lynis): traducidos, con paso de resolución y, por separado, los que no admiten acción frente
-              // a los que la admiten sin paso escrito. La plataforma entra porque un fix puede ser solo de Linux.
+              // Cobertura de traducciones y fixes sobre los controles de este informe; algunos fixes son solo de Linux.
               i18n: lynisCoverage(
                 [...(lynis?.warnings || []), ...(lynis?.suggestions || [])].map((e) => e.id),
                 process.platform
@@ -453,23 +401,27 @@ module.exports = function (RED) {
         }
 
         const maxSev = summary.maxSeverity || "info";
+        // Un módulo pedido que falló deja un hueco: el nodo no puede quedar en verde.
+        const fallidos = msg.payload.scanMeta.modules.filter((m) => m.status === "failed").length;
         const statusColor =
           maxSev === "critical" || maxSev === "high"
             ? "red"
-            : maxSev === "medium"
+            : maxSev === "medium" || fallidos
             ? "yellow"
             : "green";
 
-        // Mismo recuento que la cabecera del dashboard, los accionables: un "96 hallazgos ·
-        // riesgo: critical" al lado de "nada que arreglar" es la contradicción a evitar.
+        // Mismo recuento que la cabecera del dashboard: solo los accionables.
         const act = summary.actionable.total;
         const inf = summary.informative.total;
+        const textoFallos = fallidos
+          ? ` · ${fallidos} ${fallidos === 1 ? "módulo sin completar" : "módulos sin completar"}`
+          : "";
         node.status({
           fill: statusColor,
-          shape: "dot",
-          text: act > 0
+          shape: fallidos ? "ring" : "dot",
+          text: (act > 0
             ? `${act} a revisar · riesgo: ${maxSev}${inf ? ` · ${inf} info` : ""}`
-            : `Nada que arreglar · ${inf} informativos`,
+            : `Nada que arreglar · ${inf} informativos`) + textoFallos,
         });
 
         send(msg);

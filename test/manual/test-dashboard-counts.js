@@ -1,18 +1,8 @@
 "use strict";
 
 /**
- * test-dashboard-counts.js — Cabecera, donut y barras cuentan LO MISMO.
- *
- * La cabecera ("4 requieren tu atención · 117 informativos") y el donut salen de
- * summarize() (lib/severity-map.js), que recorre TODOS los findings. Las barras
- * de "Hallazgos por Categoría" salen de catBars() → groups(), dentro del
- * ui_template. groups() descartaba la categoría 'disk', así que las barras
- * sumaban menos que la cabecera —en CachyOS, 25 frente a 37— y ningún disco
- * lleno aparecía en la lista de hallazgos aunque contase en el donut.
- *
- * Este test NO reimplementa groups()/catBars(): los EXTRAE del propio
- * dashboard-host-template.html y los ejecuta, para que una regresión en el
- * template lo rompa.
+ * test-dashboard-counts.js — Cabecera, donut y barras cuentan lo mismo.
+ * Extrae groups()/catBars() del propio dashboard-host-template.html y los compara con summarize().
  *
  * Uso:
  *   node test/manual/test-dashboard-counts.js
@@ -57,14 +47,7 @@ const computed = new Function(
   "return {" + extractMethod(tpl, "groups") + "," + extractMethod(tpl, "catBars") + "};"
 )();
 
-/**
- * `tok` en el navegador lo rellena readTokens() leyendo el :root con
- * getComputedStyle. Aquí no hay DOM, así que se lee el MISMO :root del template
- * a mano en vez de escribir los hex otra vez: si un token se renombra o
- * desaparece, este test falla en voz alta en lugar de tapar el hueco con un
- * stub que siempre pasa. Los colores no intervienen en ninguna aserción —lo que
- * se comprueba son recuentos— pero catBars() los pide y no puede recibir undefined.
- */
+/** Lee los tokens del :root del template (sin DOM); catBars() los necesita aunque no se comprueben. */
 function tokensDelTemplate(src) {
   const NOMBRES = {
     critical: "--critical", high: "--high", medium: "--medium",

@@ -2,20 +2,12 @@
 
 /**
  * test-network-recommendations.js — Las recomendaciones de puertos abiertos, por sistema.
- *
- * Validación del 2026-10-10. Lo que fija este test se encontró generando las recomendaciones con
- * el propio código para los 35 puertos del catálogo en Linux, macOS y Windows:
- *
- *   1. `systemctl disable --now X.service X.socket` con un X.socket inexistente: systemd 255
- *      rechaza la orden entera ("Failed to disable unit, unit X.socket does not exist", código 1)
- *      y el servicio sigue habilitado; systemd 249 avisa y sí deshabilita el .service. nginx,
- *      vsftpd, apache2, smbd y xrdp no suelen traer .socket.
- *   2. macOS recibía órdenes de Linux (systemctl, /etc/mysql) en 80, 443, 3306, 5432, 6379, 27017.
- *   3. El nombre de la unidad cambia con la distribución: ssh/sshd, apache2/httpd, smbd/smb.
- *   4. En Windows, el puerto 23 decía "desactiva el cliente Telnet", que no abre ningún puerto.
- *   5. Endurecer SSH proponía PasswordAuthentication no sin avisar de que deja fuera a quien no
- *      tiene una clave configurada.
- *   6. Telnet en Linux se desactivaba con telnet.service, que en Debian no existe (va por inetd).
+ *   1. No se deshabilita un X.socket inexistente (systemd 255 rechazaría la orden entera).
+ *   2. macOS no recibe órdenes de Linux.
+ *   3. El nombre de la unidad depende de la distribución (ssh/sshd, apache2/httpd, smbd/smb).
+ *   4. En Windows, el puerto 23 no remite al cliente Telnet.
+ *   5. Endurecer SSH avisa antes de desactivar PasswordAuthentication.
+ *   6. Telnet en Debian va por inetd, no por telnet.service.
  *
  * Uso: node test/manual/test-network-recommendations.js
  */
@@ -59,18 +51,14 @@ if (!systemctl || process.platform !== "linux") {
   fs.writeFileSync(path.join(units, "demo.service"),
     "[Unit]\nDescription=demo\n[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=multi-user.target\n");
   const run = (c) => { try { execSync(c, { stdio: "ignore", shell: "/bin/bash" }); return 0; } catch (e) { return e.status || 1; } };
-  // lstat y no existsSync: el enlace apunta a /usr/lib/... con ruta absoluta, que fuera del árbol
-  // de --root no existe, y existsSync sigue el enlace.
+  // lstat y no existsSync: el enlace es absoluto y fuera de --root no se resolvería.
   const linkExists = (rel) => { try { fs.lstatSync(path.join(root, rel)); return true; } catch (_) { return false; } };
   const enabled = () => linkExists("etc/systemd/system/multi-user.target.wants/demo.service");
-  // Contra el árbol de --root no hay systemd en marcha que detener, así que --now no se admite:
-  // se prueba la parte que fallaba, deshabilitar, con la misma estructura de la orden.
+  // Con --root no se admite --now: se prueba solo deshabilitar.
   const enRoot = (c) => c.replace(/sudo systemctl disable --now/g, `systemctl --root=${root} disable`);
 
   run(`systemctl --root=${root} enable demo.service`);
-  // La forma anterior depende de la versión de systemd: la 249 avisa y deshabilita el .service;
-  // la 255 rechaza la orden entera y lo deja habilitado. Se registra, no se exige: lo que importa
-  // es que la forma nueva funcione en cualquiera de las dos.
+  // La forma con .socket depende de la versión de systemd: se registra, no se exige.
   const version = (() => { try { return execSync("systemctl --version", { stdio: ["ignore", "pipe", "ignore"] }).toString().split("\n")[0]; } catch (_) { return "?"; } })();
   const antigua = run(`systemctl --root=${root} disable demo.service demo.socket`);
   console.log(`  · ${version}: la forma anterior ${antigua !== 0 && enabled() ? "FALLA y deja el servicio habilitado" : "deshabilita el servicio"}`);

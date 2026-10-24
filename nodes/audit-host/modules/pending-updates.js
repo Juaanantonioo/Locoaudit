@@ -1,11 +1,7 @@
 "use strict";
 
-/**
- * Actualizaciones pendientes del sistema. Solo las lista: no instala, no actualiza ni sincroniza bases de paquetes.
- * Mismo contrato que lynis.js y trivy-fs.js: si no puede mirar devuelve { skipped, kind, reason } y quien llama decide por `kind`.
- * Solo 'unsupported' no es un fallo. Cero pendientes es un dato real (total 0), no un skip.
- * `securityDetection` ('full', 'partial', 'none') dice hasta dónde clasifica el gestor las de seguridad; con 'none' el recuento va a null.
- */
+/** Actualizaciones pendientes del sistema: solo las lista, nunca instala ni sincroniza.
+ *  Si no puede mirar devuelve { skipped, kind, reason }; cero pendientes es un dato real, no un skip. */
 
 const fs = require("fs");
 const path = require("path");
@@ -18,11 +14,7 @@ const WINDOWS_TIMEOUT_MS = 180000;   // la búsqueda COM tarda minutos en un equ
 /** Ruta de las bases sincronizadas de pacman, para poder decir cuántos días tienen. */
 const PACMAN_SYNC_DIR = "/var/lib/pacman/sync";
 
-/**
- * Actualizaciones de DATOS de protección de macOS, las únicas que softwareupdate deja identificar como de seguridad.
- * Lista explícita, comprobada con `pkgutil --pkgs` y `system_profiler SPInstallHistoryDataType` (por eso Gatekeeper acepta
- * dos grafías). Quedan fuera RosettaUpdateAuto, CLTools y TCC, que no son de seguridad o no aparecen en este sistema.
- */
+/** Datos de protección de macOS: lo único que softwareupdate permite identificar como de seguridad. */
 const MACOS_SECURITY_DATA = [
   /^XProtect/i,                              // XProtectPlistConfigData, XProtectPayloads, XProtectCloudKitUpdate
   /^MRT/i,                                   // MRTConfigData
@@ -35,7 +27,7 @@ const SW_VERS_TIMEOUT_MS = 5000;
 /** Gestores de Linux que este módulo sabe consultar. Fuera de la lista, kind 'unsupported'. */
 const LINUX_MANAGERS = ["pacman", "apt", "dnf", "yum", "zypper", "apk"];
 
-/** Mismo criterio que lynis.js: child_process mata por timeout con SIGTERM y marca killed. */
+/** child_process mata por timeout con SIGTERM y marca killed. */
 function isTimeout(err) {
   return Boolean(err && (err.killed || err.signal === "SIGTERM"));
 }
@@ -54,12 +46,9 @@ function execSkip(err, cmd, what, timeoutMs) {
   return {
     skipped: true,
     kind: "error",
-    // Motivo LEGIBLE, sin el volcado. La evidencia que lee el usuario llegó a mostrar
-    // "ParserError: ParentContainsErrorRecordException" y ocho líneas de traza de PowerShell:
-    // eso no le dice nada a quien audita su portátil, y tapa la única frase que sí le sirve.
+    // Motivo legible para el usuario, sin la traza.
     reason: `LoCoAudit no ha podido consultar ${what}: el comando \`${cmd}\` falló.`,
-    // El volcado íntegro viaja aparte y llega a la exportación JSON por raw.pendingUpdates.
-    // Sin él, el siguiente diagnóstico empieza de cero; dentro de `reason`, es ruido.
+    // El volcado va aparte, para la exportación JSON.
     detail: firstLines(err && (err.stderr || err.message), RAW_DETAIL_LINES),
   };
 }
@@ -81,24 +70,18 @@ function firstLines(texto, n) {
 function update(name, fields = {}) {
   return {
     name,
-    // La versión instalada solo la dan los gestores que comparan contra el sistema: pacman, apt,
-    // zypper y apk. softwareupdate, Windows Update y `dnf check-update` informan de lo que hay
-    // disponible y no de lo que hay puesto, así que aquí queda null. Es el campo del que depende
-    // que el normalizador pinte "instalada → nueva": sin él no hay comparación que enseñar.
+    // Solo pacman, apt, zypper y apk dan la versión instalada; sin ella no se pinta "instalada → nueva".
     currentVersion: fields.currentVersion || null,
     newVersion:     fields.newVersion || null,
-    // null (y no false) donde no se sabe: "no consta" no es "no lo es". En macOS conviven las
-    // dos cosas —los datos de protección salen true y las del sistema null— y esa mezcla es
-    // justo lo que securityDetection: 'partial' anuncia.
+    // null y no false donde no se sabe: "no consta" no es "no lo es".
     security:       fields.security === undefined ? null : fields.security,
     // Solo macOS: 'restart' | 'shut down' | null.
     action:         fields.action || null,
     sizeKiB:        fields.sizeKiB == null ? null : fields.sizeKiB,
-    // apt: el sufijo del repositorio, guardado como evidencia aunque no se use para marcar.
+    // apt: sufijo del repositorio, solo como evidencia.
     suite:          fields.suite || null,
     label:          fields.label || null,
-    // Solo Windows: las señales con las que se clasificó, para que la exportación JSON permita
-    // auditar por qué una entrada quedó como `security: null` sin repetir la consulta.
+    // Solo Windows: señales de la clasificación, para revisarla desde el JSON exportado.
     categories:     Array.isArray(fields.categories) ? fields.categories : null,
     msrcSeverity:   fields.msrcSeverity || null,
   };
@@ -106,11 +89,8 @@ function update(name, fields = {}) {
 
 // ── macOS ────────────────────────────────────────────────────────────────────
 
-/**
- * Dos líneas por actualización: `* Label: <etiqueta>` y una tabulada con pares `Clave: valor,`.
- * Los títulos traen espacios duros (U+00A0), comprobado en la salida real de macOS 26: sin
- * normalizarlos, cualquier `\s` del parseo se comporta distinto según el título.
- */
+/** Dos líneas por actualización: `* Label: …` y otra con pares `Clave: valor,`.
+ *  Los títulos traen espacios duros (U+00A0) que hay que normalizar. */
 function parseSoftwareUpdateList(text) {
   const clean = String(text || "").replace(/ /g, " ");
   const lines = clean.split("\n");
@@ -121,8 +101,7 @@ function parseSoftwareUpdateList(text) {
     if (!m) continue;
     const label = m[1];
 
-    // La línea de detalle va tabulada justo detrás. Si falta, la entrada vale igual: se conoce
-    // la etiqueta y eso ya es una actualización pendiente.
+    // Si falta la línea de detalle, la etiqueta basta.
     const detail = (lines[i + 1] || "").startsWith("\t") ? lines[i + 1] : "";
     const pick = (key) => {
       const r = new RegExp(key + ":\\s*([^,]*)").exec(detail);
@@ -136,10 +115,7 @@ function parseSoftwareUpdateList(text) {
     updates.push(
       update(pick("Title") || label, {
         newVersion: pick("Version"),
-        // Los datos de protección se identifican por nombre y salen true. Para el resto queda
-        // null y no false: `Recommended: YES` NO significa "de seguridad", y softwareupdate no
-        // dice si una actualización del sistema trae correcciones de seguridad aunque Apple las
-        // publique en su web. Deducirlo sería inventar.
+        // Solo los datos de protección son true; `Recommended: YES` no significa "de seguridad".
         security: isMacosSecurityData(label, pick("Title")) ? true : null,
         action,
         sizeKiB: Number.isFinite(sizeKiB) ? sizeKiB : null,
@@ -187,19 +163,14 @@ async function fromSoftwareUpdate() {
     };
   }
 
-  // --no-scan reutiliza el último escaneo del sistema: no toca la red y no dispara una descarga.
-  // --include-config-data añade las actualizaciones de datos de seguridad (XProtect, MRT,
-  // Gatekeeper), que sin esa opción no se listan y quedaban invisibles para la auditoría. Sigue
-  // siendo solo listar: ninguna de las dos opciones instala nada.
-  // 2>&1 porque softwareupdate reparte su salida entre stdout y stderr según la versión y el
-  // estado del escaneo; sin unirlas, la lista se pierde unas veces sí y otras no.
+  // --no-scan no toca la red; --include-config-data añade XProtect, MRT y Gatekeeper. Ninguna instala nada.
+  // 2>&1 porque según la versión la lista sale por stdout o por stderr.
   const cmd = "softwareupdate -l --no-scan --include-config-data 2>&1";
   let stdout;
   try {
     stdout = await execCommand(cmd, MACOS_TIMEOUT_MS);
   } catch (err) {
-    // softwareupdate sale con código distinto de cero avisando de escaneos en curso y aun así
-    // imprime la lista cacheada. Si hay salida utilizable se interpreta igual.
+    // Puede salir con código distinto de cero y aun así imprimir la lista: se interpreta igual.
     stdout = err.stdout || "";
     if (!stdout.trim()) {
       return execSkip(err, "softwareupdate -l --no-scan --include-config-data",
@@ -209,8 +180,7 @@ async function fromSoftwareUpdate() {
 
   const updates = parseSoftwareUpdateList(stdout);
 
-  // Ni lista ni el mensaje de "no hay nada": la salida no se ha entendido, y eso no puede pasar
-  // por "cero pendientes". Es el falso verde que la regla del proyecto prohíbe.
+  // Salida no entendida: no puede pasar por "cero pendientes".
   if (updates.length === 0 && !macosSaysNoUpdates(stdout)) {
     return {
       skipped: true,
@@ -223,9 +193,7 @@ async function fromSoftwareUpdate() {
     };
   }
 
-  // La versión instalada solo tiene sentido para la actualización del sistema: los datos de
-  // protección no tienen una versión instalada consultable, y ahí currentVersion se queda en null
-  // para que el normalizador no pinte una flecha que compara con nada.
+  // La versión instalada solo tiene sentido para la actualización del sistema operativo.
   const instalada = updates.some((u) => isMacosSystemUpdate(u.label, u.name))
     ? await macosInstalledVersion()
     : null;
@@ -275,15 +243,13 @@ function pacmanDbAgeDays() {
     if (!newest) return null;
     return Math.floor((Date.now() - newest) / 86400000);
   } catch (_) {
-    // Sin permisos o sin la carpeta: no se sabe la antigüedad, y eso se dice, no se inventa.
+    // Sin permisos o sin carpeta: no se sabe, y se dice.
     return null;
   }
 }
 
-/**
- * `pacman -Sy` dejaría el equipo en estado parcial, así que está prohibido. checkupdates (pacman-contrib) sincroniza en una
- * copia temporal. Sin él queda `pacman -Qu`, válido pero posiblemente incompleto; el resultado lleva la antigüedad de la base.
- */
+/** Nunca `pacman -Sy` (deja el sistema a medias): checkupdates sincroniza en una copia temporal.
+ *  Sin él, `pacman -Qu`, quizá incompleto; el resultado lleva la antigüedad de la base. */
 async function fromPacman() {
   const hasCheckupdates = await commandExists("checkupdates");
   const cmd = hasCheckupdates ? "checkupdates" : "pacman -Qu";
@@ -292,8 +258,7 @@ async function fromPacman() {
   try {
     stdout = await execCommand(cmd, LINUX_TIMEOUT_MS);
   } catch (err) {
-    // Los dos salen con código distinto de cero cuando no hay nada que actualizar: checkupdates
-    // con 2, pacman -Qu con 1. Sin salida y sin stderr, eso es "cero pendientes", no un fallo.
+    // Sin pendientes salen con código distinto de cero; sin salida ni stderr, es "cero", no un fallo.
     const out = (err.stdout || "").trim();
     const errTxt = (err.stderr || "").trim();
     if (!out && !errTxt && !isTimeout(err)) {
@@ -315,11 +280,10 @@ async function fromPacman() {
     source: cmd,
     updates,
     total: updates.length,
-    // Arch no clasifica sus actualizaciones: el seguimiento de seguridad vive en el Arch Security
-    // Tracker, que es una fuente externa y no se consulta desde aquí.
+    // Arch no clasifica sus actualizaciones (eso está en el Arch Security Tracker, externo).
     securityDetection: "none",
     securityCount: null,
-    // Solo en el camino de respaldo: la lista sale de la base local, que puede estar vieja.
+    // Solo con pacman -Qu: la base local puede estar vieja.
     staleDb: !hasCheckupdates,
     dbAgeDays,
   };
@@ -350,10 +314,11 @@ async function fromApt() {
   try {
     stdout = await execCommand(cmd, LINUX_TIMEOUT_MS);
   } catch (err) {
-    stdout = err.stdout || "";
-    if (!stdout.trim()) {
+    // La salida de un comando que falló solo vale si de ella sale al menos un paquete.
+    if (!parseAptList(err.stdout).length) {
       return execSkip(err, cmd, "las actualizaciones pendientes", LINUX_TIMEOUT_MS);
     }
+    stdout = err.stdout;
   }
 
   const updates = parseAptList(stdout);
@@ -365,9 +330,7 @@ async function fromApt() {
     source: cmd,
     updates,
     total: updates.length,
-    // El sufijo del repositorio ('-security') es una pista, no un dato: cambia entre Debian y
-    // Ubuntu y entre versiones, y un paquete de seguridad puede llegar por otro origen. Se guarda
-    // en `suite` de cada entrada como evidencia, pero no se marca ninguna como de seguridad.
+    // El sufijo '-security' es una pista, no un dato: se guarda pero no se marca nada como de seguridad.
     securityDetection: "none",
     securityCount: null,
   };
@@ -410,8 +373,7 @@ async function fromDnf(manager) {
   try {
     stdout = await execCommand(cmd, LINUX_TIMEOUT_MS);
   } catch (err) {
-    // check-update usa el código de salida como dato: 0 = nada pendiente, 100 = hay pendientes,
-    // 1 = error de verdad. Sin distinguirlos, el caso normal se leería como fallo.
+    // check-update: 0 = nada, 100 = hay pendientes, 1 = error.
     if (err.code === 100) {
       stdout = err.stdout || "";
     } else {
@@ -421,8 +383,7 @@ async function fromDnf(manager) {
 
   const updates = parseDnfCheckUpdate(stdout);
 
-  // Las de seguridad son una consulta aparte. Que falle no invalida la lista: se devuelve el
-  // recuento como desconocido en vez de anular todo el módulo.
+  // Las de seguridad van aparte: si falla, el recuento queda desconocido sin anular el módulo.
   let securityNames = null;
   try {
     const secOut = await execCommand(`${manager} updateinfo list security`, LINUX_TIMEOUT_MS);
@@ -471,16 +432,16 @@ async function fromZypper() {
   try {
     stdout = await execCommand(cmd, LINUX_TIMEOUT_MS);
   } catch (err) {
-    stdout = err.stdout || "";
-    if (!stdout.trim()) {
+    // La salida de un comando que falló solo vale si de ella sale al menos un paquete.
+    if (!parseZypperTable(err.stdout, 2, 3, 4).length) {
       return execSkip(err, cmd, "las actualizaciones pendientes", LINUX_TIMEOUT_MS);
     }
+    stdout = err.stdout;
   }
 
   const updates = parseZypperTable(stdout, 2, 3, 4);
 
-  // list-patches devuelve PARCHES, no paquetes: sus nombres no casan con los de list-updates, así
-  // que se cuenta cuántos hay de seguridad y no se marca ninguna actualización una por una.
+  // list-patches cuenta parches, no paquetes: no se marca ninguna actualización una por una.
   let securityCount = null;
   try {
     const patchOut = await execCommand(
@@ -501,8 +462,7 @@ async function fromZypper() {
     total: updates.length,
     securityDetection: securityCount != null ? "full" : "none",
     securityCount,
-    // El recuento es de parches de seguridad, que no se corresponden uno a uno con los paquetes
-    // de la lista. Quien redacte el finding tiene que decirlo así.
+    // Son parches, no paquetes: el finding tiene que decirlo así.
     securityCountIsPatches: true,
   };
 }
@@ -526,10 +486,11 @@ async function fromApk() {
   try {
     stdout = await execCommand(cmd, LINUX_TIMEOUT_MS);
   } catch (err) {
-    stdout = err.stdout || "";
-    if (!stdout.trim()) {
+    // La salida de un comando que falló solo vale si de ella sale al menos un paquete.
+    if (!parseApkVersions(err.stdout).length) {
       return execSkip(err, cmd, "las actualizaciones pendientes", LINUX_TIMEOUT_MS);
     }
+    stdout = err.stdout;
   }
 
   const updates = parseApkVersions(stdout);
@@ -547,20 +508,11 @@ async function fromApk() {
 
 // ── Windows ──────────────────────────────────────────────────────────────────
 
-/**
- * HRESULT que devuelve Windows Update cuando la consulta exige privilegios. Se compara el código,
- * nunca el mensaje: el texto de la excepción llega traducido al idioma del equipo.
- */
+/** HRESULT de Windows Update cuando hace falta elevación. Se compara el código: el mensaje llega traducido. */
 const HRESULT_NOT_ELEVATED = "0x80240044";   // WU_E_NOT_ELEVATED
 
-/**
- * Se une con SALTOS DE LÍNEA y no con espacios: con " " salía `$ErrorActionPreference='Stop' try {` y PowerShell no compilaba.
- * El script va por fichero temporal y `-File` (runPowerShell en lib/executor.js) para que los saltos lleguen intactos.
- *
- * Reinicio pendiente: solo dos claves (Component Based Servicing\RebootPending y WindowsUpdate\Auto Update\RebootRequired).
- * PendingFileRenameOperations queda fuera porque casi cualquier instalador la deja y avisaría siempre.
- * La excepción sale como JSON con el HRESULT, para mapear sobre un campo y no sobre un stderr traducido.
- */
+/** Se une con saltos de línea (con espacios no compila) y va por runPowerShell. El reinicio pendiente mira dos claves;
+ *  PendingFileRenameOperations no, porque casi cualquier instalador la deja. Los errores salen como JSON con el HRESULT. */
 const WINDOWS_PS_SCRIPT = [
   "$ErrorActionPreference='Stop'",
   "try {",
@@ -568,10 +520,7 @@ const WINDOWS_PS_SCRIPT = [
   "$r = $s.CreateUpdateSearcher().Search('IsInstalled=0')",
   "$u = @($r.Updates | ForEach-Object { [pscustomobject]@{ Title=$_.Title; Severity=$_.MsrcSeverity; " +
     "Categories=@($_.Categories | ForEach-Object { $_.Name }) } })",
-  // Reinicio pendiente. Va DENTRO del mismo try y en su propio try anidado: si la lectura del
-  // registro falla, no puede tirar la consulta de actualizaciones, que es el dato principal.
-  // `reboot=$null` cuando no se pudo mirar: NO es lo mismo que "no hay reinicio pendiente", y el
-  // llamante lo distingue.
+  // try anidado: si falla el registro, no tira la consulta. `reboot=$null` es "no se pudo mirar".
   "$reboot = $null",
   "$rebootKeys = @()",
   "try {",
@@ -604,8 +553,7 @@ async function fromWindowsUpdate() {
     };
   }
 
-  // Etiqueta para los mensajes: la ruta del temporal cambia en cada ejecución y no le dice nada
-  // al usuario. El comando real, con su script, va en el volcado de `detail`.
+  // Etiqueta fija para los mensajes; el comando real va en `detail`.
   const cmdLabel = `${shell} -File <consulta a Windows Update>`;
   let stdout;
   try {
@@ -628,16 +576,13 @@ async function fromWindowsUpdate() {
       reason:
         "LoCoAudit no ha podido interpretar la respuesta de Windows Update: la salida de " +
         "PowerShell no tiene el formato esperado.",
-      // La salida real, recortada, para el JSON exportado. Es lo que permite ver si fue un error
-      // de sintaxis del script, un mensaje de la política de ejecución, o basura del perfil.
+      // Salida real recortada, para diagnosticar desde el JSON exportado.
       detail: firstLines(`${parseErr.message}\n---\n${stdout}`, RAW_DETAIL_LINES),
     };
   }
 
   if (parsed.ok === false) {
-    // LoCoAudit no eleva nunca: Node-RED sirve un panel web en el 1880 y heredar privilegios de
-    // administrador ampliaría la superficie de ataque sin necesidad. Si Windows exige elevación,
-    // el resultado correcto es un estado explícito y una instrucción para el usuario.
+    // LoCoAudit nunca eleva privilegios (sirve un panel web): si Windows lo exige, se dice al usuario.
     if (String(parsed.hresult || "").toUpperCase() === HRESULT_NOT_ELEVATED.toUpperCase()) {
       return {
         skipped: true,
@@ -667,8 +612,7 @@ async function fromWindowsUpdate() {
     return update(u.Title || "actualización sin título", {
       security: clas.security,
       label: u.Severity || null,
-      // Se guardan para que el JSON exportado permita rehacer la clasificación sin volver a
-      // consultar Windows Update, y para poder auditar por qué una entrada quedó sin clasificar.
+      // Para poder revisar la clasificación desde el JSON exportado.
       categories: cats,
       msrcSeverity: u.Severity || null,
     });
@@ -677,13 +621,10 @@ async function fromWindowsUpdate() {
   const seguras = updates.filter((u) => u.security === true).length;
   const sinClasificar = updates.filter((u) => u.security === null).length;
 
-  // true / false / null, nunca un booleano forzado. Con la lectura del registro caída, `null`
-  // significa "no se sabe": dar `false` ahí sería afirmar que no hay reinicio pendiente sin
-  // haberlo comprobado, que es exactamente el falso verde que este proyecto persigue.
+  // true / false / null: con el registro caído, false afirmaría algo no comprobado.
   const reboot = parsed.reboot === true ? true : parsed.reboot === false ? false : null;
 
-  // Una lista vacía es un dato legítimo, no un fallo: un equipo gestionado por WSUS o Intune puede
-  // no tener nada pendiente aprobado. Se devuelve como cero, igual que en macOS.
+  // Lista vacía es un dato legítimo (p. ej. equipos con WSUS o Intune).
   return {
     skipped: false,
     platform: "win32",
@@ -692,27 +633,18 @@ async function fromWindowsUpdate() {
     total: updates.length,
     securityDetection: "full",
     securityCount: seguras,
-    // Una actualización instalada a la espera de reinicio NO aparece en `IsInstalled=0`: la API
-    // COM devuelve cero pendientes y el informe decía "Sistema al día". Falso: la corrección de
-    // seguridad no está aplicada hasta que se reinicia.
+    // Una actualización pendiente de reinicio no sale en `IsInstalled=0` y no está aplicada.
     rebootPending: reboot,
     rebootKeys: Array.isArray(parsed.rebootKeys) ? parsed.rebootKeys : [],
-    // Tercer estado, visible y contado aparte. Sin él, una actualización que llega sin categorías
-    // caía en `security: false` y se contaba como "no es de seguridad", que es exactamente la
-    // asunción que no se puede hacer: no saberlo no es saber que no.
+    // Tercer estado contado aparte: no saberlo no es saber que no.
     unclassifiedCount: sinClasificar,
   };
 }
 
-/**
- * ¿Es de seguridad esta actualización de Windows? true si consta, false si hay categorías legibles y ninguna lo es,
- * null si no se sabe (sin categorías ni severidad, p. ej. drivers o respuestas recortadas por política).
- * Contar de menos es el error peligroso, por eso hay tercer estado. La categoría es la señal principal y la severidad MSRC la segunda.
- */
+/** ¿Es de seguridad? true si consta, false si hay categorías y ninguna lo es, null si no se sabe.
+ *  Señal principal: la categoría; secundaria: la severidad MSRC. */
 function classifyWindowsUpdate(categories, msrcSeverity) {
-  // El nombre de la categoría llega TRADUCIDO al idioma del equipo: "Security Updates" en un
-  // Windows en inglés, "Actualizaciones de seguridad" en uno en español. Por eso se buscan las
-  // dos raíces y no una cadena exacta.
+  // La categoría llega traducida al idioma del equipo: se buscan las raíces en inglés y español.
   const ES_SEGURIDAD = /security\s+updates?|actualizaciones?\s+de\s+seguridad|definition\s+updates?|actualizaciones?\s+de\s+definiciones/i;
   const sev = String(msrcSeverity || "").trim();
 
@@ -720,17 +652,14 @@ function classifyWindowsUpdate(categories, msrcSeverity) {
   if (sev && /^(critical|important|moderate|low)$/i.test(sev)) {
     return { security: true, por: "msrc" };
   }
-  // Sin categorías legibles no hay nada sobre lo que decidir. Decir `false` aquí sería inventar.
+  // Sin categorías legibles, false sería inventar.
   if (!categories.length && !sev) return { security: null, por: "sin-datos" };
   return { security: false, por: "categoria" };
 }
 
 // ── Despacho ─────────────────────────────────────────────────────────────────
 
-/**
- * `pkgManager` llega por parámetro desde audit-host.js, que ya lo resolvió con pkg-manager.js
- * antes del Promise.allSettled. No se vuelve a detectar aquí: una sola fuente de verdad.
- */
+/** `pkgManager` llega ya detectado desde audit-host.js: no se vuelve a detectar aquí. */
 async function getPendingUpdates(options = {}) {
   const platform = process.platform;
 

@@ -3,12 +3,6 @@
 /**
  * test-network-target.js — Qué objetivo acepta audit-network, y qué pasa cuando no es válido.
  *
- * El campo "Dirección IP del equipo" iba tal cual a la línea de nmap. Comprobado con una
- * auditoría real contra 10.10.10.0/24: se aceptó el rango, el descubrimiento se cortó a los
- * 15 s, el escaneo a los 420 s, y el informe salió "no concluyente". Con un rango pequeño
- * habría terminado y parseNmapXml() habría mezclado los puertos de varios equipos sin decir de
- * cuál es cada uno. Y el mismo campo aceptaba `; orden`, que la shell ejecuta.
- *
  * Bloques:
  *   1. validateTarget(): lo que se acepta y lo que no, incluida la red y la difusión propias.
  *   2. El nodo con un objetivo no válido: un NET-CFG-ERR y nmap SIN ejecutar (un nmap falso
@@ -34,8 +28,7 @@ const isWin = process.platform === "win32";
 const tmp   = fs.mkdtempSync(path.join(os.tmpdir(), "lcaudit-test-target-"));
 const witness = path.join(tmp, "nmap-was-called");
 if (!isWin) {
-  // `exec sleep` y no `sleep`: así el proceso al que child_process manda SIGTERM es el que tiene
-  // abiertos stdout y stderr. Con un `sleep` hijo, el callback esperaría a que este terminase.
+  // `exec sleep` para que el SIGTERM llegue al proceso que tiene abiertos stdout y stderr.
   fs.writeFileSync(path.join(tmp, "nmap"),
     "#!/bin/sh\n" +
     `echo called >> "${witness}"\n` +
@@ -55,15 +48,15 @@ const IFACES = {
   en0: [{ family: "IPv4", internal: false, address: "192.168.1.34", netmask: "255.255.255.0", cidr: "192.168.1.34/24" }],
   wg0: [{ family: "IPv4", internal: false, address: "10.8.0.2", netmask: "255.255.255.254", cidr: "10.8.0.2/31" }],
   lo0: [{ family: "IPv4", internal: true,  address: "127.0.0.1", netmask: "255.0.0.0", cidr: "127.0.0.1/8" }],
+  eth1: [{ family: "IPv4", internal: false, address: "203.0.113.5", netmask: "255.255.255.0", cidr: "203.0.113.5/24" }],
 };
 
 const VALIDAS = [
   ["192.168.1.10", "192.168.1.10"],
-  ["  10.10.10.20 ", "10.10.10.20"],   // los espacios de alrededor se recortan
-  ["8.8.8.8", "8.8.8.8"],
+  ["  192.168.1.20 ", "192.168.1.20"], // los espacios de alrededor se recortan
+  ["203.0.113.40", "203.0.113.40"],    // pública, pero en una subred de este equipo
   ["127.0.0.1", "127.0.0.1"],
   ["10.8.0.3", "10.8.0.3"],            // en un /31 no hay red ni difusión
-  ["192.168.2.255", "192.168.2.255"],  // difusión de una subred AJENA: no se puede saber
 ];
 for (const [entrada, esperada] of VALIDAS) {
   const r = validateTarget(entrada, IFACES);
@@ -95,12 +88,26 @@ const INVALIDAS = [
   ["240.0.0.1", "reservada"],
   ["192.168.1.0", "dirección de red de una subred propia"],
   ["192.168.1.255", "difusión de una subred propia"],
+  ["8.8.8.8", "pública fuera de las subredes propias"],
+  ["10.10.10.20", "privada, pero de otra red"],
+  ["172.16.5.5", "privada, pero de otra red"],
+  ["169.254.10.20", "enlace local sin interfaz en esa red"],
+  ["192.168.2.10", "subred vecina de la propia"],
+  ["100.64.0.1", "CGNAT"],
 ];
 for (const [entrada, que] of INVALIDAS) {
   const r = validateTarget(entrada, IFACES);
   ok(!r.ok && typeof r.reason === "string" && r.reason.length > 0,
      `rechaza ${que}: ${JSON.stringify(entrada)}`, JSON.stringify(r));
 }
+
+ok(/no está en la misma red/.test(validateTarget("8.8.8.8", IFACES).reason),
+   "el motivo de una dirección de otra red lo dice", validateTarget("8.8.8.8", IFACES).reason);
+
+// El caso que motiva la regla: el equipo está en 10.10.10.0/24 y se pide una dirección de 192.168.1.0/24.
+const OTRA_RED = { en0: [{ family: "IPv4", internal: false, address: "10.10.10.5", netmask: "255.255.255.0", cidr: "10.10.10.5/24" }] };
+ok(!validateTarget("192.168.1.10", OTRA_RED).ok, "desde 10.10.10.0/24 rechaza 192.168.1.10, aunque sea privada");
+ok(validateTarget("10.10.10.20", OTRA_RED).ok, "desde 10.10.10.0/24 acepta 10.10.10.20");
 
 ok(/red 192\.168\.1\.34\/24/.test(validateTarget("192.168.1.0", IFACES).reason),
    "el motivo de la dirección de red nombra la subred y la interfaz",

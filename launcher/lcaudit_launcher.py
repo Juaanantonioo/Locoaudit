@@ -34,8 +34,7 @@ FLOWS_SRC    = os.path.join(PROJECT_ROOT, "examples", "flows.json")
 FLOWS_DST    = os.path.join(NODE_RED_DIR, "flows.json")
 NPM_CMD      = "npm.cmd"      if OS == "Windows" else "npm"
 NODE_RED_CMD = "node-red.cmd" if OS == "Windows" else "node-red"
-# node-red-settings.js: escucha solo en loopback y guardián de origen (ver su cabecera).
-# -u fija el userDir, que con --settings Node-RED no deduciría.
+# Settings propios (loopback y guardián de origen); -u fija el userDir, que con --settings no se deduce.
 NODE_RED_SETTINGS = os.path.join(LAUNCHER_DIR, "node-red-settings.js")
 NODE_RED_ARGS = [NODE_RED_CMD, "--settings", NODE_RED_SETTINGS, "-u", NODE_RED_DIR]
 
@@ -224,10 +223,7 @@ def tip(msg):
         _tip_p(msg)
 
 def status(msg):
-    """Texto vivo en el pie de la GUI. Las tarjetas no se vuelcan hasta la
-    cabecera del paso siguiente, así que sin esto una descarga larga deja la
-    ventana sin ningún signo de actividad. En modo terminal no aplica: ahí la
-    salida del propio comando ya se ve."""
+    """Texto vivo en el pie de la GUI para que una descarga larga muestre actividad."""
     if OUTPUT_QUEUE is not None:
         OUTPUT_QUEUE.put({"type": "status", "text": msg})
 
@@ -323,39 +319,23 @@ _INSTALL_NOTES = {
     "docker": "Descarga considerable y requiere reiniciar el sistema al terminar.",
 }
 
-# Margen de tiempo por herramienta. Docker Desktop descarga bastante más que el
-# resto, así que 10 minutos se le quedan cortos.
+# Tiempo máximo de instalación por herramienta; Docker Desktop necesita más.
 _INSTALL_TIMEOUT_DEFAULT = 600
 _INSTALL_TIMEOUTS = {
     "docker": 1800,
 }
 
-# Códigos estándar de Windows Installer que NO son fallo: la instalación terminó
-# bien y solo queda reiniciar. No se listan códigos propios de winget porque sus
-# valores no se han podido verificar; ese caso lo cubre la revalidación del
-# binario en run_install().
+# Códigos de Windows Installer que no son fallo: la instalación terminó y falta reiniciar.
 _REBOOT_CODES = {
     3010: "hay un reinicio de Windows pendiente para completar la instalación",
     1641: "el instalador ha iniciado un reinicio de Windows",
 }
 
-# Herramientas cuyo instalador necesita permisos de administrador.
-# Solo Nmap: su instalador NSIS registra la ruta en el PATH de SISTEMA (HKLM) y
-# sin elevar falla en silencio — copia los ficheros pero deja nmap.exe invisible.
-# Docker y Trivy se registran en la carpeta de enlaces de winget, que ya está en
-# el PATH de usuario, así que no la necesitan. Se restringe a Nmap a propósito:
-# el camino elevado usa ctypes y no se ha podido probar, así que cuanto menos
-# tráfico pase por él, mejor. La condición es una sola expresión en cualquier caso.
+# Instaladores que necesitan administrador: solo Nmap, que escribe en el PATH de sistema.
 _NEEDS_ELEVATION = {"nmap"}
 
 def _default_windows_tool_dirs() -> tuple:
-    """Carpetas donde acaban los binarios de las herramientas en Windows.
-
-    Rutas fijas en código, nunca entrada del usuario. Se usan para dos cosas, y
-    ninguna toca nada persistente: el PATH de la COPIA en memoria del entorno que
-    hereda Node-RED, y saber si una herramienta recién instalada ya está al
-    alcance de los nodos sin reiniciar nada.
-    """
+    """Carpetas fijas donde acaban los binarios de las herramientas en Windows."""
     dirs = [
         # Instalador oficial de Nmap.
         r"C:\Program Files (x86)\Nmap",
@@ -370,8 +350,7 @@ def _default_windows_tool_dirs() -> tuple:
 
 _WINDOWS_TOOL_DIRS = _default_windows_tool_dirs()
 
-# Extensiones de ejecutable que se buscan al comprobar si una herramienta ya está
-# en una de esas carpetas. La carpeta de winget guarda .exe; Nmap también.
+# Extensiones que se prueban al buscar una herramienta en esas carpetas.
 _WINDOWS_EXEC_EXTS = (".exe", ".cmd", ".bat", "")
 
 # Herramientas instaladas durante ESTA ejecución (para el consejo final).
@@ -383,35 +362,21 @@ _ERROR_CANCELLED     = 1223  # GetLastError: el usuario canceló el diálogo de 
 # El aviso de que Windows va a pedir permisos se da una sola vez por ejecución.
 _uac_notice_shown = False
 
-# Lo pone run_install() cuando la regla de evidencia salva un returncode no cero:
-# la herramienta ya estaba en el equipo y no hizo falta instalarla. Solo cambia la
-# redacción del mensaje final, no si la instalación se considera correcta o no.
+# True si run_install() vio que la herramienta ya estaba; solo cambia el mensaje final.
 _already_installed = False
 
-# Estado de las herramientas opcionales: lo rellena el paso 2 y es la ÚNICA fuente de los dos resúmenes
-# (final del paso 2 y _print_summary).
-#   _tool_status[cmd] = {"state": <estado>, "reason": <motivo o "">}
-# Estados: "available" (operativa), "not_operational" (instalada pero no utilizable, p. ej. Docker con el daemon parado),
-# "unsupported" (no existe para esta plataforma, Lynis en Windows) y "missing" (no instalada).
+# Estado de cada herramienta opcional ({"state", "reason"}); lo rellena el paso 2 y alimenta ambos resúmenes.
 _tool_status: dict = {}
 
-# Node-RED es requisito, pero se instala en el mismo lote que las herramientas
-# opcionales cuando Node.js y npm ya están disponibles.
+# Node-RED se instala en el mismo lote que las opcionales si ya hay Node.js y npm.
 _node_red_pending_install = False
 
-# "unknown" no es un adorno: sin Node no se puede preguntar a lib/executor.js, y
-# entonces un "no la encuentro" de este proceso NO autoriza a decir que falta.
-# Era justo el error que producía "Lynis no encontrado" sobre un Lynis instalado.
+# "unknown": sin Node no se puede consultar lib/executor.js, así que no se afirma que falte.
 TOOL_STATES = ("available", "not_operational", "unsupported", "unknown", "missing")
 
 
 def _set_tool_state(cmd: str, state: str, reason: str = "") -> None:
-    """Registra el estado de una herramienta y, si aplica, por qué.
-
-    El motivo se guarda aquí y no en una variable local del bucle: sin él, el
-    resumen del paso 6 no puede distinguir "Docker sin daemon" de "Docker no
-    instalado", que es justo lo que pasaba antes.
-    """
+    """Registra el estado de una herramienta y su motivo, si lo hay."""
     _tool_status[cmd] = {"state": state, "reason": reason}
 
 
@@ -433,12 +398,7 @@ def _tool_groups() -> dict:
 
 
 def _tool_summary_lines() -> list:
-    """Resumen del estado de las herramientas, ya redactado.
-
-    Devuelve [(tipo, texto)] con tipo "ok" o "warn", omitiendo los grupos vacíos.
-    Lo usan el final del paso 2 y el resumen del paso 6, para que no puedan
-    decir cosas distintas.
-    """
+    """Líneas [(tipo, texto)] del resumen de herramientas, sin grupos vacíos."""
     g = _tool_groups()
     lineas = []
     if g["available"]:
@@ -453,8 +413,7 @@ def _tool_summary_lines() -> list:
         lineas.append(("warn", "No disponibles en este sistema: " +
                        ", ".join(l for l, _, _ in g["unsupported"])))
     if g["unknown"]:
-        # Ni "instaladas" ni "no instaladas": no se ha podido comprobar. Meterlas
-        # en cualquiera de los dos grupos sería afirmar algo que no se sabe.
+        # No se pudo comprobar: no se cuentan como instaladas ni como ausentes.
         lineas.append(("warn", "Sin comprobar: " +
                        ", ".join(l for l, _, _ in g["unknown"])))
     if g["missing"]:
@@ -512,9 +471,7 @@ def get_node_version() -> tuple:
 
 
 def check_docker_daemon() -> str | None:
-    # Se resuelve la ruta por la fuente única: en Windows docker puede estar
-    # disponible para LoCoAudit sin figurar en el PATH de este proceso, y entonces
-    # invocarlo por nombre fallaría con un error que no es del daemon.
+    # Ruta por la fuente única: en Windows docker puede no estar en el PATH de este proceso.
     exe = _tool_path("docker") or "docker"
     try:
         r = subprocess.run([exe, "info"], capture_output=True, text=True, timeout=8)
@@ -574,10 +531,7 @@ def get_auto_install_cmd(tool: str) -> str | None:
 
     if OS == "Windows":
         if shutil.which("winget"):
-            # Mismo orden de flags que la invocación manual verificada, y con los
-            # acuerdos aceptados de antemano: sin ellos winget puede pedirlos por
-            # consola, y en modo GUI esa consola no está a la vista.
-            # Sin --silent a propósito: oculta el instalador y estorba al diagnóstico.
+            # Acuerdos aceptados de antemano (en la GUI no hay consola); sin --silent a propósito.
             base = "winget install --id {} --source winget -e " \
                    "--accept-source-agreements --accept-package-agreements"
             return {
@@ -591,11 +545,7 @@ def get_auto_install_cmd(tool: str) -> str | None:
 
 
 def _is_windows_admin():
-    """True/False en Windows, None en el resto de sistemas.
-
-    Ante cualquier problema devuelve False: dar por hecho que NO somos
-    administrador es el camino seguro — como mucho se piden permisos de más.
-    """
+    """True/False en Windows, None en otros sistemas; ante un error, False."""
     if OS != "Windows":
         return None
     try:
@@ -606,13 +556,7 @@ def _is_windows_admin():
 
 
 def _shellexecuteinfo_type():
-    """Construye el tipo SHELLEXECUTEINFOW.
-
-    Se usan tipos de ancho FIJO en vez de ctypes.wintypes a propósito:
-    wintypes.DWORD es c_ulong, que mide 4 bytes en Windows pero 8 en LP64. Con
-    anchos fijos el layout es el mismo se mire desde donde se mire, que es la
-    única forma de comprobar sizeof() sin una máquina Windows delante.
-    """
+    """Construye SHELLEXECUTEINFOW con tipos de ancho fijo (layout igual en cualquier SO)."""
     import ctypes
     DWORD  = ctypes.c_uint32
     HANDLE = ctypes.c_void_p
@@ -643,39 +587,8 @@ def _shellexecuteinfo_type():
 def _run_elevated_windows(cmd: str, timeout: int):
     """Ejecuta `cmd` elevado vía UAC y devuelve (returncode, salida).
 
-    returncode None significa que el usuario canceló el diálogo de UAC — eso no
-    es un fallo de instalación, es una decisión suya, y se trata como tal.
-
-    DECISIÓN DE DISEÑO — por qué existe esta función (no relitigar):
-
-    Motivo técnico. El instalador de Nmap (NSIS) registra su ruta en el PATH de
-    sistema, que vive en HKLM y solo es escribible por un administrador. Sin
-    elevación el instalador copia los ficheros y falla esa parte en silencio:
-    comprobado en Windows, `winget list` daba Nmap por instalado, el binario
-    estaba en C:\\Program Files (x86)\\Nmap\\nmap.exe, y aun así `nmap` no se
-    resolvía ni tras reiniciar el equipo. Con elevación funciona.
-
-    Alcance mínimo. Se eleva SOLO el comando de instalación, nunca el launcher
-    entero. Si el launcher corriera como administrador, Node-RED heredaría los
-    privilegios, y Node-RED ejecuta herramientas de auditoría y sirve un panel
-    web en el puerto 1880: elevarlo ampliaría la superficie de ataque sin
-    ninguna necesidad. Principio de mínimo privilegio.
-
-    Quién escribe el PATH. LoCoAudit no modifica el PATH del usuario ni del
-    sistema por su cuenta: nada de setx, nada de escritura en el registro. Lo
-    hace el instalador oficial de Nmap haciendo su trabajo documentado, igual
-    que en una instalación manual. Para la sesión en curso basta con _child_env(),
-    que inyecta los directorios conocidos en el entorno del Node-RED hijo sin
-    persistir nada.
-
-    Consentimiento. Nada se instala sin que el usuario diga que sí: el comando
-    exacto se muestra en la pregunta de instalación, y vuelve a mostrarse en el
-    bloque de error si falla. Además puede rechazar el prompt de UAC; si lo hace
-    se omite la instalación, se muestra el comando manual y el asistente sigue.
-
-    Sólo se eleva lo que está en _NEEDS_ELEVATION. Docker y Trivy no lo
-    necesitan: winget los registra en su carpeta Links, ya presente en el PATH
-    de usuario.
+    returncode None significa que el usuario canceló el diálogo de UAC.
+    Solo se eleva el comando de instalación, nunca el launcher (mínimo privilegio).
     """
     import ctypes
 
@@ -699,17 +612,11 @@ def _run_elevated_windows(cmd: str, timeout: int):
     kernel32.CloseHandle.argtypes = [HANDLE]
     kernel32.CloseHandle.restype  = ctypes.c_int
 
-    # El proceso elevado no comparte las tuberías del padre, así que la salida se
-    # vuelca a un fichero y se lee después. Es lo que permite conservar el
-    # diagnóstico (código de salida + stderr) pese a la elevación.
+    # El proceso elevado no hereda las tuberías: la salida va a un fichero temporal.
     fd, log_path = tempfile.mkstemp(prefix="lcaudit-install-", suffix=".log")
     os.close(fd)
     try:
-        # cmd.exe /s /c — con /s, cmd quita SOLO la primera y la última comilla y
-        # deja el resto tal cual. Es la forma documentada de que la ruta temporal
-        # sobreviva entre comillas: %TEMP% suele ir bajo C:\Users\<nombre>, y el
-        # nombre de usuario puede llevar espacios. Sin /s, cmd intenta interpretar
-        # las comillas interiores y parte el comando.
+        # Con /s, cmd solo quita la primera y la última comilla: la ruta temporal puede llevar espacios.
         params = f'/s /c "{cmd} > "{log_path}" 2>&1"'
 
         info = SHELLEXECUTEINFOW()
@@ -725,8 +632,7 @@ def _run_elevated_windows(cmd: str, timeout: int):
         if not shell32.ShellExecuteExW(ctypes.byref(info)):
             hinst = int(info.hInstApp or 0)
             last  = ctypes.get_last_error()
-            # UAC cancelado: documentado por las dos vías según la versión, así
-            # que se comprueban ambas.
+            # UAC cancelado: según la versión llega por una vía u otra.
             if hinst == _SE_ERR_ACCESSDENIED or last == _ERROR_CANCELLED:
                 return None, ""
             raise OSError(
@@ -772,13 +678,7 @@ def _run_plain(cmd: str, timeout: int):
 
 
 def _tool_in_known_dirs(tool: str):
-    """Devuelve la carpeta conocida donde está el binario de `tool`, o None.
-
-    Es lo que distingue "instalada y ya usable" de "instalada pero todavía fuera
-    de nuestro alcance". Si está en una de estas carpetas, el Node-RED que arranca
-    el asistente la va a encontrar, porque _child_env() se las añade al entorno
-    del proceso hijo. No hace falta reiniciar nada.
-    """
+    """Carpeta conocida donde está el binario de `tool`, o None."""
     if OS != "Windows":
         return None
     for d in _WINDOWS_TOOL_DIRS:
@@ -790,14 +690,12 @@ def _tool_in_known_dirs(tool: str):
     return None
 
 
-# Respuestas de lib/executor.js, cacheadas: {tool: ruta|None}. Se rellena de una
-# sola llamada a Node, no de siete.
+# Caché de lib/executor.js ({tool: ruta|None}), rellenada con una sola llamada a Node.
 _js_probe_cache: dict = {}
 # ¿Pudo Node responder? None = todavía no se ha intentado.
 _js_probe_ok: bool | None = None
 
-# El detector de JS. Se pasa por -e y no por fichero temporal: es corto, y así no
-# hay nada que limpiar si el proceso muere a medias.
+# Detector en JS, pasado con -e para no dejar ficheros temporales.
 _JS_PROBE = (
     "const {commandExists}=require(process.argv[1]);"
     "(async()=>{const o={};"
@@ -807,22 +705,9 @@ _JS_PROBE = (
 
 
 def _probe_tools_with_node(tools: list) -> dict | None:
-    """Pregunta a lib/executor.js por TODAS las herramientas de una vez.
+    """Consulta a lib/executor.js todas las herramientas en una llamada a Node.
 
-    Por qué se le pregunta a JS en vez de replicar aquí su lógica: quien ejecuta
-    estas herramientas es Node-RED, no el launcher. `commandExists()` de
-    lib/executor.js sabe cosas que este proceso no —en Linux busca en
-    /usr/local/sbin, /usr/sbin y /sbin, donde Debian instala lynis y de donde el
-    PATH de un usuario normal no lo ve—, y tener dos implementaciones de "¿está
-    instalada?" es tener dos respuestas. El launcher llegó a decir "Lynis no
-    encontrado", ofrecer instalarlo y avisar de "modo reducido" mientras el panel
-    lo estaba usando sin problema.
-
-    Una sola invocación de Node para toda la lista: siete arranques del intérprete
-    para siete preguntas es tiempo tirado en el arranque del asistente.
-
-    Devuelve {tool: ruta|None}, o None si Node no pudo responder — que NO es lo
-    mismo que "no están instaladas", y por eso el llamante lo trata aparte.
+    Devuelve {tool: ruta|None}, o None si Node no respondió ("no lo sé", no "falta").
     """
     executor = os.path.join(PROJECT_ROOT, "lib", "executor.js")
     if not os.path.isfile(executor):
@@ -836,8 +721,7 @@ def _probe_tools_with_node(tools: list) -> dict | None:
             return None
         datos = json.loads(proc.stdout)
     except Exception:
-        # Node ausente, roto, o una salida que no es JSON. Cualquiera de las tres
-        # es "no lo sé", nunca "no está instalada".
+        # Node ausente, roto o salida no JSON: "no lo sé", nunca "no está instalada".
         return None
     return {t: datos.get(t) or None for t in tools}
 
@@ -857,20 +741,10 @@ def _prime_tool_probe(tools: list = None) -> None:
 
 
 def _tool_path(tool: str):
-    """Ruta del ejecutable de `tool`, o None si no está disponible.
+    """Ruta del ejecutable de `tool`, o None. Fuente única de disponibilidad.
 
-    FUENTE ÚNICA DE VERDAD para "¿está esta herramienta disponible?". El orden es:
-
-      1. Lo que responde lib/executor.js, que es el código que Node-RED usará de
-         verdad para lanzarla. Si él la encuentra, está — aunque este proceso no.
-      2. El PATH que heredó este proceso (shutil.which).
-      3. Las carpetas conocidas de _WINDOWS_TOOL_DIRS, que _child_env() inyecta en
-         el entorno del Node-RED hijo.
-
-    (2) y (3) siguen aquí como red para cuando Node todavía no está instalado:
-    en el paso 2 del asistente puede no haberlo. No son un segundo detector, son
-    el mismo de siempre degradado, y su respuesta se marca como no concluyente en
-    _tool_state_for() en vez de afirmar que la herramienta falta.
+    Orden: lib/executor.js, el PATH de este proceso y _WINDOWS_TOOL_DIRS
+    (los dos últimos solo como respaldo cuando aún no hay Node).
     """
     _prime_tool_probe()
     if _js_probe_ok and tool in _js_probe_cache:
@@ -896,13 +770,7 @@ def _tool_available(tool: str) -> bool:
 
 
 def _probe_is_conclusive() -> bool:
-    """¿Se pudo preguntar a lib/executor.js?
-
-    Si no, un "no la encuentro" de este proceso no basta para afirmar que la
-    herramienta no está: en Debian el PATH del usuario no ve /usr/sbin y esa es
-    exactamente la respuesta equivocada. Sin Node, "no lo sé" es la única
-    respuesta honesta.
-    """
+    """¿Se pudo consultar lib/executor.js? Si no, un "no la encuentro" no es concluyente."""
     _prime_tool_probe()
     return _js_probe_ok is True
 
@@ -911,16 +779,7 @@ def _probe_is_conclusive() -> bool:
 #  Permisos de instalación
 # ─────────────────────────────────────────────
 def _can_sudo() -> bool | None:
-    """¿Puede este usuario usar sudo sin que le pidan nada?
-
-    True  → sudo disponible y sin contraseña pendiente.
-    False → sudo existe pero este usuario no puede usarlo (no está en sudoers).
-    None  → no se puede saber: no hay sudo, o lo hay pero pedirá contraseña.
-
-    `sudo -n true` no pregunta nada y devuelve no-cero si haría falta interacción.
-    El caso None NO se trata como False: un usuario que sí puede usar sudo pero
-    tiene que teclear la contraseña debe poder instalar igual.
-    """
+    """True: sudo sin contraseña; False: no está en sudoers; None: no se sabe (o pedirá contraseña)."""
     if OS == "Windows":
         return None
     if not shutil.which("sudo"):
@@ -933,9 +792,7 @@ def _can_sudo() -> bool | None:
     if proc.returncode == 0:
         return True
     salida = ((proc.stderr or "") + (proc.stdout or "")).lower()
-    # "is not in the sudoers file" / "not allowed to run sudo": no es que falte la
-    # contraseña, es que este usuario no puede. Ofrecerle instalar sería ofrecerle
-    # una acción que va a fallar.
+    # El usuario no puede usar sudo: ofrecer la instalación solo llevaría a un fallo.
     if "sudoers" in salida or "not allowed" in salida:
         return False
     # "a password is required": puede, pero hay que pedírsela.
@@ -948,25 +805,14 @@ def _needs_sudo(cmd: str) -> bool:
 
 
 def _can_run_install(cmd: str) -> bool:
-    """¿Tiene sentido OFRECER esta instalación?
-
-    Solo se dice que no cuando consta que va a fallar. Ante la duda se ofrece: un
-    falso "no puedes" es tan molesto como el falso "no está instalada" que se
-    acaba de arreglar.
-    """
+    """¿Se ofrece esta instalación? Solo se descarta si consta que va a fallar."""
     if not _needs_sudo(cmd):
         return True
     return _can_sudo() is not False
 
 
 def _child_env() -> dict:
-    """Copia del entorno para los procesos hijo, con las carpetas conocidas de
-    herramientas añadidas al PATH.
-
-    Solo en memoria y solo para el hijo: no se escribe en el registro ni se
-    ejecuta setx. Muere con el proceso. Cubre el hueco entre que el instalador
-    registra la ruta en el PATH del sistema y que esa sesión se entera.
-    """
+    """Copia en memoria del entorno con las carpetas de herramientas añadidas al PATH."""
     env = os.environ.copy()
     if OS != "Windows":
         return env
@@ -977,12 +823,7 @@ def _child_env() -> dict:
 
 
 def _decode_output(raw: bytes) -> str:
-    """Decodifica la salida de un proceso sin poder lanzar nunca.
-
-    La consola española de Windows no es UTF-8 (cp1252/cp850), así que
-    `text=True` —que usa la codificación local con errors='strict'— puede
-    reventar con UnicodeDecodeError justo cuando más falta hace leer el error.
-    """
+    """Decodifica la salida de un proceso sin lanzar nunca (la consola de Windows no es UTF-8)."""
     if not raw:
         return ""
     for enc in ("utf-8", "cp1252"):
@@ -994,12 +835,7 @@ def _decode_output(raw: bytes) -> str:
 
 
 def _format_rc(rc: int) -> str:
-    """Código de salida en decimal y hexadecimal.
-
-    Windows documenta los suyos en hex (0x8A15...). El AND normaliza el valor a
-    32 bits sin signo para que un código negativo salga con el hex que aparece
-    en la documentación y no con uno distinto.
-    """
+    """Código de salida en decimal y en hex de 32 bits sin signo, como lo documenta Windows."""
     return f"{rc} (0x{rc & 0xFFFFFFFF:08X})"
 
 
@@ -1009,19 +845,16 @@ def _tail_lines(text: str, n: int = 8) -> list:
 
 
 def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
-    """Ejecuta un comando de instalación. Devuelve True si la herramienta quedó
-    instalada.
+    """Ejecuta una instalación y devuelve True si la herramienta quedó instalada.
 
-    `tool` es la clave interna ("nmap", "docker"...). Si no se pasa se deriva del
-    label, que es como lo llaman las dos ramas de step2.
+    `tool` es la clave interna ("nmap", "docker"...); si falta, se deriva del label.
     """
     global _uac_notice_shown, _already_installed
     _already_installed = False
     tool = tool or label.lower()
     timeout = timeout or _INSTALL_TIMEOUTS.get(tool, _INSTALL_TIMEOUT_DEFAULT)
 
-    # Solo se eleva si hace falta de verdad: Windows, herramienta de la lista, y
-    # no somos ya administrador. Si el launcher ya corre elevado, camino normal.
+    # Se eleva solo en Windows, para herramientas de la lista y si no somos ya administrador.
     elevar = (
         OS == "Windows"
         and tool in _NEEDS_ELEVATION
@@ -1029,12 +862,10 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
     )
 
     work(f"Instalando {label}...")
-    # El comando no se ecoa aquí: en el camino de éxito es ruido. Si algo falla,
-    # se imprime dentro del bloque de error, que es donde hace falta.
+    # El comando solo se muestra si falla, dentro del bloque de error.
     if elevar and not _uac_notice_shown:
         _uac_notice_shown = True
-        # La justificación completa de la elevación vive en README.md.
-        # Aquí solo lo que el usuario necesita para decidir en ese momento.
+        # La justificación de la elevación está en README.md.
         warn(f"Windows va a pedirte permisos de administrador para instalar {label}")
         tip("Solo se usa para este paso — Node-RED seguirá sin privilegios de "
             "administrador")
@@ -1049,8 +880,7 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
             except subprocess.TimeoutExpired:
                 raise
             except Exception as exc:
-                # Cualquier imprevisto en la ruta elevada degrada a la normal:
-                # peor una instalación sin elevar que un launcher reventado.
+                # Si la ruta elevada falla de forma imprevista, se sigue por la normal.
                 warn(f"No se pudo lanzar la instalación elevada: {exc}")
                 tip("Se reintenta sin permisos de administrador")
                 rc, salida = _run_plain(cmd, timeout)
@@ -1069,8 +899,7 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
 
     status(_gui_step_label)
 
-    # El usuario cerró el diálogo de UAC. Decisión suya, no un fallo: aviso en
-    # amarillo y el bucle sigue con el resto de herramientas.
+    # UAC cancelado: es decisión del usuario, se avisa y se sigue con el resto.
     if rc is None:
         warn(f"Instalación de {label} cancelada: se necesitan permisos de administrador")
         tip(f"Puedes instalarlo manualmente: "
@@ -1085,11 +914,7 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
         warn(f"{label}: {_REBOOT_CODES[rc]}")
         return True
 
-    # Cualquier otro código no cero: manda la evidencia, no una tabla de códigos.
-    # winget devuelve no-cero en casos que no son error (ya instalado, entre
-    # otros); si la herramienta está disponible, la instalación cumplió su objetivo.
-    # La evidencia se mide con la fuente única, no con el PATH a secas: si no,
-    # sale un error rojo por una herramienta que el usuario ve funcionando.
+    # Otro código no cero: si la herramienta ya está disponible, se da por buena.
     if _tool_available(tool):
         _already_installed = True
         return True
@@ -1234,14 +1059,12 @@ def print_welcome():
 # ─────────────────────────────────────────────
 #  Resumen final (antes de arrancar Node-RED)
 # ─────────────────────────────────────────────
-# Secciones del resumen final, en orden de aparición. Las comparten la rama
-# plana y la tabla de rich: antes cada una construía sus listas por su cuenta.
+# Secciones del resumen final, compartidas por la salida plana y la tabla de rich.
 _SUMMARY_SECTIONS = [
     ("available",       "Módulos activos",               "green"),
     ("not_operational", "Requieren atención",            "yellow"),
     ("unsupported",     "No disponibles en este sistema", "yellow"),
-    # Mismo orden que _tool_summary_lines(): las dos vistas del mismo hecho no
-    # pueden enumerarlo distinto.
+    # Mismo orden que _tool_summary_lines().
     ("unknown",         "Sin comprobar",                 "yellow"),
     ("missing",         "No instaladas",                 "yellow"),
 ]
@@ -1274,8 +1097,7 @@ def _print_summary():
         icono = "✅" if estado == "available" else "⚠️ "
         t.add_row("", f"[bold {color}]{titulo}[/bold {color}]", "")
         for label, desc, reason in filas:
-            # El motivo manda sobre la descripción: es lo que el usuario
-            # necesita para saber qué hacer con esa herramienta.
+            # Si hay motivo, se muestra en lugar de la descripción.
             detalle = _short_reason(reason) if reason else desc
             t.add_row(f"  [{color}]{icono}[/{color}]", f"[{color}]{label}[/{color}]", detalle)
 
@@ -1412,11 +1234,7 @@ def step1_required_deps() -> list:
 #  Paso 2 — Herramientas opcionales
 # ─────────────────────────────────────────────
 def _ask_install_all(pending: list, is_tty: bool) -> bool:
-    """Pregunta previa: instalar de golpe todo lo que falta.
-
-    `pending` solo trae herramientas que faltan Y tienen instalación automática
-    en esta plataforma, así que Lynis en Windows no llega hasta aquí.
-    """
+    """Ofrece instalar de golpe lo que falta y tiene instalación automática."""
     names = ", ".join(label for _, label in pending)
     note  = "  ".join(_INSTALL_NOTES[c] for c, _ in pending if c in _INSTALL_NOTES)
 
@@ -1459,15 +1277,9 @@ def _ask_install_all(pending: list, is_tty: bool) -> bool:
 
 
 def _report_install_result(cmd: str, label: str) -> None:
-    """Mensaje final tras una instalación que run_install() dio por buena.
-
-    Único sitio donde se redacta ese resultado: antes estaba duplicado en la rama
-    GUI y en la de terminal, con el riesgo de que se separaran. Toda la decisión
-    sale de _tool_available(), la fuente única.
-    """
+    """Mensaje final tras una instalación que run_install() dio por buena."""
     if not _tool_available(cmd):
-        # Instalada, pero no utilizable: ni el PATH ni las carpetas conocidas la
-        # ven, así que los nodos tampoco. No es "available".
+        # Instalada pero fuera del alcance de los nodos: no cuenta como disponible.
         _set_tool_state(cmd, "not_operational", "el sistema todavía no lo encuentra")
         warn(f"{label} se instaló, pero el sistema todavía no lo encuentra")
         tip("Abre una ventana de terminal nueva o reinicia el equipo "
@@ -1475,8 +1287,7 @@ def _report_install_result(cmd: str, label: str) -> None:
         return
 
     _set_tool_state(cmd, "available")
-    # Una sola línea: si el estado es "correcto", el detalle sobra. Lo que sí
-    # cambia el mensaje es si hacía falta instalar o ya estaba en el equipo.
+    # Una sola línea, distinta si ya estaba instalada.
     if _already_installed:
         ok(f"{label} ya estaba instalado — listo para usar")
     else:
@@ -1495,15 +1306,11 @@ def step2_optional_tools():
 
     is_tty = sys.stdin.isatty()
 
-    # Pre-pasada: si falta más de una herramienta instalable, se ofrece hacerlo
-    # todo de una vez antes de entrar al bucle. Lynis queda fuera por sí solo
-    # porque en Windows get_auto_install_cmd() no le devuelve comando.
-    # Una sola llamada a Node para las cuatro, antes de nada: así el bucle de abajo
-    # ya encuentra la caché caliente y no arranca el intérprete una vez por herramienta.
+    # Si falta más de una herramienta instalable, se ofrece instalarlas todas a la vez.
+    # Antes se consulta a Node una sola vez para dejar la caché llena.
     _prime_tool_probe()
 
-    # Mismo gate que dentro del bucle: no se ofrece en bloque lo que no se va a
-    # poder instalar, ni lo que no se ha podido comprobar.
+    # Mismo filtro que dentro del bucle.
     pending = [
         (c, l) for c, l in OPTIONAL_TOOLS
         if not _tool_available(c)
@@ -1554,8 +1361,7 @@ def step2_optional_tools():
     for cmd, label in OPTIONAL_TOOLS:
         # Lynis is not available natively on Windows
         if cmd == "lynis" and OS == "Windows":
-            # No es que falte: es que no existe para esta plataforma. Meterla en
-            # "no instaladas" invitaba a buscar una instalación que no hay.
+            # No existe para esta plataforma, que no es lo mismo que no estar instalada.
             _set_tool_state(cmd, "unsupported", "no existe versión para Windows sin WSL")
             warn(f"{label} — no disponible en Windows sin WSL")
             tip("Instala WSL: https://learn.microsoft.com/es-es/windows/wsl/install")
@@ -1582,10 +1388,7 @@ def step2_optional_tools():
             continue
 
         # ── No se ha encontrado ──
-        # Con Node disponible, la respuesta es la misma que dará Node-RED y se
-        # puede afirmar que falta. Sin Node, lo único honesto es decir que no se
-        # ha podido comprobar: el PATH de esta ventana no ve /usr/sbin, y ahí es
-        # donde Debian instala lynis.
+        # Con Node se puede afirmar que falta; sin Node solo que no se pudo comprobar.
         if not _probe_is_conclusive():
             _set_tool_state(cmd, "unknown", "no se ha podido comprobar desde el asistente")
             warn(f"{label} — no se ha podido comprobar si está instalado")
@@ -1600,9 +1403,7 @@ def step2_optional_tools():
 
         auto_cmd = get_auto_install_cmd(cmd)
 
-        # Ofrecer una acción que va a fallar es peor que no ofrecerla: el usuario
-        # dice que sí, espera, y recibe un error rojo de sudoers que no puede
-        # resolver desde aquí. Se le da el comando para que lo ejecute él.
+        # Sin permisos no se ofrece la instalación: se da el comando para ejecutarlo a mano.
         if auto_cmd and not _can_run_install(auto_cmd):
             tip("Tu usuario no tiene permisos de administrador en este equipo, así "
                 "que el asistente no puede instalarlo por ti.")
@@ -1626,20 +1427,17 @@ def step2_optional_tools():
                     "result": result,
                 })
                 evt.wait()
-                # result queda vacía si la ventana se cierra sin responder;
-                # ["No, omitir"] mete False, así que hay que mirar el contenido
+                # result queda vacía si se cierra la ventana, o con False si se omite.
                 answer = bool(result and result[0])
             if answer:
                 blank()
                 success = run_install(auto_cmd, label)
                 if success:
-                    # Si ya estaba, no cuenta como instalada en esta ejecución:
-                    # el aviso final de reinicio no tiene por qué mencionarla.
+                    # Si ya estaba, no cuenta para el aviso final de reinicio.
                     if not _already_installed:
                         _installed_this_run.append(label)
                     _report_install_result(cmd, label)
-                # El fallo ya lo ha detallado run_install(): código de salida,
-                # stderr real e instrucciones manuales. No se repite aquí.
+                # Si falla, run_install() ya ha mostrado el detalle.
             else:
                 warn(f"Omitiendo {label} — el nodo correspondiente funcionará en modo reducido")
 
@@ -1674,13 +1472,11 @@ def step2_optional_tools():
                 blank()
                 success = run_install(auto_cmd, label)
                 if success:
-                    # Si ya estaba, no cuenta como instalada en esta ejecución:
-                    # el aviso final de reinicio no tiene por qué mencionarla.
+                    # Si ya estaba, no cuenta para el aviso final de reinicio.
                     if not _already_installed:
                         _installed_this_run.append(label)
                     _report_install_result(cmd, label)
-                # El fallo ya lo ha detallado run_install(): código de salida,
-                # stderr real e instrucciones manuales. No se repite aquí.
+                # Si falla, run_install() ya ha mostrado el detalle.
             else:
                 warn(f"Omitiendo {label} — el nodo correspondiente funcionará en modo reducido")
         else:
@@ -1689,17 +1485,14 @@ def step2_optional_tools():
 
         blank()
 
-    # Derivado de _tool_status, nunca de un contador aparte: antes convivían
-    # "todas disponibles" y un aviso de que dos no lo estaban.
+    # Se deriva siempre de _tool_status.
     lineas = _tool_summary_lines()
     if len(lineas) == 1 and lineas[0][0] == "ok":
         ok("Todas las herramientas opcionales están disponibles")
     else:
         for tipo, texto in lineas:
             (ok if tipo == "ok" else warn)(texto)
-        # Solo si alguna falta o no funciona DE VERDAD. Antes se imprimía siempre
-        # que el resumen no fuera perfecto, así que salía "modo reducido" junto a
-        # una herramienta que estaba instalada y funcionando.
+        # Solo si alguna falta o no funciona de verdad.
         grupos = _tool_groups()
         if grupos["missing"] or grupos["not_operational"] or grupos["unsupported"]:
             tip("Los nodos que dependen de ellas seguirán funcionando en modo "
@@ -1812,27 +1605,12 @@ def _detached_popen_kwargs() -> dict:
 
 
 def is_node_red_running() -> bool:
-    """¿Está Node-RED corriendo ahora mismo?
-
-    FUENTE ÚNICA DE VERDAD de ese dato. El texto, el color y el estado de los
-    dos botones de la ventana derivan de aquí; ningún widget lo deduce por su
-    cuenta. Ya ha mordido dos veces en este proyecto que dos componentes
-    calculen el mismo valor por separado.
-    """
+    """¿Está Node-RED corriendo? Fuente única para el estado de la ventana."""
     return NODE_RED_PROC is not None and NODE_RED_PROC.poll() is None
 
 
 def start_node_red() -> bool:
-    """Lanza Node-RED en segundo plano. True si el proceso arrancó.
-
-    Solo lanza el proceso: registrar el paquete, instalar dependencias y copiar
-    los flujos son pasos del asistente que ya se hicieron. Un re-arranque desde
-    el botón no los repite.
-
-    El entorno se recalcula con _child_env() en cada llamada, así que el segundo
-    arranque hereda los directorios de herramientas exactamente igual que el
-    primero (capa A).
-    """
+    """Lanza Node-RED en segundo plano (sin repetir los pasos previos). True si arrancó."""
     global NODE_RED_PROC
     try:
         NODE_RED_PROC = subprocess.Popen(
@@ -1910,11 +1688,7 @@ def step6_launch():
 
 
 def _gui_start_node_red() -> bool:
-    """Arranque pedido desde el botón de la ventana.
-
-    En modo GUI ok()/err()/tip() solo acumulan en la tarjeta pendiente, así que
-    hay que volcarla aquí: fuera del flujo de pasos nadie más lo va a hacer.
-    """
+    """Arranque desde el botón de la ventana; vuelca la tarjeta pendiente al terminar."""
     global _gui_card_title
     exito = start_node_red()
     if exito:

@@ -1,20 +1,10 @@
 "use strict";
 
 /**
- * test-lynis-i18n.js — Traducción de Lynis al castellano.
- *
- * Lynis escribe sus sugerencias en inglés. LoCoAudit las traduce con una tabla ESTÁTICA indexada
- * por ID de control (lib/lynis-i18n.js), y este test fija las tres propiedades que la hacen
- * utilizable en un informe de auditoría:
- *
- *   1. DETERMINISMO. Nada de LLM: es opcional y no determinista, y dos ejecuciones sobre el mismo
- *      .dat darían dos informes distintos. Un informe que no se puede reproducir no vale como
- *      evidencia.
- *   2. NUNCA SE QUEDA MUDA. Sin entrada en la tabla sale el texto original en inglés con una nota
- *      que lo dice. Nunca una cadena vacía y nunca el ID pelado: "AUTH-9286" no informa a nadie.
- *   3. COBERTURA HONESTA. La tabla cubre los controles vistos en los informes de referencia, no
- *      el catálogo entero de Lynis (300+). El informe enseña cuántos ha traducido de cuántos ha
- *      encontrado, en vez de presumir cobertura total.
+ * test-lynis-i18n.js — Traducción de Lynis al castellano con la tabla estática de lib/lynis-i18n.js.
+ *   1. Determinista: el mismo .dat da siempre el mismo informe.
+ *   2. Sin entrada en la tabla sale el texto original con una nota, nunca vacío ni el ID solo.
+ *   3. El informe indica cuántos controles ha traducido de los encontrados.
  *
  * Uso:
  *   node test/manual/test-lynis-i18n.js
@@ -33,8 +23,7 @@ function ok(cond, label, detail) {
   else { failed++; console.log(`  ✗ ${label}`); if (detail) console.log(`      ${detail}`); }
 }
 
-// Los controles que aparecen de verdad en los informes de referencia. Windows no aporta ninguno:
-// Lynis no corre ahí.
+// Controles de los informes de referencia (Windows no aporta: Lynis no corre ahí).
 const DEBIAN = `ACCT-9622 ACCT-9626 ACCT-9628 AUTH-9230 AUTH-9262 AUTH-9282 AUTH-9286 AUTH-9328
 BANN-7126 BANN-7130 BOOT-5122 BOOT-5180 BOOT-5264 DEB-0280 DEB-0810 DEB-0831 DEB-0880 FILE-6310
 FILE-7524 FINT-4350 HRDN-7222 HRDN-7230 LOGG-2154 LOGG-2190 NAME-4028 NETW-3200 PKGS-7346
@@ -53,8 +42,7 @@ ok(cov.total === 44, "lynisCoverage los cuenta todos", String(cov.total));
 ok(cov.missing.length === 0,
    "los 44 están en la tabla", JSON.stringify(cov.missing));
 
-// Sin controles de más: cada entrada tiene que responder a algo visto de verdad. Traducir a
-// ciegas el catálogo entero sería inventar texto sobre comprobaciones que nadie ha ejecutado.
+// Sin controles de más: cada entrada responde a algo visto en un informe real.
 const sobrantes = LYNIS_ES_IDS.filter((id) => !TODOS.includes(id));
 ok(sobrantes.length === 0,
    "y ninguno de más: la tabla no traduce a ciegas", JSON.stringify(sobrantes));
@@ -64,8 +52,7 @@ console.log("\n── 2 · Las traducciones son utilizables ──────�
 const vacios = LYNIS_ES_IDS.filter((id) => !LYNIS_ES[id].es || LYNIS_ES[id].es.trim().length < 20);
 ok(vacios.length === 0, "ninguna traducción vacía ni de una palabra", JSON.stringify(vacios));
 
-// El ID no puede aparecer dentro del texto: la tarjeta ya lo lleva como metadato, y repetirlo
-// dentro de la frase es el ruido que se quitó al dejar de encabezar el título con el código.
+// El ID no aparece dentro del texto: la tarjeta ya lo lleva como metadato.
 const conCodigo = LYNIS_ES_IDS.filter((id) => LYNIS_ES[id].es.includes(id));
 ok(conCodigo.length === 0, "ninguna traducción repite el código del control", JSON.stringify(conCodigo));
 
@@ -129,16 +116,14 @@ ok(zz.title === "Brand new control never seen before", "con su título original"
 ok(/no está traducido/i.test(zz.evidence),
    "y una nota en la evidencia que lo explica", zz.evidence);
 
-// Un mismo control con dos sugerencias distintas: la traducción es la misma, así que lo que las
-// distingue tiene que llegar al título o las dos tarjetas parecen duplicadas.
+// Mismo control con dos sugerencias: lo que las distingue tiene que llegar al título.
 const auth = f.filter((x) => x.control === "AUTH-9286");
 ok(auth.length === 2, "AUTH-9286 produce dos findings", String(auth.length));
 ok(new Set(auth.map((x) => x.title)).size === 2,
    "y sus títulos siguen siendo distintos", JSON.stringify(auth.map((x) => x.title)));
 ok(auth.every((x) => /caducidad/i.test(x.title)),
    "los dos llevan la traducción del control");
-// El matiz es ahora "mínima"/"máxima" y no la frase inglesa entera: el paréntesis dejó de
-// volcar la descripción de Lynis y extrae solo lo que distingue una entrada de la otra.
+// El paréntesis solo lleva el matiz ("mínima"/"máxima"), no la frase inglesa.
 ok(auth.some((x) => /\(mínima\)/.test(x.title)) && auth.some((x) => /\(máxima\)/.test(x.title)),
    "y cada uno el matiz que lo distingue, en castellano",
    JSON.stringify(auth.map((x) => x.title)));
@@ -150,28 +135,23 @@ ok(!usb.title.includes("("), "un control que sale una sola vez conserva el títu
 
 console.log("\n── 6 · Los fixes van por CONTROL, no por prefijo ─────────────────\n");
 
-// Los cinco casos medidos sobre informes reales en los que la tabla POR PREFIJO daba la solución
-// de otro problema. Cada uno con lo que la solución correcta tiene que mencionar.
+// Casos reales en los que una tabla por prefijo daría la solución de otro problema.
 const CASOS = [
   { id: "BOOT-5122", plat: "linux",  debe: /grub-mkpasswd|superusers/i,
     noDebe: /servicios que arrancan|systemctl list-unit-files/i,
     nota: "GRUB sin contraseña → contraseña de GRUB, no 'revisar servicios de arranque'" },
-  // PKGS-7420 es "Detect toolkit to automatically download and apply upgrades" (Lynis 3.1.8). La
-  // versión anterior de este caso exigía debsecan, que es la herramienta de OTRO control (PKGS-7398).
+  // PKGS-7420: "Detect toolkit to automatically download and apply upgrades" (Lynis 3.1.8).
   { id: "PKGS-7420", plat: "linux",  debe: /unattended-upgrades|dnf-automatic/i,
     noDebe: /apt upgrade|debsecan/i,
     nota: "sin actualizaciones automáticas → unattended-upgrades, no 'apt upgrade' ni debsecan" },
   { id: "PKGS-7398", plat: "darwin", debe: /Trivy/i,
     noDebe: /brew upgrade|actualizar los paquetes/i,
     nota: "sin herramienta de auditoría → no 'brew upgrade'" },
-  // FIRE-4590 sale cuando Lynis NO encuentra un cortafuegos activo (FIREWALL_ACTIVE=0, en el
-  // código de Lynis 3.1.8 y en el informe real de macOS: "Configure a firewall/packet filter").
-  // La versión anterior de este caso exigía activar el REGISTRO, que es otro problema.
+  // FIRE-4590: Lynis no encuentra un cortafuegos activo (FIREWALL_ACTIVE=0).
   { id: "FIRE-4590", plat: "darwin", debe: /--getglobalstate/i,
     noDebe: /setloggingmode/i,
     nota: "sin cortafuegos activo → comprobar y activar el cortafuegos, no su registro" },
-  // Controles que el diccionario tenía cruzados o con el significado de otro control. Cada uno con
-  // el texto que Lynis emite de verdad (tests_* de 3.1.8 o informes reales de test/fixtures/lynis).
+  // Controles fáciles de cruzar, con el texto que Lynis emite de verdad (3.1.8 o test/fixtures/lynis).
   { id: "HTTP-6640", plat: "linux",  debe: /mod_evasive/i, noDebe: /ModSecurity/i,
     nota: "HTTP-6640 es 'Install Apache mod_evasive', no ModSecurity" },
   { id: "HTTP-6643", plat: "linux",  debe: /ModSecurity/i, noDebe: /mod_evasive/i,
@@ -229,8 +209,6 @@ ok(vaciosFix.length === 0, "ningún fix es una cadena vacía o de una palabra", 
 console.log("\n── 7 · Sin fix: no se inventa uno, se da la ficha ────────────────\n");
 
 // NETW-2705 ("Couldn't find 2 responsive nameservers") en una red doméstica no admite acción.
-// Antes este bloque usaba PROC-3614 como ejemplo, pero ese control SÍ admite acción: Lynis lo emite
-// cuando encuentra procesos bloqueados esperando E/S (estado D), no cuando "no pudo comprobar".
 const proc = lynisFix("NETW-2705", "linux", "apt", installCmd);
 ok(proc.fix === null, "NETW-2705 no emite fix", JSON.stringify(proc.fix));
 ok(proc.noAction === true, "y se marca como 'no admite acción', no como 'nos falta escribirlo'");
@@ -264,8 +242,7 @@ console.log(`  ${cov44.translated}/${cov44.total} traducidos · ${cov44.withFix}
 
 ok(cov44.withFix + cov44.noAction + cov44.missingFix === cov44.translated,
    "las tres cifras suman los traducidos: ningún control queda sin clasificar");
-// La distinción que se pidió: "no admite acción" y "no lo hemos escrito" son cosas distintas y
-// colapsarlas daría "N sin cubrir" mezclando lo que no existe con lo que falta por hacer.
+// "No admite acción" y "sin traducir todavía" se cuentan por separado.
 ok(cov44.noAction > 0, "hay controles marcados como 'sin acción posible'", String(cov44.noAction));
 ok(Array.isArray(cov44.noActionIds) && cov44.noActionIds.length === cov44.noAction,
    "y se listan por ID, no solo se cuentan", JSON.stringify(cov44.noActionIds));
@@ -281,8 +258,7 @@ ok(cov44.verified.real.length > 0, "y al menos uno está comprobado contra un si
 
 console.log("\n── 9 · El desambiguador no cuela inglés ──────────────────────────\n");
 
-// Los tres controles que se repiten en los informes de referencia. Antes, el paréntesis volcaba
-// la descripción entera de Lynis y metía inglés en un título en castellano.
+// Los tres controles que se repiten en los informes de referencia: título sin inglés.
 const GRUPOS = [
   { nombre: "AUTH-9286", entradas: [
       { description: "Configure minimum password age in /etc/login.defs", detail: null },

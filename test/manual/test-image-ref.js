@@ -25,7 +25,7 @@ if (!isWin) {
   fs.writeFileSync(path.join(tmp, "trivy"),
     "#!/bin/sh\n" +
     `echo called >> "${witness}"\n` +
-    'echo \'{"ArtifactName":"x","Results":[]}\'\n',
+    'echo \'{"ArtifactName":"x","Metadata":{"OS":{"Family":"alpine"}},"Results":[]}\'\n',
     { mode: 0o755 });
   process.env.PATH = `${tmp}${path.delimiter}${process.env.PATH}`;
 }

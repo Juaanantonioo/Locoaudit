@@ -1,28 +1,15 @@
 "use strict";
 
-/**
- * Única fuente sobre si el objetivo existe, con un `nmap -sn` explícito antes del escaneo. El escaneo va con -Pn y ahí
- * nmap marca siempre up="1" reason="user-set" sin comprobar nada: un host inexistente daba 0 puertos y el dashboard lo
- * pintaba verde. Sale a cuenta: contra una IP sin host, 3,0 s de descubrimiento frente a 212,6 s del escaneo de 1-1024.
- *
- * Solo decide el bloque <hosts>: up >= 1 accesible, up=0 con <finished> no accesible, y todo lo demás (exit="error", sin
- * runstats, timeout, nmap ausente, XML ilegible) es null. Con null se escanea igual y se avisa, porque un falso
- * "no alcanzable" que cancela la auditoría es peor que un escaneo de más.
- * `reason` solo afina el mensaje (sin privilegios los casos inalcanzables dan el mismo `no-response`).
- */
+// Decide si el objetivo existe con un `nmap -sn` previo, porque el escaneo con -Pn siempre dice "host up".
+// Solo cuenta <hosts>: up>=1 accesible, up=0 terminado no accesible, y cualquier otra cosa null (ambiguo).
 
 const { execCommand, commandExists } = require("../../../lib/executor");
 const { findInterfaceForTarget, parseNmapFatalError } = require("./nmap-wrapper");
 
-/** Timeout del executor para el descubrimiento. Techo duro: nunca es el cuello
- *  de botella (el --host-timeout de nmap corta antes, a los 8 s). */
+// Techo del executor; el --host-timeout de nmap corta antes, a los 8 s.
 const DISCOVERY_TIMEOUT_MS = 15000;
 
-/**
- * El -PS con cuatro puertos no es de adorno: sin privilegios nmap solo prueba 80 y 443, y un host
- * vivo que no sirva ninguno de los dos saldría como caído. El -e sale de findInterfaceForTarget,
- * el mismo que usa el escaneo, y en Windows no se pasa.
- */
+// Cuatro puertos en -PS porque sin privilegios nmap solo probaría 80 y 443. El -e es el mismo del escaneo.
 function buildDiscoveryCmd(target) {
   const iface     = findInterfaceForTarget(target);
   const ifaceFlag = iface ? `-e ${iface}` : "";
@@ -31,27 +18,24 @@ function buildDiscoveryCmd(target) {
     .trim();
 }
 
-/** Pura, sin ejecutar nada, para poder fijarla con fixtures en los tests. */
+// Pura, para poder probarla con fixtures.
 function parseDiscoveryXml(xml) {
   const text = xml || "";
 
-  // Un nmap abortado emite <runstats> y <hosts up="0" down="0" total="0"/> igual. Esos ceros no
-  // dicen que el host esté caído, dicen que no llegó a preguntárselo; pasa, por ejemplo, con un
-  // -e hacia una interfaz que no existe. Va antes que los <hosts>, que casarían y darían un
-  // "no alcanzable" falso.
+  // Un nmap abortado también emite <hosts up="0">: se mira antes para no dar un falso "no alcanzable".
   const fatalError = parseNmapFatalError(text);
   if (fatalError) {
     return { reachable: null, reason: null, error: fatalError };
   }
 
-  // Un descubrimiento válido termina en <runstats><finished><hosts>: sin los dos, ambiguo.
+  // Sin <hosts> y <finished> el resultado es ambiguo.
   const hostsMatch = text.match(/<hosts\s+up="(\d+)"\s+down="(\d+)"/);
   const finished   = text.includes("<finished");
   if (!hostsMatch || !finished) {
     return { reachable: null, reason: null, error: null };
   }
 
-  // Del bloque <status>, y solo informativo.
+  // El motivo solo afina el mensaje.
   const statusMatch = text.match(/<status\s+state="([^"]*)"\s+reason="([^"]*)"/);
   let reason = statusMatch ? statusMatch[2] : null;
 
@@ -65,7 +49,7 @@ function parseDiscoveryXml(xml) {
   return { reachable: up > 0, reason: reason || null, error: null };
 }
 
-/** El resultado en texto llano, listo para la evidencia del finding. */
+// Texto para la evidencia del hallazgo.
 function describe(target, reachable, reason, durationMs, error) {
   const secs = (durationMs / 1000).toFixed(1);
   if (reachable === true) {
@@ -73,7 +57,7 @@ function describe(target, reachable, reason, durationMs, error) {
            (reason ? ` (${reason}).` : ".");
   }
   if (reachable === false) {
-    // Con host-unreach o net-unreach el SO sabe que no hay ruta, y el consejo es otro.
+    // Sin ruta el problema es de este equipo, no de que el otro no conteste.
     if (reason === "host-unreach" || reason === "net-unreach") {
       return `El sistema informó de que no hay ruta hasta ${target} ` +
              `(${reason}, ${secs} s): no es que el equipo no conteste, es que ` +
@@ -91,7 +75,7 @@ function describe(target, reachable, reason, durationMs, error) {
          "el descubrimiento no dio un resultado interpretable.";
 }
 
-/** Con un objetivo local no ejecuta nada: este equipo se alcanza siempre a sí mismo. */
+// Con objetivo local no ejecuta nada: siempre es accesible.
 async function checkHostReachable(options = {}) {
   const target  = options.target || "127.0.0.1";
   const timeout = options.timeout || DISCOVERY_TIMEOUT_MS;
@@ -108,8 +92,7 @@ async function checkHostReachable(options = {}) {
     };
   }
 
-  // Sin nmap no hay descubrimiento, pero tampoco es un fallo: es ambiguo, y del aviso ya se
-  // encarga el NET-DEP-NMAP del llamante.
+  // Sin nmap queda ambiguo; el aviso lo da NET-DEP-NMAP en el nodo.
   if (!(await commandExists("nmap"))) {
     return {
       reachable:  null,
@@ -126,16 +109,11 @@ async function checkHostReachable(options = {}) {
   try {
     stdout = await execCommand(cmd, timeout);
   } catch (err) {
-    // Puede salir con código distinto de cero y haber emitido XML válido, como con los avisos
-    // de permisos de macOS sin sudo: se intenta interpretar igual.
+    // Puede salir con error y aun así dejar XML válido (p. ej. macOS sin sudo).
     stdout = err.stdout || "";
     if (!stdout.includes("<runstats")) {
       const durationMs = Date.now() - started;
-      // Cortado por el límite: el motivo es el tiempo, no lo que nmap llevase escrito en stderr.
-      // Antes se mostraba el stderr también aquí, y en macOS sin root eso es el aviso "You are
-      // not root -- using TCP pingscan", que aparece en TODAS las ejecuciones: el informe
-      // atribuía el fallo a los permisos cuando lo que pasó es que se acabó el tiempo.
-      // Mismo criterio que lynis.js: child_process marca killed y manda SIGTERM al cortar.
+      // Si se cortó por tiempo no se muestra stderr: en macOS sin root siempre trae un aviso que confunde.
       const timedOut = err.killed || err.signal === "SIGTERM";
       return {
         reachable:  null,
@@ -155,8 +133,7 @@ async function checkHostReachable(options = {}) {
 
   const { reachable, reason, error } = parseDiscoveryXml(stdout);
 
-  // Segunda opinión SOLO para el "no accesible" firme. El null ya se escanea igual, y un true no
-  // necesita confirmación. Ver systemPing() para el porqué.
+  // Segunda opinión con el ping del sistema solo para el "no accesible" firme.
   if (reachable === false && !options.skipPing) {
     const ping = await systemPing(target, options.platform);
     if (ping.replied) {
@@ -182,8 +159,7 @@ async function checkHostReachable(options = {}) {
       method: "nmap-sn",
       reason,
       error: error || null,
-      // Solo se añade lo que se sabe: "tampoco respondió" cuando el ping se hizo, nada cuando no
-      // se pudo hacer, para no afirmar una comprobación que no ocurrió.
+      // Solo se menciona el ping si llegó a ejecutarse.
       detail: describe(target, reachable, reason, durationMs, error) +
               (ping.ran ? " Tampoco respondió al ping del sistema." : ""),
       durationMs,
@@ -205,19 +181,11 @@ async function checkHostReachable(options = {}) {
   };
 }
 
-/** Tiempo máximo del ping del sistema, con margen sobre los ~2 s que tardan dos paquetes. */
+// Margen sobre los ~2 s que tardan dos paquetes.
 const PING_TIMEOUT_MS = 5000;
 
-/**
- * El ping del sistema, para cuando Nmap da el equipo por caído. Sin root, nmap descarta -PE y solo le quedan cuatro
- * sondas TCP, así que un equipo que filtra todo salvo otros puertos sale "no accesible" aunque `ping` le responda
- * (comprobado el 2026-10-08 contra un equipo con solo 2222 y 5900 abiertos). El `ping` del sistema manda ICMP sin root.
- *
- * Cuenta como respuesta una línea con "ttl=": es lo que llevan los ecos reales y no el "destino inaccesible" de un router.
- * El código de salida no sirve (en Windows es 0 con ese mensaje) y "TTL=" no se traduce. Son dos paquetes porque en la
- * prueba real se perdieron los primeros.
- * Devuelve { ran, replied, cmd }; con ran=false no se afirma nada. El objetivo llega validado por validateTarget().
- */
+// Sin root nmap no usa ICMP, pero `ping` sí. Se busca "ttl=" porque el código de salida no es fiable en Windows.
+// Devuelve { ran, replied, cmd }; el objetivo ya llega validado por validateTarget().
 async function systemPing(target, platform = process.platform) {
   const pingPath = await commandExists("ping");
   if (!pingPath) return { ran: false, replied: false, cmd: null };
@@ -232,19 +200,14 @@ async function systemPing(target, platform = process.platform) {
   try {
     out = await execCommand(cmd, PING_TIMEOUT_MS);
   } catch (err) {
-    // Sin respuesta, ping sale con código distinto de cero: eso es un "no", no un fallo. Fallo
-    // es no haber podido ejecutarlo, y se distingue porque no deja salida ninguna.
+    // Salir con error es un "no responde"; sin salida ninguna es que no se pudo ejecutar.
     out = (err.stdout || "") + (err.stderr || "");
     if (!out.trim()) return { ran: false, replied: false, cmd };
   }
   return { ran: true, replied: /\bttl=\d+/i.test(out), cmd };
 }
 
-/**
- * El estado que viaja en el payload y con el que el dashboard decide si puede pintar verde. Vive
- * aquí, pegado a su única fuente, para que el nodo no pueda derivarlo de otra señal, en
- * particular del "host up" del escaneo con -Pn.
- */
+// Vive aquí para que el estado salga solo del descubrimiento, nunca del "host up" del escaneo.
 function deriveTargetState(discovery) {
   if (!discovery) return "unknown";
   if (discovery.reachable === true)  return "reachable";

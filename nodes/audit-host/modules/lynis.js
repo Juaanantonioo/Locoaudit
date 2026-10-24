@@ -1,27 +1,17 @@
 "use strict";
 
-/**
- * Wrapper de Lynis. Si no se puede ejecutar devuelve { skipped, kind, reason } y quien llama
- * decide por `kind`, nunca por el texto de `reason`, que interpola mensajes del SO y cambia de
- * plataforma. De los cuatro kinds solo 'unsupported' no es fatal: ahí la auditoría sigue sin
- * Lynis. 'not-installed', 'timeout' y 'error' significan que el usuario lo activó y no salió.
- */
+/** Wrapper de Lynis. Si no se puede ejecutar devuelve { skipped, kind, reason }; solo 'unsupported' no es fatal. */
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execCommand, commandExists } = require("../../../lib/executor");
 
-// El informe y el log de Lynis son el mapa de debilidades del equipo. Antes iban a
-// /tmp/locoaudit-lynis-report.dat y /tmp/lynis.log: nombre fijo, legibles por cualquier usuario
-// local con el umask habitual y sin borrar nunca. Ahora van a un directorio propio creado con
-// mkdtemp (0700 y nombre impredecible, así que nadie puede plantar ahí un enlace simbólico) que
-// se borra al terminar, en todos los caminos. Es el mismo criterio que execToFile() con Trivy.
+// Informe y log en un directorio mkdtemp (0700, nombre impredecible) que se borra al terminar.
 const TMP_PREFIX = "lcaudit-lynis-";
 const REPORT_NAME = "report.dat";
 const LOG_NAME = "lynis.log";
-// Ruta por defecto de Lynis. No es nuestra: si la versión instalada ignora --report-file se lee
-// de ahí, pero nunca se borra.
+// Ruta por defecto de Lynis, por si ignora --report-file. No es nuestra: nunca se borra.
 const REPORT_FALLBACK = "/var/log/lynis-report.dat";
 const TIMEOUT_MS = 180000;   // en macOS una pasada tarda minutos
 
@@ -31,12 +21,7 @@ function field(v) {
   return t === "" || t === "-" ? null : t;
 }
 
-/**
- * Entrada warning[]/suggestion[]: <ID>|<descripción>|<detalle>|<tipo_solución>|. Los dos últimos
- * campos se descartaban. El detalle es lo único que separa entradas idénticas por lo demás
- * (FILE-6310 sale tres veces y solo cambia en /home, /tmp y /var), y el tipo de solución trae
- * valores aprovechables como 'text:reboot'.
- */
+/** Entrada <ID>|<descripción>|<detalle>|<tipo_solución>|. El detalle distingue entradas repetidas con el mismo ID. */
 function parseEntry(value) {
   const parts = value.split("|");
   return {
@@ -95,8 +80,12 @@ function parseLynisReport(content) {
   return { hardeningIndex, version, testsDone, warnings, suggestions };
 }
 
-/** Lynis cierra el proceso antes de terminar de escribir el .dat. Antes eran 2 s fijos "para
- *  macOS", pagados también por Linux y por la ruta de fallo; sondeando sale en ~0 ms. */
+/** Un informe sin fecha de fin ni índice de hardening es de una pasada que no terminó. */
+function reportComplete(content) {
+  return /^\s*(report_datetime_end|hardening_index)\s*=\s*\S/m.test(content);
+}
+
+/** Lynis termina antes de acabar de escribir el .dat: se espera un poco a que aparezca. */
 async function waitForReport(file, tries = 5, delayMs = 200) {
   for (let i = 0; i < tries; i++) {
     if (fs.existsSync(file)) return true;
@@ -105,10 +94,9 @@ async function waitForReport(file, tries = 5, delayMs = 200) {
   return false;
 }
 
-async function runLynis() {
-  // La plataforma se mira antes que la instalación: en Windows nativo no hay binario que
-  // instalar, y un "no está instalado" manda a buscar algo que no existe. Node-RED dentro de
-  // WSL reporta 'linux' y no entra aquí, así que no hace falta detectar WSL aparte.
+// opts solo lo usan los tests: ruta de respaldo y límite de tiempo.
+async function runLynis(opts = {}) {
+  // La plataforma va antes que la instalación: en Windows nativo no hay nada que instalar (WSL reporta 'linux').
   if (process.platform === "win32") {
     return {
       skipped: true,
@@ -117,8 +105,7 @@ async function runLynis() {
     };
   }
 
-  // La RUTA, no un booleano: en Debian lynis vive en /usr/sbin, que no está en el PATH de un
-  // usuario normal, así que lanzar "lynis" a secas fallaría justo después de haberlo encontrado.
+  // La ruta encontrada: en Debian lynis está en /usr/sbin, fuera del PATH.
   const lynisPath = await commandExists("lynis");
   if (!lynisPath) {
     return { skipped: true, kind: "not-installed", reason: "Lynis no está instalado en este equipo" };
@@ -137,7 +124,7 @@ async function runLynis() {
   }
 
   try {
-    return await runInDir(lynisPath, tmpDir);
+    return await runInDir(lynisPath, tmpDir, opts);
   } finally {
     // También en el camino de error: el informe no sobrevive a la auditoría.
     await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
@@ -145,28 +132,30 @@ async function runLynis() {
 }
 
 /** La ejecución y la lectura del informe, dentro del directorio temporal que borra runLynis(). */
-async function runInDir(lynisPath, tmpDir) {
+async function runInDir(lynisPath, tmpDir, opts = {}) {
   const reportFile = path.join(tmpDir, REPORT_NAME);
   const logFile = path.join(tmpDir, LOG_NAME);
+  const fallback = opts.reportFallback || REPORT_FALLBACK;
+  const timeoutMs = opts.timeoutMs || TIMEOUT_MS;
+  // El respaldo solo vale si lo escribió esta ejecución; margen de 2 s por la resolución del mtime.
+  const startedMs = Date.now() - 2000;
 
   try {
     await execCommand(
       `"${lynisPath}" audit system --quick --quiet --no-colors --log-file "${logFile}" --report-file "${reportFile}"`,
-      TIMEOUT_MS
+      timeoutMs
     );
   } catch (err) {
-    // Un exit distinto de cero es lo normal cuando hay advertencias: lo que decide es si se
-    // escribió el report.
+    // Un timeout va primero: lo que haya escrito es un informe a medias y se descarta.
+    if (err.killed || err.signal === "SIGTERM") {
+      return {
+        skipped: true,
+        kind: "timeout",
+        reason: `Lynis superó el límite de ${timeoutMs / 1000} s sin terminar`,
+      };
+    }
+    // Con advertencias sale con código distinto de cero: decide si se escribió el report.
     if (!fs.existsSync(reportFile)) {
-      // child_process mata por timeout con SIGTERM y marca killed. Un timeout se arregla
-      // subiendo el límite o lanzando Lynis a mano, no reinstalando: kind propio.
-      if (err.killed || err.signal === "SIGTERM") {
-        return {
-          skipped: true,
-          kind: "timeout",
-          reason: `Lynis superó el límite de ${TIMEOUT_MS / 1000} s sin terminar`,
-        };
-      }
       return {
         skipped: true,
         kind: "error",
@@ -175,20 +164,22 @@ async function runInDir(lynisPath, tmpDir) {
     }
   }
 
-  // /var/log/lynis-report.dat es la ruta por defecto de Lynis: si la versión instalada ignora
-  // --report-file, el .dat está ahí.
+  // Si la versión instalada ignora --report-file, el .dat está en la ruta por defecto.
   let reportPath = null;
   if (await waitForReport(reportFile)) {
     reportPath = reportFile;
-  } else if (fs.existsSync(REPORT_FALLBACK)) {
-    reportPath = REPORT_FALLBACK;
+  } else if (fs.existsSync(fallback)) {
+    // Un informe de una pasada anterior no es el de esta auditoría.
+    let mtimeMs = 0;
+    try { mtimeMs = fs.statSync(fallback).mtimeMs; } catch (_) { /* ilegible: se trata como antiguo */ }
+    if (mtimeMs >= startedMs) reportPath = fallback;
   }
 
   if (!reportPath) {
     return {
       skipped: true,
       kind: "error",
-      reason: `Lynis terminó pero no se ha encontrado su informe ni en ${reportFile} ni en ${REPORT_FALLBACK}`,
+      reason: `Lynis terminó pero no se ha encontrado un informe de esta ejecución ni en ${reportFile} ni en ${fallback}`,
     };
   }
 
@@ -203,7 +194,15 @@ async function runInDir(lynisPath, tmpDir) {
     };
   }
 
+  if (!reportComplete(content)) {
+    return {
+      skipped: true,
+      kind: "error",
+      reason: `El informe de Lynis en ${reportPath} está incompleto (sin fecha de fin ni índice de hardening): la pasada no terminó`,
+    };
+  }
+
   return parseLynisReport(content);
 }
 
-module.exports = { runLynis, parseLynisReport };
+module.exports = { runLynis, parseLynisReport, reportComplete };

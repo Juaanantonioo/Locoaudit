@@ -2,21 +2,9 @@
 
 /**
  * test-checks-aggregate.js — Comprobaciones no realizadas: agregadas y bien clasificadas.
- *
- * Cubre tres cambios que van juntos porque tocan el mismo dato:
- *
- *   1. AGREGACIÓN. Cada comprobación caída era un hallazgo informativo suelto dentro de
- *      "Sistema & Actualizaciones", mezclado con hallazgos reales sobre el equipo. Cuatro
- *      tarjetas que decían "esto no se ha mirado" se leían como cuatro problemas más. Ahora
- *      salen agregadas en un solo bloque junto al panel de Alcance.
- *
- *   2. LOS *-SKIP SIGUEN EMITIÉNDOSE. El bloque se DERIVA de ellos, nunca de una lista paralela:
- *      dos recuentos de comprobaciones caídas acabarían divergiendo. Y así la exportación JSON
- *      conserva el detalle íntegro y `failedCheckFindings` del dashboard conserva su fuente.
- *
- *   3. "NO APLICA" ≠ "NO SE HA PODIDO". Trivy no cubre los paquetes de sistema de macOS ni de
- *      Windows, y Lynis no existe para Windows nativo. Redactarlo como fallo manda al usuario a
- *      buscar una solución que no existe.
+ *   1. Se agregan en un solo bloque junto al panel de Alcance.
+ *   2. El bloque se deriva de los *-skip, que se siguen emitiendo.
+ *   3. "No aplica" (límite de plataforma) se distingue de "no se ha podido".
  *
  * Uso:
  *   node test/manual/test-checks-aggregate.js
@@ -35,18 +23,12 @@ function ok(cond, label, detail) {
 
 console.log("\n── 1 · Los cinco kinds de límite estructural ─────────────────────\n");
 
-// La lista se comprueba entera, no por muestreo: es la única fuente y un olvido aquí se traduce
-// en un aviso ámbar sobre algo que nadie puede arreglar.
-// Los dos últimos los aporta el análisis NSE de red: un puerto que no es TLS y un servicio que
-// no anuncia versión son el alcance real del método, no un hueco que se cierre reintentando.
+// Se comprueba la lista entera; los dos últimos son límites propios del análisis NSE.
 for (const k of ["unsupported", "os-unsupported", "nothing-to-scan",
                  "not-applicable", "no-version"]) {
   ok(esNoAplica(k), `'${k}' es límite del sistema, no fallo`);
 }
-// Y lo que NO puede colarse: instalar una herramienta que falta SÍ es una acción posible.
-// Los cuatro de NSE se quedan FUERA por ese mismo motivo: la fuente de CVE caída, un script sin
-// instalar o el análisis apagado son huecos de esta ejecución, y pintarlos de "no aplica" los
-// escondería detrás de un texto que dice que no hay nada que hacer.
+// Fuera de la lista: lo que sí tiene solución (instalar una herramienta, huecos NSE de esta ejecución).
 for (const k of ["error", "timeout", "not-installed", "output-too-large", "invalid-json",
                  "empty-output", "daemon-down", "disabled",
                  "source-unavailable", "script-missing", "nse-unavailable", "nse-disabled"]) {
@@ -119,8 +101,7 @@ ok(resumen.items.every((i) => omitidos.some((f) => f.id === i.id && f.title === 
    "cada línea del agregado corresponde a un finding real, con su mismo título");
 ok(resumen.items.length === omitidos.length, "y no hay ninguna de más");
 
-// Los findings SIGUEN en el payload: es lo que conserva el detalle en el JSON exportado y lo que
-// alimenta el estado ámbar del dashboard.
+// Los findings siguen en el payload: conservan el detalle del JSON exportado.
 ok(omitidos.length === 4, "los 4 *-SKIP siguen emitiéndose", String(omitidos.length));
 ok(omitidos.every((f) => f.evidence && f.evidence.length > 20),
    "cada uno conserva su evidencia íntegra para la exportación JSON");

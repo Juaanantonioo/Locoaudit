@@ -5,15 +5,8 @@
  *
  * Dos bloques independientes:
  *
- *   1. CASOS DETERMINISTAS (siempre) — fixtures JSON con la forma real de la
- *      salida de Trivy, sin ejecutar la herramienta. Verifican la procedencia
- *      (origin/location a partir de PkgPath) y el comando de remediación que
- *      genera cada Type. Ejecutables en cualquier SO y en segundos.
- *
- *   2. DIAGNÓSTICO CON TRIVY REAL (solo con --full) — compara hallazgos sobre
- *      /opt/homebrew/Cellar con y sin --skip-dirs. Queda como herramienta de
- *      inspección: el Cellar ya NO es el ámbito de producción (ahora se audita
- *      el HOME del usuario, ver nodes/audit-host/modules/trivy-fs.js).
+ *   1. Casos deterministas (siempre): procedencia y comando de remediación por Type, con fixtures.
+ *   2. Diagnóstico con Trivy real (solo con --full): /opt/homebrew/Cellar con y sin --skip-dirs.
  *
  * Uso:
  *   node test/manual/test-trivy-coverage.js          → casos deterministas
@@ -62,12 +55,7 @@ function findingsFor(fixture, pkgManager = null) {
   return fromTrivyJson(fixture, "HOST-CVE", "vulnerability", "trivy", { platform: process.platform, pkgManager });
 }
 
-/**
- * Ejercita las TRES ramas de resolveUserHome() manipulando el entorno.
- *
- * No es cosmético: Node-RED puede correr como servicio bajo otro usuario, y de
- * esa cadena depende que se audite el home de la persona y no /root.
- */
+/** Ejercita las tres ramas de resolveUserHome() manipulando el entorno. */
 function runHomeResolutionCases(check) {
   const { resolveUserHome, resolveScanTarget } = require("../../nodes/audit-host/modules/trivy-fs");
   const saved = { SUDO_USER: process.env.SUDO_USER, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
@@ -79,8 +67,7 @@ function runHomeResolutionCases(check) {
   };
 
   try {
-    // Rama 1 · SUDO_USER manda sobre HOME (caso "lanzado con sudo").
-    // HOME apunta a /tmp a propósito: si ganara HOME, el home resuelto sería ese.
+    // Rama 1 · SUDO_USER manda sobre HOME (HOME apunta a /tmp a propósito).
     const realUser = execSync("id -un", { timeout: 5000 }).toString().trim();
     const realHome = saved.HOME;
     process.env.SUDO_USER = realUser;
@@ -521,8 +508,7 @@ function main() {
   console.log(`\nReport guardado en ${OUTPUT_FILE}`);
 }
 
-// Casos deterministas: siempre. El diagnóstico con Trivy real tarda minutos y
-// escanea el Cellar, que ya no es el ámbito de producción → solo con --full.
+// Casos deterministas siempre; el diagnóstico con Trivy real, solo con --full.
 const ok = runOriginCases();
 if (process.argv.includes("--full")) main();
 process.exit(ok ? 0 : 1);

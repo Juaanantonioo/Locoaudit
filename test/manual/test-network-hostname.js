@@ -2,21 +2,10 @@
 
 /**
  * test-network-hostname.js — El nombre PTR del objetivo, de nmap al dashboard.
- *
- * El escaneo NO usa -n, así que nmap ya resolvía el DNS inverso del objetivo y
- * emitía <hostnames> en el XML… que el parser tiraba a la basura. Este test fija
- * las tres formas del bloque y la regla de pintado, que es donde está el riesgo
- * de inventar dato:
- *
- *   <hostname type="PTR"/>  → dato real            → se muestra
- *   <hostname type="user"/> → el eco del target    → NO se muestra (sería
- *                             devolverle al usuario lo que él escribió)
- *   <hostnames></hostnames> → sin PTR              → NO se muestra NADA, ni un
- *                             guion: un guion sugiere "se comprobó y no tiene
- *                             nombre", y lo que pasa es que no hay dato
- *
- * La lógica de la píldora se EXTRAE del ui_template, no se reimplementa: así el
- * test no puede dar verde sobre una copia que ya divergió del dashboard real.
+ *   <hostname type="PTR"/>  → se muestra
+ *   <hostname type="user"/> → no se muestra (es el eco del objetivo escrito)
+ *   <hostnames></hostnames> → no se muestra nada, ni un guion
+ * La lógica de pintado se extrae del ui_template, no se reimplementa.
  *
  * Uso: node test/manual/test-network-hostname.js
  */
@@ -60,14 +49,10 @@ ok(parsePtrHostname("") === null && parsePtrHostname(null) === null,
 
 console.log("\n── 2 · runNmap propaga el hostname con la misma forma ────────────\n");
 
-// Se comprueba sobre el contrato del objeto `scan`, sin ejecutar nmap: las dos
-// salidas posibles (escaneo OK y no concluyente) tienen que llevar el campo,
-// para que el dashboard no tenga que distinguir casos.
+// Contrato del objeto `scan`, sin ejecutar nmap.
 const wrapperSrc = fs.readFileSync(path.join(ROOT, "nodes", "audit-network", "modules", "nmap-wrapper.js"), "utf8");
 const scanLines = wrapperSrc.split("\n").filter((l) => /scan: \{ target, portSpec, scanMode/.test(l));
-// Tres salidas posibles: escaneo OK, no concluyente por timeout, y no concluyente
-// porque nmap abortó (exit="error"). Lo que importa no es cuántas son, sino que
-// TODAS lleven el campo, para que el dashboard no tenga que distinguir casos.
+// Todas las salidas (OK, timeout, nmap abortado) llevan el campo.
 ok(scanLines.length >= 2, "hay varias formas de salida de `scan`", `encontradas: ${scanLines.length}`);
 ok(scanLines.every((l) => /hostname/.test(l)),
    "todas las formas de salida de `scan` llevan hostname",
@@ -97,11 +82,7 @@ ok(pill("localhost", "localhost") === null,
 ok(pill("192.168.0.40", "") === null && pill("192.168.0.40", undefined) === null,
    "cadena vacía o undefined se tratan como 'sin dato'");
 
-// El campo es CONDICIONAL, como el resto de los opcionales de la cabecera: sin PTR
-// no se pinta nada, ni un guion ni un placeholder. Lo que se comprueba es eso —que
-// "Nombre" cuelgue de un v-if="hostnameLabel"— y no el nombre del contenedor: la
-// maquetación pasó de píldoras a rejilla clave/valor y la intención no cambió.
-// El hueco de 200 caracteres cubre el <span> intermedio de la rejilla.
+// "Nombre" cuelga de un v-if="hostnameLabel"; el hueco de 200 caracteres cubre el <span> intermedio.
 ok(/v-if="hostnameLabel"[\s\S]{0,200}?>\s*Nombre\s*</.test(tpl),
    "el campo Nombre del dashboard va con v-if, igual que Puertos y Duración");
 

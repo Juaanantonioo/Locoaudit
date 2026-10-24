@@ -3,8 +3,8 @@
 /**
  * cdp-download.js — Pulsa el botón de descarga de un dashboard, deja el fichero en un directorio e imprime ruta y tamaño.
  *   node scripts/cdp-download.js http://127.0.0.1:1881/dashboard/Host /tmp/salida
- * Va aparte de cdp.js porque el informe pesa hasta megabytes y devolverlo por DevTools llega cortado (auditoría de imagen, 3 MB).
- * Requiere un Chrome headless con --remote-debugging-port (ver scripts/cdp.js). Variables: CDP_PORT, CDP_WAIT_MS, CDP_NO_NAV.
+ * Va aparte de cdp.js porque un informe de megabytes llega cortado por DevTools.
+ * Requiere Chrome headless con --remote-debugging-port (ver cdp.js). Variables: CDP_PORT, CDP_WAIT_MS, CDP_NO_NAV.
  */
 
 const fs = require("fs");
@@ -49,8 +49,7 @@ if (!URL_ || !DIR) {
   for (const f of fs.readdirSync(DIR)) { try { fs.unlinkSync(path.join(DIR, f)); } catch (_) {} }
 
   await send("Page.enable");
-  // El destino se fija ANTES de navegar: si no, la descarga cae donde el navegador
-  // decida y el runner no la encuentra.
+  // El destino se fija antes de navegar para saber dónde cae la descarga.
   await send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: DIR, eventsEnabled: true });
   if (process.env.CDP_NO_NAV !== "1") {
     await send("Page.navigate", { url: URL_ });

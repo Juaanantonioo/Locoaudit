@@ -1,10 +1,7 @@
 "use strict";
 
-/**
- * Nodo audit-network. Nmap es requisito (no hay escáner alternativo). Si falta, el nodo emite NET-DEP-NMAP y sigue.
- * Proceso, PID y bind no son opcionales en targets locales: las reglas de resolución distinguen de ahí loopback de expuesto
- * y daemon del sistema de aplicación de terceros.
- */
+// Nodo audit-network. Nmap es obligatorio: si falta se emite NET-DEP-NMAP en vez de fallar.
+// En el equipo local hacen falta proceso, PID y bind para separar loopback de expuesto.
 
 const os = require("os");
 const { PORT_CATALOG }            = require("./modules/port-catalog");
@@ -22,8 +19,7 @@ const { normalizeNetwork }        = require("../../lib/normalizer");
 const { summarize }               = require("../../lib/severity-map");
 const { createFinding }           = require("../../lib/finding-schema");
 
-/** El comando exacto del sistema del usuario, no un "instala nmap" genérico. En Linux van las
- *  tres familias de gestor porque el nodo no sabe la distribución sin sondearla. */
+// Instrucciones concretas por sistema; en Linux van los tres gestores porque no se sondea la distribución.
 function nmapInstallInstructions(platform) {
   if (platform === "darwin") {
     return "1. Instala Homebrew si no lo tienes: /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n" +
@@ -60,32 +56,21 @@ module.exports = function (RED) {
       // En modo personalizado lo que llega a nmap es la lista normalizada, nunca el texto del campo.
       const portCheck      = validatePortSpec(config.customPorts);
       const customPorts    = portCheck.ok ? portCheck.spec : "";
-      // "Otro equipo de mi red" exige una IPv4 válida de un equipo. Antes, un campo vacío caía
-      // en silencio a 127.0.0.1 (el usuario pedía otro equipo y se auditaba este) y cualquier
-      // texto llegaba tal cual a la línea de nmap, rangos incluidos. La regla vive en
-      // validateTarget(); aquí solo se aplica.
+      // Quien decide si el objetivo es válido es validateTarget(), no el formulario del editor.
       const wantsCustom    = config.scanTarget === "custom";
       const targetCheck    = wantsCustom ? validateTarget(config.customTarget) : { ok: true, ip: "127.0.0.1" };
       const target         = targetCheck.ok ? targetCheck.ip : null;
-      // Para el caso legítimo: equipo encendido que filtra ICMP y las sondas TCP del -sn.
+      // Para equipos encendidos que filtran el descubrimiento (-sn).
       const forceScan      = config.forceScan === true || config.forceScan === "true";
 
-      /**
-       * Análisis NSE apagado por defecto: cambia lo que la auditoría le hace a un tercero (los scripts dialogan con el
-       * servicio y vulners consulta internet con la versión detectada) y alarga bastante el escaneo.
-       */
+      // NSE apagado por defecto: los scripts hablan con el servicio, vulners sale a internet y alarga el escaneo.
       const nseEnabled = config.nseEnabled === true || config.nseEnabled === "true";
-      // Tiempo EXTRA para los scripts, no el total. Se suma al presupuesto del modo en vez de
-      // sustituirlo: los límites de scanTimeoutMs() están calibrados para lo que tarda `-sV` sobre puertos
-      // filtrados, y meter los scripts dentro de ese mismo margen recortaría el escaneo de
-      // puertos —que es la función principal— para pagar una opcional.
+      // Tiempo extra para los scripts; se suma al del modo para no recortar el escaneo de puertos.
       const nseTimeout = Math.max(0, parseInt(config.nseTimeout, 10) || 180000);
 
       const startTime = Date.now();
 
-      // Una configuración que no permite auditar: un único hallazgo NET-CFG-ERR y nada de nmap.
-      // El payload es el que ya se emitía para la lista de puertos vacía; `extraMeta` solo añade
-      // campos, para que ese caso siga saliendo byte a byte igual que antes.
+      // Configuración inválida: un único NET-CFG-ERR y no se lanza nmap. extraMeta solo añade campos.
       function sendConfigError({ title, evidence, fix, extraMeta = {} }) {
         const errFinding = createFinding({
           id:       "NET-CFG-ERR",
@@ -113,8 +98,7 @@ module.exports = function (RED) {
 
       try {
         if (!targetCheck.ok) {
-          // Lo que escribió el usuario se recorta antes de devolverlo: es texto libre y va a
-          // parar al panel y al informe exportado.
+          // Texto libre del usuario: se recorta porque acaba en el panel y en el informe.
           const escrito = String(config.customTarget == null ? "" : config.customTarget).trim().slice(0, 80);
           sendConfigError({
             title:    "Configuración incorrecta: la dirección del equipo no es válida",
@@ -122,14 +106,12 @@ module.exports = function (RED) {
                       " No se ha escaneado nada: la ausencia de puertos NO significa que el equipo esté protegido.",
             fix:      "Indica en el nodo audit-network la dirección IPv4 de un único equipo. Ejemplo: 192.168.1.10\n" +
                       "Para auditar este mismo equipo, elige \"Este equipo\" en Objetivo.",
-            // scanStatus 'not-run' con el mismo significado que ya tiene: no se escaneó.
             extraMeta: { scanStatus: "not-run", target: null, customTarget: null },
           });
           return;
         }
 
-        // Misma regla que con la IP: la lista va a la línea de nmap, así que lo que no es una
-        // lista de puertos no se escanea. La vacía conserva su hallazgo de siempre.
+        // La lista acaba en la línea de nmap: si no es válida, no se escanea.
         if (scanMode === "custom" && !portCheck.ok) {
           if (portCheck.empty) {
             sendConfigError({
@@ -153,24 +135,18 @@ module.exports = function (RED) {
         let openPorts  = [];
         let portSource = "none";
         const modulesRun = [];
-        // Separa "escaneo completo" de "no concluyente" (timeout, proceso cortado). Ya no dice
-        // si el host existe: eso lo decide el descubrimiento previo.
+        // Escaneo completo frente a no concluyente; si el host existe lo dice el descubrimiento.
         let nmapScan = null;
         let scanInconclusive = false;
-        // Que falte nmap no es un error del nodo sino una dependencia del SO: sale como finding.
+        // Que falte nmap es una dependencia del SO, no un error del nodo: sale como hallazgo.
         let nmapMissing = false;
         let nmapError   = null;
 
-        // Lo que se sabrá del análisis NSE al final. Se declara aquí, con el resto del estado del
-        // escaneo, porque el informe tiene que poder decir "no se hizo" con la misma seguridad
-        // con la que dice "se hizo": null sería un cuarto estado sin significado.
+        // Estado del análisis NSE para el informe (null = NSE no pedido).
         let nseAvailability = null;   // { checked, available:Set, missing:[], reason }
         let nseCanary       = null;   // { state, detail, probed, evidence }
 
-        // Única fuente sobre si el objetivo existe: el escaneo va con -Pn y siempre responde
-        // "host up (user-set)". Sin esto, una IP inexistente daba 0 puertos abiertos y el
-        // dashboard lo pintaba verde. Y ahorra tiempo: medido contra una IP muerta, 3 s de
-        // descubrimiento frente a 212 s de escaneo de 1024 puertos. Para localhost no se lanza.
+        // El escaneo va con -Pn y siempre dice "host up": si el objetivo existe lo decide este paso.
         const targetIsLocal = isLocalTarget(target);
         node.status({ fill: "blue", shape: "dot", text: targetIsLocal ? "Escaneando..." : "Comprobando el equipo..." });
         const discovery = await checkHostReachable({ target, isLocal: targetIsLocal });
@@ -179,8 +155,7 @@ module.exports = function (RED) {
           node.log(`[audit-network] descubrimiento: ${discovery.detail}`);
         }
 
-        // Sale solo del descubrimiento. Con 'unknown' se escanea igual y se avisa: un falso "no
-        // alcanzable" que cancela la auditoría es peor que un escaneo de más.
+        // Con 'unknown' se escanea igual y se avisa: mejor un escaneo de más que cancelar por error.
         const targetState = deriveTargetState(discovery);
 
         // Sin forzar no se escanea: cero hallazgos aquí es "no analizado", no "limpio".
@@ -192,19 +167,12 @@ module.exports = function (RED) {
         } else {
           try {
             node.status({ fill: "blue", shape: "dot", text: "Escaneando..." });
-            // Por modo y por número de puertos, según el tiempo medido sobre un host filtrado,
-            // donde cada puerto filtrado añade espera (ver scanTimeoutMs). No se usa
-            // --host-timeout de nmap: cortaría antes de sondear los puertos altos y daría un
-            // falso 0. Pasado este límite, "no concluyente".
-            // Presupuesto del modo MÁS el de los scripts. Quien no activa NSE suma 0.
+            // No se usa --host-timeout: cortaría antes de los puertos altos y daría un falso 0.
             const nmapTimeout = scanTimeoutMs(scanMode, portCheck.ok ? portCheck.count : 0) +
                                 (nseEnabled ? nseTimeout : 0);
 
-            /**
-             * Qué scripts pedirle a ESTE nmap. Un solo nombre inexistente aborta el escaneo entero (p. ej. nmap anterior a
-             * la 7.80, que es la que trae vulners), así que se pregunta antes y se manda lo que hay. Si no se puede ni
-             * preguntar, se escanea SIN scripts y `nseAvailability.checked === false` llega al informe como omisión.
-             */
+            // Un script inexistente aborta todo el escaneo, así que solo se piden los instalados.
+            // Si no se puede preguntar, se escanea sin scripts y checked=false llega al informe.
             let nseScripts = [];
             if (nseEnabled) {
               node.status({ fill: "blue", shape: "dot", text: "Comprobando scripts..." });
@@ -231,7 +199,7 @@ module.exports = function (RED) {
               modulesRun.push("nmap");
               node.log("[audit-network] escáner: nmap");
             } else if (nmapResult.inconclusive) {
-              // nmap está, pero el escaneo no terminó; el aviso se emite más abajo.
+              // nmap está, pero el escaneo no terminó; el aviso se añade más abajo.
               scanInconclusive = true;
               nmapScan = nmapResult.scan || null;
               portSource = "nmap";
@@ -246,8 +214,7 @@ module.exports = function (RED) {
           }
         }
 
-        // Solo para el equipo local: lsof y netstat miran ESTE equipo, y contra un target remoto
-        // atribuirían el puerto a un proceso de aquí que no tiene nada que ver.
+        // Solo en local: lsof y netstat miran este equipo, no el objetivo remoto.
         let ports = openPorts;
         if (openPorts.length > 0 && targetIsLocal) {
           try {
@@ -258,10 +225,7 @@ module.exports = function (RED) {
           }
         }
 
-        // El gestor de paquetes decide el nombre de las unidades systemd de las recomendaciones
-        // (ssh en Debian, sshd en Arch y Fedora). Solo tiene sentido para este equipo y en Linux:
-        // en un objetivo remoto no se propone ninguna orden. Sin gestor, la recomendación usa el
-        // nombre de Debian y añade una nota con el otro.
+        // El gestor decide el nombre de la unidad systemd del fix (ssh en Debian, sshd en Arch/Fedora).
         let pkgManager = null;
         if (targetIsLocal && process.platform === "linux" && ports.length > 0) {
           try { pkgManager = await detectPackageManager("linux"); } catch (_) { pkgManager = null; }
@@ -276,17 +240,15 @@ module.exports = function (RED) {
         if (targetIsLocal && openPorts.length > 0) {
           try {
             firewall = await detectFirewall();
-          } catch (_) { /* detectar el firewall no puede tumbar la auditoría */ }
+          } catch (err) {
+            // No tumba la auditoría, pero tampoco puede leerse como "sin cortafuegos".
+            firewall = { name: null, active: null, error: String((err && err.message) || err) };
+          }
         }
 
-        /**
-         * Veredicto sobre la fuente de CVE y resumen NSE de cada puerto. Orden obligado: primero el canario sobre TODOS
-         * los puertos, porque es propiedad del escaneo entero; puerto a puerto dependería del orden del bucle.
-         */
+        // Primero el canario sobre todos los puertos (es del escaneo entero) y luego el resumen por puerto.
         if (nseEnabled) {
-          // `!skipScan` en el estado del canario: con el objetivo no alcanzable no se escaneó
-          // nada, y decir "no hacía falta comprobar la fuente" sobre cero puertos daría por
-          // resuelto lo que ni se intentó. El estado correcto ahí es 'not-run'.
+          // Sin escaneo el canario debe quedar 'not-run', no "no hacía falta".
           nseCanary = runCanary(ports, { hasVersion, nseEnabled: !skipScan });
           const canaryOk = canaryIsOk(nseCanary.state);
           for (const p of ports) {
@@ -297,8 +259,6 @@ module.exports = function (RED) {
 
         const findings = normalizeNetwork(ports, "nmap", {
           firewall, targetIsLocal, target, pkgManager,
-          // Solo viaja cuando el análisis se pidió. Sin esta clave el normalizador devuelve
-          // exactamente los hallazgos de siempre, sin una línea de más.
           nse: nseEnabled
             ? {
                 enabled: true,
@@ -312,8 +272,7 @@ module.exports = function (RED) {
             : { enabled: false },
         });
 
-        // Sin nmap no hay forma de escanear, así que el resultado vacío no es "sin puertos
-        // abiertos". El finding va delante para que el dashboard no pinte verde.
+        // Sin nmap el resultado vacío no es "sin puertos": el hallazgo va delante para no pintar verde.
         if (nmapMissing || nmapError) {
           findings.unshift(createFinding({
             id:       "NET-DEP-NMAP",
@@ -333,14 +292,11 @@ module.exports = function (RED) {
           }));
         }
 
-        // Cero puertos solo tranquiliza si el objetivo existe y además el escaneo terminó. Son
-        // dos preguntas con campo y fuente propios: targetState de host-discovery, scanStatus de
-        // nmap-wrapper. 'not-run' es que no se escaneó por no estar accesible el host.
+        // Cero puertos solo vale si el objetivo existe (targetState) y el escaneo terminó (scanStatus).
         let scanStatus = skipScan ? "not-run" : "ok";
 
         if (targetState === "unreachable") {
-          // Ausencia de auditoría, no riesgo: de ahí el 'info'. Un 'medium' pintaría "Riesgo
-          // Moderado", tan falso como el verde. El estado neutro lo decide targetState.
+          // 'info' porque es ausencia de auditoría, no riesgo; el estado neutro lo pinta targetState.
           findings.unshift(createFinding({
             id:       "NET-HOST-UNREACHABLE",
             title:    `No se ha podido contactar con ${target}: la auditoría no se ha realizado`,
@@ -352,11 +308,10 @@ module.exports = function (RED) {
                         : "Se ha escaneado de todas formas porque está activada la opción " +
                           "\"Escanear aunque el equipo no responda\", pero el resultado puede " +
                           "estar incompleto."),
-            // Sin "1." … "5.": la numeración la pone la lista del dashboard, y escribirla
-            // aquí producía dos numeraciones superpuestas. El ping va en su línea "$ ".
+            // Sin numerar: la lista del dashboard ya numera. Las líneas "$ " se pintan como orden.
             fix:      "Comprueba que el equipo está encendido y conectado a la red.\n" +
                       `Verifica que la dirección IP es correcta: ${target}\n` +
-                      "Si usas VPN, confirma que el túnel está activo y enruta esa subred.\n" +
+                      "Si usas VPN, comprueba que no desvía por el túnel el tráfico de tu red local.\n" +
                       "Prueba a contactarlo desde una terminal:\n" +
                       `$ ping ${target}\n` +
                       (skipScan
@@ -377,9 +332,6 @@ module.exports = function (RED) {
             severity: "medium",
             evidence: `El escaneo de ${target} no terminó (timeout o interrupción). ` +
                       "No se puede afirmar que el host esté seguro con estos datos.",
-            // La versión anterior proponía el modo Completo "con más tiempo" y "aumentar el
-            // timeout del nodo". Completo recorre ahora los 65535 puertos y tarda más, no menos, y
-            // el nodo no tiene ningún ajuste de tiempo para el escaneo de puertos.
             fix:      "El equipo puede tener un cortafuegos que hace esperar a cada puerto filtrado. " +
                       "Repite la auditoría con el modo Rápido o con un rango de puertos personalizado " +
                       "más pequeño. Si tienes activado el análisis NSE, también puedes subir su tiempo extra.",
@@ -387,8 +339,7 @@ module.exports = function (RED) {
             source:   "nmap",
           }));
         } else if (targetState === "unknown" && !targetIsLocal && !nmapMissing) {
-          // No se pudo determinar si el objetivo existe: nmap ausente, timeout, XML ilegible. Se
-          // escaneó igual, mejor de más que cancelar por una duda, pero no se pinta verde a secas.
+          // No se supo si el objetivo existe; se escaneó igual, pero no se pinta verde.
           findings.unshift(createFinding({
             id:       "NET-SCAN-WARN",
             title:    "No se ha podido comprobar si el equipo está accesible",
@@ -416,13 +367,12 @@ module.exports = function (RED) {
           scanMeta: {
             modulesRun,
             portSource,
-            // El conjunto real lo decide nmap según el modo: el número exacto está en portRange.
+            // El conjunto real está en portRange.
             portsScanned: null,
             portsOpen:    openPorts.length,
             durationMs,
             scanMode,
-            // Qué es el objetivo, según host-discovery. Con este campo decide el dashboard si
-            // puede pintar verde. No sale del escaneo, que con -Pn siempre responde "host up".
+            // Según host-discovery; con él decide el dashboard si puede pintar verde.
             targetState,
             discovery: {
               method:     discovery.method,
@@ -430,21 +380,18 @@ module.exports = function (RED) {
               durationMs: discovery.durationMs,
               cmd:        discovery.cmd,
               detail:     discovery.detail,
-              // Si el "accesible" lo dio el ping del sistema y no Nmap, y con qué orden.
+              // Si el "accesible" lo confirmó el ping del sistema, y con qué orden.
               confirmedBy: discovery.confirmedBy || null,
               pingCmd:     discovery.pingCmd || null,
             },
             forceScan,
-            // Qué hizo el escaneo, según nmap-wrapper.
             scanStatus,
-            // Real desde que se quitó --open: con él, nmap no llegaba a emitir <extraports>.
+            // Sin --open para que nmap emita <extraports>.
             filteredPorts:  nmapScan ? nmapScan.filteredCount  : null,
             filteredReason: nmapScan ? nmapScan.filteredReason : null,
-            // PTR del objetivo. Null si no tiene: el dashboard no pinta la píldora, en vez de un
-            // guion que se leería como "se comprobó y no tiene nombre".
+            // PTR del objetivo; null si no tiene, y el dashboard no pinta la píldora.
             hostname:       nmapScan ? nmapScan.hostname : null,
-            // Target y rango exactos para poder reproducirlo: un `nmap localhost` a mano escanea
-            // el top-1000 de nmap, que es otro conjunto, y puede dar otra cosa.
+            // Objetivo y rango exactos para reproducirlo (un `nmap` a mano usa otro conjunto).
             target,
             portRange:
               nmapScan && nmapScan.portSpec
@@ -453,27 +400,20 @@ module.exports = function (RED) {
                 ? customPorts.trim()
                 : `1-1024 + catálogo (${Object.keys(PORT_CATALOG).length} puertos conocidos)`,
             customTarget: target !== "127.0.0.1" ? target : null,
-            /**
-             * Estado del análisis NSE en estructurado. Duplica a propósito los hallazgos de omisión: estos los lee una
-             * persona y esto lo lee el dashboard (para decidir si pinta verde) y el JSON exportado.
-             * `available` es un array ordenado porque un Set se serializa a {}.
-             */
+            // Duplica a propósito los hallazgos de omisión para el dashboard y el JSON exportado.
             nse: {
               enabled: nseEnabled,
-              // Qué se le llegó a pedir a nmap. Con la lista vacía y enabled=true, el escaneo se
-              // lanzó sin scripts: eso es un hueco, no un "sin hallazgos".
+              // Array ordenado porque un Set se serializa a {}. Vacío con enabled=true es un hueco.
               scriptsRequested: nseAvailability ? [...nseAvailability.available].sort() : [],
               scriptsMissing:   nseAvailability ? nseAvailability.missing : [],
               // false = ni siquiera se pudo preguntar qué hay instalado.
               availabilityChecked: nseAvailability ? nseAvailability.checked : null,
               availabilityReason:  (nseAvailability && nseAvailability.reason) || null,
-              // El estado de la fuente de CVE y su explicación para el informe. `probed` vale
-              // siempre false: LoCoAudit no consulta vulners.com por su cuenta, y poder afirmarlo
-              // vale más que dejarlo implícito.
+              // probed es siempre false: LoCoAudit no consulta vulners.com por su cuenta.
               canary: nseCanary
                 ? { state: nseCanary.state, probed: nseCanary.probed, detail: nseCanary.detail }
                 : null,
-              // Tiempo EXTRA concedido a los scripts, para poder explicar un timeout.
+              // Tiempo extra de los scripts, para poder explicar un timeout.
               timeoutMs: nseEnabled ? nseTimeout : 0,
             },
           },
@@ -502,7 +442,7 @@ module.exports = function (RED) {
             ? "escaneo no concluyente"
             : targetState === "unknown"
             ? `${openPorts.length} puertos · accesibilidad sin confirmar`
-            : `${openPorts.length} puertos abiertos · riesgo: ${maxSev}`,
+            : `${openPorts.length} ${openPorts.length === 1 ? "puerto abierto" : "puertos abiertos"} · riesgo: ${maxSev}`,
         });
 
         send(msg);

@@ -1,21 +1,10 @@
 "use strict";
 
 /**
- * test-security-events-win32.js — Test manual de la rama Windows de
- * security-events: parsers puros + normalizador, con fixtures sintéticas.
- * NO ejecuta PowerShell: se puede lanzar desde cualquier SO.
+ * test-security-events-win32.js — Rama Windows de security-events: parsers, normalizador
+ * y correlación de logons (lib/win-logons.js), con fixtures. No ejecuta PowerShell.
  *
  *   node test/manual/test-security-events-win32.js
- *
- * Cubre también la correlación entre las dos fuentes que describen el mismo
- * acceso cuando Node-RED va elevado (lib/win-logons.js), con una fixture calcada
- * de la medición real: un login SSH que producía 4 filas y 3 findings.
- *
- * Verificación adicional pendiente en la VM Windows (no automatizable aquí):
- *   - Node-RED sin admin  → finding HOST-SEC-WIN-PERM, sin crash
- *   - Node-RED como admin → eventos 4624/4625 reales, y UNA fila por acceso
- *   - 2-3 logins fallidos provocados → agregado low (HOST-SEC-WINF-001)
- *   - índice real de TargetLogonId/SubjectLogonId en los Properties del evento
  */
 
 const assert = require("assert");
@@ -161,7 +150,7 @@ check("locales omitidos si 0 remotos (filtrado de ruido)", () => {
   raw.windows.logons.localCount = 5;
   const f = fromSecurityEvents(raw);
   assert.strictEqual(byId(f, "HOST-SEC-WIN-LOC").length, 0);
-  assert.strictEqual(byId(f, "HOST-SEC-INF").length, 1); // sin eventos relevantes
+  assert.strictEqual(byId(f, "HOST-EVT-INF").length, 1); // sin eventos relevantes
 });
 
 check("fallidos < umbral → low agregado", () => {
@@ -221,31 +210,26 @@ check("acceso denegado → HOST-SEC-WIN-PERM info, sin 'sin eventos'", () => {
   const perm = byId(f, "HOST-SEC-WIN-PERM");
   assert.strictEqual(perm.length, 1);
   assert.strictEqual(perm[0].severity, "info");
-  // El fix NO puede recomendar ejecutar Node-RED como administrador: es
-  // justo lo que el proyecto descarta ("Elevación UAC en Windows"). La vía con
-  // mínimo privilegio es el grupo integrado de lectores del registro.
+  // El fix no recomienda ejecutar Node-RED como administrador, sino el grupo de lectores del registro.
   assert.ok(!/Node-RED como administrador/i.test(perm[0].fix));
   assert.ok(/Event Log Readers|Lectores del registro de eventos/.test(perm[0].fix));
   assert.strictEqual(perm[0].command, "Add-LocalGroupMember -SID S-1-5-32-573 -Member $env:USERNAME");
   assert.strictEqual(perm[0].isCommand, true);
-  // Regla del proyecto: `command` es SOLO la línea ejecutable; la nota va
-  // detrás, en el fix, nunca dentro del comando copiable.
+  // `command` es solo la línea ejecutable; la nota va en el fix.
   assert.strictEqual(perm[0].fix.split("\n")[0], perm[0].command);
   assert.ok(perm[0].fix.split("\n").length > 1);
   assert.strictEqual(byId(f, "HOST-SEC-WIN-UAC").length, 0);
-  assert.strictEqual(byId(f, "HOST-SEC-INF").length, 0);
+  assert.strictEqual(byId(f, "HOST-EVT-INF").length, 0);
 });
 
 check("no se emite el aviso UAC/4688: no se comprobaba nada real", () => {
-  // Se emitía siempre que el canal Security fuera legible, sin mirar la
-  // directiva, y su fix (auditpol) no afectaba a lo que el módulo lee:
-  // Get-WinEvent nunca pide el 4688.
+  // No se emite: el módulo nunca lee el 4688, así que su fix (auditpol) no aplica.
   const f = fromSecurityEvents(baseRaw());
   assert.strictEqual(byId(f, "HOST-SEC-WIN-UAC").length, 0);
   assert.ok(!f.some((x) => /auditpol/.test(x.fix || "")));
 });
 
-check("skipped (sin PowerShell) → HOST-SEC-SKIP", () => {
+check("skipped (sin PowerShell) → HOST-EVT-SKIP", () => {
   const f = fromSecurityEvents({
     skipped: true,
     reason: "ni powershell ni pwsh disponibles",
@@ -253,7 +237,9 @@ check("skipped (sin PowerShell) → HOST-SEC-SKIP", () => {
     platform: "win32",
   });
   assert.strictEqual(f.length, 1);
-  assert.strictEqual(f[0].id, "HOST-SEC-SKIP");
+  assert.strictEqual(f[0].id, "HOST-EVT-SKIP");
+  assert.strictEqual(f[0].skipped, true);
+  assert.strictEqual(f[0].kind, "error");
 });
 
 // ── 4. Script PowerShell ────────────────────────────────────────────────────
@@ -334,8 +320,7 @@ check("tope 200 + truncated: true", () => {
 
 check("skipped → events: [] y sessionsChecked: false", () => {
   const out = buildEventList({ skipped: true, reason: "x", windowHours: 12, platform: "win32" });
-  // sessionsChecked=false: sin recolección no se preguntó a nadie, y el panel no
-  // puede pintar "Sin sesiones remotas activas" sobre eso.
+  // sessionsChecked=false: sin recolección no se puede decir "Sin sesiones remotas activas".
   assert.deepStrictEqual(out, { windowHours: 12, events: [], truncated: false, sessionsChecked: false });
 });
 
@@ -350,16 +335,10 @@ check("sessionsChecked viaja al dashboard cuando sí se consultó", () => {
 });
 
 // ── 6. Correlación SSH ↔ canal Security (lib/win-logons.js) ─────────────────
-//
-// Con Node-RED SIN elevar solo se lee OpenSSH/Operational y no hay nada que
-// correlacionar. Con Node-RED ELEVADO se leen los dos canales y un ÚNICO login
-// SSH producía CUATRO filas y TRES findings. Fixture calcada de la medición
-// real en Windows (solo la fecha es inventada: la evidencia daba las horas).
+// Con Node-RED elevado se leen los dos canales y un login SSH debe dar una sola fila.
 console.log("correlación SSH ↔ Security (evidencia real):");
 
-// JSON tal cual lo emite el script PowerShell para ese login. El 4672 de
-// sshd_13048 se incluye a propósito aunque el script ya lo filtre: así se
-// comprueba también la red de seguridad de parseWinEventsJson.
+// JSON del script PowerShell; el 4672 de sshd_13048 prueba el filtro de parseWinEventsJson.
 const EVIDENCIA_PS = JSON.stringify({
   denied: false,
   logons: [{ t: "2026-08-22 18:51:02", user: "inesg", type: 3, ip: "-", logonId: "0x1A2B3C" }],
@@ -426,10 +405,7 @@ check("evidencia real: el privilegio no se pierde, se anota en la fila que queda
   const ev = buildEventList(rawDesdePs(EVIDENCIA_PS)).events[0];
   assert.strictEqual(ev.privileged, true);
   assert.ok(/privilegios de administrador \(4672\)/.test(ev.detail));
-  // El 4672 habla de la CUENTA, no de la sesión: Windows lo emite porque la
-  // cuenta está en el grupo Administradores, aunque no se eleve nada. Decir
-  // "la sesión obtuvo privilegios" sugería lo contrario a quien entró por SSH
-  // sin elevar nada en ningún momento.
+  // El 4672 describe la cuenta (administradora), no que la sesión se elevara.
   assert.ok(/cuenta/i.test(ev.detail));
   assert.ok(!/la sesión (obtuvo|tenía|estaba)/i.test(ev.detail));
 });
@@ -437,15 +413,11 @@ check("evidencia real: el privilegio no se pierde, se anota en la fila que queda
 check("evidencia real: 3 findings → 1, y el 4672 consta en su evidencia", () => {
   const f = fromSecurityEvents(rawDesdePs(EVIDENCIA_PS));
   assert.strictEqual(f.length, 1);
-  // Antes salía como HOST-SEC-SSH-001 en info: el 4672 correlacionado dice que
-  // la cuenta es administradora, y eso es una identidad privilegiada entrando
-  // desde la red — el mismo nivel que un root por SSH en Unix y que el mismo
-  // hecho llegando por RDP. El protocolo ya no decide la severidad.
+  // Una cuenta administradora entrando por red pesa igual por SSH que por RDP.
   assert.strictEqual(f[0].id, "HOST-SEC-SSH-R-001");
   assert.strictEqual(f[0].severity, SECURITY_EVENT_RULES.SSH_ACCEPTED_ROOT);
   assert.strictEqual(byId(f, "HOST-SEC-WIN-RDP").length, 0);
-  // Y NO se emite además PRIV-001: sería el mismo hecho dos veces, que es lo
-  // que la deduplicación evita. La señal alta la da ya la vía SSH.
+  // Sin PRIV-001 adicional: sería el mismo hecho dos veces.
   assert.strictEqual(byId(f, "HOST-SEC-WIN-PRIV").length, 0);
   assert.ok(/4672/.test(f[0].evidence));
   assert.ok(/LogonId 0x1A2B3C/.test(f[0].evidence));
@@ -604,16 +576,7 @@ check("Linux/macOS: sin canal Security la correlación no toca nada", () => {
 
 
 // ── 7. Invocación de PowerShell: guardarraíl del límite de línea de comandos ─
-//
-// Regresión real: el script se pasaba con -EncodedCommand, o sea entero dentro
-// de la línea de comandos, que Windows limita a 8191 caracteres. UTF-16LE +
-// base64 lo multiplica por ~2,67. El script creció con los últimos cambios y
-// cruzó el umbral: 3109 caracteres → 8292 de base64, 101 de más. Dejó de
-// ejecutarse ENTERO, y con él se perdían a la vez el canal Security y el de
-// OpenSSH, así que no salía ni un evento SSH. Silencioso: nada avisó.
-//
-// Con -File el límite no aplica. Este test deja constancia de los números y
-// falla si alguien devuelve la invocación a la línea de comandos.
+// El script va por -File: con -EncodedCommand superaría los 8191 caracteres de Windows.
 console.log("invocación de PowerShell (límite de 8191 caracteres):");
 
 const WIN_CMDLINE_LIMIT = 8191;
@@ -628,9 +591,7 @@ check("el script NO cabría en una línea de comandos, y por eso va por -File", 
     ` · margen ${margen >= 0 ? "+" : ""}${margen}`
   );
 
-  // La invocación real, tal cual está escrita en el módulo. Se busca la línea
-  // que construye el comando (no los comentarios, que sí nombran la opción
-  // abandonada a propósito para que conste por qué).
+  // Se busca la línea que construye el comando, no los comentarios del módulo.
   const src = fs.readFileSync(SRC_SECURITY_EVENTS, "utf8");
   const invocacion = src.split("\n").filter((l) => l.includes("${psCmd}"));
   assert.strictEqual(invocacion.length, 1, "debería haber UNA sola invocación de PowerShell");
@@ -645,8 +606,7 @@ check("el script NO cabría en una línea de comandos, y por eso va por -File", 
   }
   assert.ok(!porLineaDeComandos, "el script no puede viajar por la línea de comandos");
   assert.ok(/-File "/.test(invocacion[0]), "el script se pasa por fichero, con la ruta entrecomillada");
-  // Los flags que ya estaban siguen estando: sin perfil, no interactivo, sin
-  // política de ejecución que bloquee un .ps1 recién escrito.
+  // Siguen los flags de siempre: sin perfil, no interactivo y sin bloqueo por política de ejecución.
   for (const flag of ["-NoProfile", "-NonInteractive", "-ExecutionPolicy Bypass"]) {
     assert.ok(invocacion[0].includes(flag), `falta ${flag}`);
   }
@@ -691,9 +651,7 @@ checkAsync("la función lanza: el error sube Y el temporal se borra", async () =
 });
 
 checkAsync("timeout real del proceso hijo: el temporal se borra igual", async () => {
-  // Proceso que no termina, matado por el timeout de execCommand. Es el camino
-  // que más importa: si el borrado dependiera del final feliz, cada auditoría
-  // que expirase dejaría un .ps1 en %TEMP%.
+  // Aunque el proceso muera por timeout, el .ps1 temporal se borra.
   let visto = null;
   await assert.rejects(
     () => withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
@@ -730,9 +688,7 @@ checkAsync("BOM de UTF-8 al principio cuando se pide", async () => {
 });
 
 checkAsync("no escribe sobre una ruta que ya exista (O_EXCL contra enlaces)", async () => {
-  // No se puede forzar la colisión con el nombre aleatorio, así que se comprueba
-  // la propiedad directamente: escribir con flag 'wx' sobre algo existente falla
-  // en vez de seguir el enlace y machacar el destino.
+  // Escribir con flag 'wx' sobre algo existente falla en vez de seguir el enlace.
   const cebo = path.join(os.tmpdir(), `lcaudit-test-cebo-${Date.now()}.ps1`);
   fs.writeFileSync(cebo, "original");
   try {

@@ -1,16 +1,10 @@
 "use strict";
 
-/**
- * Red y nube quedan fuera de ámbito: no es software que este equipo ejecute, y recorrerlas
- * obliga a materializar ficheros remotos, con lo que un montaje colgado tumba el escaneo entero.
- * Se detecta por sistema de ficheros y marcas del SO, nunca por el nombre de la carpeta: una
- * llamada "OneDrive" puede ser un directorio normal.
- */
+/** Red y nube quedan fuera de ámbito; se detectan por sistema de ficheros, nunca por el nombre de la carpeta. */
 
 const { execSync, execFileSync } = require("child_process");
 
-/** Remotos en Linux (stat -f -c %T). El prefijo "fuse." cubre sshfs, rclone o s3fs sin listarlos;
- *  "fuseblk" se queda fuera a propósito, es ntfs-3g y es disco local. */
+/** Tipos remotos en Linux (stat -f -c %T). "fuseblk" no entra: es ntfs-3g, disco local. */
 const LINUX_REMOTE = new Set([
   "nfs", "nfs4", "cifs", "smb", "smb2", "smbfs", "afs", "webdav", "davfs", "sshfs", "9p",
 ]);
@@ -40,11 +34,7 @@ function classifyLinux(dir) {
   return { local: true, kind: "local", detail: `sistema de ficheros ${type}` };
 }
 
-/**
- * Dos sondas, las dos necesarias: los montajes de red salen en `mount`, la nube sincronizada no.
- * Medido: Google Drive vive en el APFS local de /System/Volumes/Data y `mount` no lo lista. Lo
- * delata el xattr com.apple.file-provider-domain-id, que macOS pone en la raíz de cada dominio.
- */
+/** macOS: los montajes de red salen en `mount`; la nube sincronizada se reconoce por su xattr file-provider. */
 function classifyDarwin(dir) {
   try {
     const attrs = run("xattr", [dir]);
@@ -83,8 +73,7 @@ function classifyWin32(dir) {
   return { local: true, kind: "local", detail: `DriveType ${out.trim() || "?"}` };
 }
 
-/** Nunca lanza: si la sonda falla devuelve 'unknown' con local:true. Excluir por error una
- *  carpeta legítima deja software sin auditar; el directorio que no responde se aísla en trivy-fs. */
+/** Nunca lanza: si la sonda falla, 'unknown' con local:true para no dejar software sin auditar. */
 function classifyDir(dir) {
   try {
     if (process.platform === "linux")  return classifyLinux(dir);

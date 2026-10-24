@@ -1,18 +1,8 @@
 "use strict";
 
 /**
- * test-network-ping-fallback.js — Segunda opinión del ping del sistema cuando Nmap da el equipo
- * por caído.
- *
- * El caso real (2026-10-08): 10.10.10.10, con solo 2222 y 5900 abiertos y el resto filtrados.
- * Sin root, `nmap -sn -PE -PS22,80,443,8080` no puede usar ICMP y ninguna sonda TCP recibe
- * respuesta: 0 hosts up. `ping 10.10.10.10` sí responde, y `nmap -Pn` encuentra los dos puertos.
- * El nodo decía "no accesible — sin auditar".
- *
- * nmap y ping son falsos, en un PATH propio, y reproducen salidas reales:
- *   - la respuesta de macOS de la captura del usuario (ttl=63);
- *   - un Windows en español, con respuesta y con el "Host de destino inaccesible" de un router,
- *     que sale con código 0 y es justo lo que el código de salida no distingue.
+ * test-network-ping-fallback.js — Ping del sistema como segunda opinión cuando Nmap da el equipo por caído.
+ * nmap y ping son falsos, en un PATH propio, con salidas reales de macOS y de Windows en español.
  *
  * Bloques:
  *   1. systemPing(): qué cuenta como respuesta y qué orden se lanza en cada sistema.
@@ -94,8 +84,7 @@ for (const dir of [binNmap, binBoth]) fs.writeFileSync(path.join(dir, "nmap"), N
 fs.writeFileSync(path.join(binBoth, "ping"), PING_SH, { mode: 0o755 });
 
 const ORIGINAL_PATH = process.env.PATH;
-// Sin el PATH del sistema: así "no hay ping" es de verdad que no lo hay. sh y cat se resuelven
-// por ruta absoluta en los scripts (#!/bin/sh) y por /bin, que se mantiene para cat.
+// PATH sin el del sistema para que "no hay ping" sea cierto; se mantiene /bin para sh y cat.
 function usePath(dir) { process.env.PATH = `${dir}${path.delimiter}/bin${path.delimiter}/usr/bin`; }
 function setPing(out, exit) {
   fs.writeFileSync(outFile, out);
@@ -108,8 +97,7 @@ const { systemPing, checkHostReachable, deriveTargetState } =
   require("../../nodes/audit-network/modules/host-discovery");
 
 async function main() {
-  // Este entorno puede tener un ping de verdad en /bin o /usr/bin: se comprueba antes de dar por
-  // buenos los casos "sin ping".
+  // Puede haber un ping real en /bin o /usr/bin: se comprueba antes de los casos "sin ping".
   const realPing = ["/bin/ping", "/usr/bin/ping", "/sbin/ping", "/usr/sbin/ping"].some((p) => fs.existsSync(p));
 
   // ── 1 · systemPing ───────────────────────────────────────────────────────────────────────

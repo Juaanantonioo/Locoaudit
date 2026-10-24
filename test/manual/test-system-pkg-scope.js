@@ -2,10 +2,8 @@
 
 /**
  * test-system-pkg-scope.js — Alcance del análisis de paquetes del sistema: ¿se analizaron, y si no, por qué?
- * En CachyOS la respuesta es NO (Trivy no tiene analizador para pacman) y antes no aparecía en ningún sitio.
- * El veredicto salía de una lista propia (TRIVY_OS_MANAGERS) que envejecía con cada versión de Trivy. Ahora el gate es
- * `.Metadata.OS.Family` del informe, y systemPackagesSupport() recibe el resultado del módulo.
- * Es pura y recibe la plataforma por parámetro, así que cubre las tres plataformas desde una máquina.
+ * El veredicto sale de `.Metadata.OS.Family` del informe de Trivy, no de una lista propia de gestores.
+ * systemPackagesSupport() es pura y recibe la plataforma, así que cubre las tres desde una máquina.
  * Uso: node test/manual/test-system-pkg-scope.js
  */
 
@@ -19,9 +17,7 @@ function ok(cond, label, detail) {
   else { failed++; console.log(`  ✗ ${label}`); if (detail) console.log(`      ${detail}`); }
 }
 
-// Resultados posibles de runTrivyRootfs(), que es lo que ahora se inspecciona.
-// Trivy no reconoció el sistema: es la respuesta que da tanto en Arch (pacman)
-// como en macOS y Windows. Una sola causa, y la plataforma decide cómo se cuenta.
+// Resultados posibles de runTrivyRootfs(); "SO no reconocido" se cuenta según la plataforma.
 const NO_OS   = { skipped: true, kind: "os-unsupported", reason: "Trivy no ha detectado la familia del sistema operativo" };
 const FALLO   = { skipped: true, kind: "error", reason: "trivy failed: exit status 2" };
 const CORTADO = { skipped: true, kind: "output-too-large", reason: "la salida no cupo en el búfer" };
@@ -56,9 +52,7 @@ for (const [platform, enabled, result, esperado, nota] of MATRIZ) {
 
 console.log("\n── El veredicto NO depende del gestor de paquetes ────────────────\n");
 
-// La regresión que se está fijando: el mismo resultado de Trivy tiene que dar el
-// mismo estado sea cual sea el gestor detectado. `manager` sigue viajando en
-// scanMeta, pero solo para REDACTAR la frase, nunca para decidirla.
+// El mismo resultado de Trivy da el mismo estado con cualquier gestor; `manager` solo redacta.
 const GESTORES = ["apt", "dnf", "yum", "zypper", "apk", "pacman", "emerge", "xbps", null];
 const todosScanned = GESTORES.every(
   () => systemPackagesSupport("linux", OK, { enabled: true, manager: "pacman" }) === "scanned"
@@ -66,9 +60,7 @@ const todosScanned = GESTORES.every(
 ok(todosScanned,
    `un informe con OS.Family da 'scanned' con cualquiera de los ${GESTORES.length} gestores`);
 
-// Y al revés: un gestor de la antigua lista de "soportados" no salva un informe
-// sin familia de SO. Antes, 'apt' + interruptor activo daba 'scanned' mirando
-// solo un sub-bloque de estado; ahora manda lo que Trivy encontró.
+// Un gestor conocido no convierte en 'scanned' un informe sin familia de SO.
 ok(systemPackagesSupport("linux", NO_OS, { enabled: true }) === "unsupported-manager",
    "un informe SIN OS.Family no puede salir como analizado, aunque el gestor fuese apt");
 
@@ -81,9 +73,7 @@ ok(todasIgual, `las ${derivadasArch.length} derivadas de Arch dan el mismo estad
 
 console.log("\n── Un fallo NUNCA se cuenta como análisis limpio ─────────────────\n");
 
-// La regla del proyecto: fallo de la herramienta ≠ dato negativo. Ningún kind de
-// fallo puede acabar en 'scanned', que es lo único que el dashboard redacta como
-// cobertura conseguida.
+// Fallo de la herramienta ≠ dato negativo: ningún kind de fallo acaba en 'scanned'.
 for (const r of [FALLO, CORTADO, SIN_BIN, NO_OS]) {
   for (const plat of ["linux", "darwin", "win32"]) {
     const got = systemPackagesSupport(plat, r, { enabled: true });

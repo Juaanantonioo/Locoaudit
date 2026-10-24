@@ -1,18 +1,8 @@
 "use strict";
 
 /**
- * test-command-coverage.js — Guardarraíl contra la regresión de isCommand.
- *
- * Bug que previene: el texto del fix ("poetry update ansible-core") se generaba
- * en un sitio (getTrivyFixCommand / lynisFix) y la decisión "esto es un
- * comando" en OTRO (regex _CMD_PATTERNS). Al añadir un gestor nuevo a la tabla de
- * generación sin tocar el regex, el fix salía como comando pero isCommand=false,
- * y el dashboard lo pintaba como texto plano en vez de con botón «Copiar».
- *
- * Este test recorre las TABLAS REALES del normalizador (no una lista fija), así
- * que un gestor nuevo queda cubierto automáticamente. Para decidir si algo es un
- * comando usa un ORÁCULO INDEPENDIENTE (COMMAND_VERBS más abajo), NO el mismo
- * regex de producción — si producción deja de reconocer un comando, aquí falla.
+ * test-command-coverage.js — Todo fix con forma de comando lleva isCommand=true.
+ * Recorre las tablas reales del normalizador y decide con un oráculo propio (COMMAND_VERBS).
  *
  * Uso:
  *   node test/manual/test-command-coverage.js            # solo invariantes sintéticas
@@ -34,9 +24,7 @@ const {
 } = norm;
 
 // ── Oráculo INDEPENDIENTE ────────────────────────────────────────────────────
-// Verbos que, al inicio de la primera línea de un fix, delatan un comando de
-// terminal. Mantenido a mano y a propósito separado de _CMD_PATTERNS: es el
-// contraste que detecta que producción y presentación se han desincronizado.
+// Verbos que delatan un comando; se mantiene a mano, separado de _CMD_PATTERNS a propósito.
 const COMMAND_VERBS = [
   "sudo", "brew", "npm", "pnpm", "yarn", "pip", "poetry", "pipenv",
   "cargo", "go", "bundle", "composer", "apt", "dnf", "yum", "zypper",
@@ -68,11 +56,7 @@ function ok(msg) {
   log(`  ✓ ${msg}`);
 }
 
-/**
- * Invariante central: un finding cuyo fix TIENE pinta de comando (según el
- * oráculo independiente) DEBE tener isCommand=true y command no nulo, y a la
- * inversa. Además, si hay command, debe casar con la primera línea del fix.
- */
+/** Fix con forma de comando ⇔ isCommand=true; y command coincide con la primera línea del fix. */
 function assertConsistent(label, f) {
   const looks = looksLikeCommand(f.fix);
   const isCmd = f.isCommand === true;
@@ -98,12 +82,7 @@ function assertConsistent(label, f) {
 }
 
 // ── Constructores sintéticos ─────────────────────────────────────────────────
-/**
- * Finding de host para un Type de Trivy. `installed` decide si el fixture lleva PkgPath:
- *   - con PkgPath (origin 'installed') es el único caso con comando de gestor; la ruta queda FUERA de SYSTEM_PREFIXES,
- *     porque el desvío al gestor del sistema se prueba en test-trivy-coverage.js.
- *   - sin PkgPath (origin 'declared', anotación en un lockfile) NUNCA debe salir un comando.
- */
+/** Finding de host para un Type de Trivy; con `installed` lleva PkgPath (único caso con comando). */
 function hostFindingForType(type, installed = true) {
   const vuln = {
     VulnerabilityID: "CVE-2024-9999",
@@ -126,10 +105,7 @@ function hostFindingForType(type, installed = true) {
   return out[0];
 }
 
-/**
- * Contra-prueba de la variante DECLARADA: ningún Type puede producir comando
- * cuando el paquete solo está anotado en un lockfile.
- */
+/** Un paquete solo declarado en un lockfile nunca produce comando. */
 function testDeclaredNeverCommand() {
   log("\n── Procedencia 'declared' (sin PkgPath) → nunca hay comando ──────────");
   const types = [...Object.keys(TRIVY_LANG_CMD), ...TRIVY_OS_TYPES].slice(0, 12);
@@ -194,9 +170,7 @@ function testLangManual() {
 function testLynisPkgs() {
   log("\n── Lynis: comando de instalación en 2ª línea ─────────────────────────");
 
-  // ACCT-9626 pide instalar sysstat, y ese SÍ es un paso ejecutable. El comando se compone con
-  // installCmd() a partir del gestor real, así que apt, dnf y pacman salen correctos sin escribir
-  // tres textos. Gestor forzado para que el test sea determinista en cualquier SO.
+  // ACCT-9626 (instalar sysstat) sí es un comando; se fuerza el gestor para que sea determinista.
   const raw = { hardeningIndex: null, warnings: [], suggestions: [{ id: "ACCT-9626", description: "Enable sysstat" }] };
   const out = fromLynisRaw(raw, "linux", "apt");
   const f = out.find((x) => x.control === "ACCT-9626");
@@ -207,11 +181,7 @@ function testLynisPkgs() {
     ok(`Lynis ACCT-9626: command en 2ª línea recuperado («${f.command}»)`);
   }
 
-  // LA REGRESIÓN QUE ESTE BLOQUE FIJA A PARTIR DE AHORA.
-  // Antes, TODO control con prefijo PKGS recibía el comando de actualización global del sistema:
-  // `sudo apt upgrade`, con su botón de copiar. Para PKGS-7420 —"no tienes una herramienta de
-  // auditoría de paquetes"— eso responde a otra pregunta, y el botón invitaba a ejecutar algo que
-  // no resuelve el hallazgo. La tabla por prefijo se eliminó; esto comprueba que no vuelve.
+  // Un control PKGS no recibe por prefijo el comando global de actualización.
   const pkgs = fromLynisRaw(
     { hardeningIndex: null, warnings: [], suggestions: [
       { id: "PKGS-7420", description: "Install a package audit tool" },

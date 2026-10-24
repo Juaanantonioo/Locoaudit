@@ -12,8 +12,7 @@ class LoCoAuditGUI:
         self.q = queue.Queue()
         self.on_stop = on_stop
         self.on_start = on_start
-        # Fuente única de verdad del estado de Node-RED. Sin ella cada botón lo
-        # deduciría por su cuenta y acabarían discrepando.
+        # Fuente única del estado de Node-RED para todos los botones.
         self.is_running = is_running or (lambda: False)
         self._busy = False    # transición en curso: bloquea dobles pulsaciones
         self._last_state = None   # último estado pintado, para no repintar en balde
@@ -110,8 +109,7 @@ class LoCoAuditGUI:
         self.ask_desc = tk.Label(self.ask_frame, text="", font=("Courier", 9),
                                  fg="#6c7086", bg="#45475a")
         self.ask_desc.pack(pady=(0, 8))
-        # Aviso opcional (tamaño de descarga, reinicio requerido...). Se empaqueta
-        # solo cuando el mensaje trae "note": sin nota no ocupa sitio.
+        # Aviso opcional (descarga, reinicio...); solo se muestra si el mensaje trae "note".
         self.ask_note = tk.Label(self.ask_frame, text="", font=("Courier", 9),
                                  fg="#f9e2af", bg="#45475a",
                                  wraplength=760, justify="center")
@@ -148,8 +146,7 @@ class LoCoAuditGUI:
                                   font=("Courier", 11, "bold"), relief="flat",
                                   padx=20, pady=8,
                                   command=lambda: webbrowser.open("http://localhost:1880"))
-        # Un único control para arrancar y parar. Su texto y su color los decide
-        # _refresh_buttons() a partir de is_running(), nunca el propio widget.
+        # Un único botón para arrancar y parar; su aspecto lo fija _refresh_buttons().
         self.toggle_btn = tk.Button(self.btn_row, text="■  Detener Node-RED",
                                     bg="#f38ba8", fg="#1e1e2e",
                                     font=("Courier", 11, "bold"), relief="flat",
@@ -194,12 +191,7 @@ class LoCoAuditGUI:
         self.ask_frame.pack_forget()
 
     def _refresh_buttons(self, transicion=""):
-        """Único sitio que pinta los dos botones. Todo sale de is_running().
-
-        `transicion` fuerza el estado intermedio mientras el hilo trabaja: ahí no
-        se consulta is_running(), porque el proceso está justo cambiando de
-        estado y la respuesta no significaría nada todavía.
-        """
+        """Pinta los botones según is_running(); `transicion` fuerza el estado intermedio."""
         APAGADO = {"state": "disabled", "bg": "#45475a", "fg": "#6c7086"}
         if transicion:
             self.toggle_btn.config(text=transicion, **APAGADO)
@@ -216,9 +208,7 @@ class LoCoAuditGUI:
             self.open_btn.config(**APAGADO)
 
     def _toggle_clicked(self):
-        # Arrancar o parar bloquean hasta varios segundos. En el hilo de Tk eso
-        # congela la ventana, así que el trabajo se va a un hilo y el resultado
-        # vuelve por la cola, que es como ya se comunica el resto del launcher.
+        # Arrancar o parar puede tardar: se hace en otro hilo para no congelar la ventana.
         if self._busy:
             return
         self._busy = True
@@ -298,16 +288,13 @@ class LoCoAuditGUI:
                     self.footer_label.pack_forget()
                     self.progress.pack_forget()
                     self.open_btn.pack(side="left", padx=8)
-                    # El toggle se muestra siempre: si el primer arranque falló,
-                    # desde aquí se reintenta sin relanzar el launcher entero.
+                    # Siempre visible, para reintentar si el primer arranque falló.
                     self.toggle_btn.pack(side="left", padx=8)
                     self.btn_row.pack(pady=14, anchor="center")
                     self._refresh_buttons()
         except Exception:
             pass
-        # Node-RED puede morirse solo (el puerto 1880 ya ocupado, un fallo suyo).
-        # Sin volver a consultar la fuente única, el botón se quedaría diciendo
-        # "Detener" sobre un proceso muerto y no habría forma de reintentar.
+        # Node-RED puede caerse solo: se reconsulta su estado para no dejar el botón desfasado.
         if not self._busy and self.btn_row.winfo_ismapped():
             estado = self.is_running()
             if estado != self._last_state:

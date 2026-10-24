@@ -1,13 +1,9 @@
 "use strict";
 
 /**
- * test-normalizer-lynis.js — Reestructuración de la salida de Lynis.
+ * test-normalizer-lynis.js — Normalización de la salida de Lynis.
  *
- * Antes, TODAS las sugerencias colapsaban en un único finding que listaba diez
- * códigos y remitía a ejecutar 'lynis show suggestions' en una terminal. El
- * contenido existía en payload.raw.lynis y se perdía en la normalización.
- *
- * Este test fija, sobre ficheros .dat REALES (no sintéticos):
+ * Fija, sobre ficheros .dat reales:
  *   - un finding por entrada, sin colapsar IDs repetidos;
  *   - avisos y sugerencias separados, con el aviso pesando más;
  *   - el campo 3 aprovechado (como evidencia y como comando);
@@ -36,11 +32,7 @@ function ok(cond, label, detail) {
   else { failed++; console.log(`  ✗ ${label}`); if (detail) console.log(`      ${detail}`); }
 }
 
-/**
- * Carga un fixture. Los .dat son capturas de máquinas concretas y no todas
- * están en el repo: el de CachyOS lo aporta quien tenga esa máquina. Ausente →
- * se salta el bloque, no se falla (mismo criterio que los fixtures de nmap).
- */
+/** Carga un fixture; si no está en el repo se salta el bloque en vez de fallar. */
 function loadFixture(name) {
   const file = path.join(FIXTURES, name);
   if (!fs.existsSync(file)) return null;
@@ -71,9 +63,7 @@ if (!macRaw) {
   // 18 entradas − 2 fusiones (NETW-2704 y NETW-2705 traen aviso Y sugerencia).
   ok(mac.length === 16, `18 entradas → 16 findings (2 fusiones)`, `salieron ${mac.length}`);
 
-  // Ninguna entrada se pierde. Desde que el título se traduce (lib/lynis-i18n.js), el texto
-  // ORIGINAL de Lynis vive en la evidencia —"Texto original de Lynis: …"—, así que la búsqueda
-  // mira los tres campos. La garantía es la misma: ninguna entrada del .dat desaparece.
+  // Ninguna entrada se pierde; el texto original va en la evidencia, por eso se miran tres campos.
   const textos = mac.map((f) => `${f.title}\n${f.evidence || ""}\n${f.fix || ""}`).join("\n");
   const perdidas = [...macRaw.warnings, ...macRaw.suggestions]
     .filter((e) => !textos.includes(e.description));
@@ -81,8 +71,7 @@ if (!macRaw) {
      `las ${entries} entradas del .dat llegan al payload`,
      perdidas.map((e) => e.id).join(", "));
 
-  // FILE-6310 aparece 3 veces con la MISMA descripción: solo el campo 3 las
-  // distingue. Con el ID como clave colapsaban en una.
+  // FILE-6310 aparece 3 veces con la misma descripción; solo el campo 3 las distingue.
   const file6310 = byControl(mac, "FILE-6310");
   ok(file6310.length === 3, "FILE-6310 ×3 no colapsa", `salieron ${file6310.length}`);
   const detalles = file6310.map((f) => f.detail).sort();
@@ -100,13 +89,10 @@ if (!macRaw) {
     const f = netw2704[0];
     ok(f.lynisType === "warning", "la fusión conserva el tipo aviso");
     ok(/does not respond/i.test(f.evidence), "la evidencia es el AVISO", f.evidence);
-    // El remedio de Lynis pasó del `fix` a la EVIDENCIA. Motivo: llega en inglés y el bloque de
-    // "Pasos de Resolución" es texto de LoCoAudit, en castellano. No se pierde nada — sigue
-    // entero, y ahora etiquetado como lo que es: una sugerencia del propio Lynis.
+    // El remedio de Lynis (en inglés) va en la evidencia, etiquetado como sugerencia de Lynis.
     ok(/Sugerencia original de Lynis: Check connection to this nameserver/i.test(f.evidence || ""),
        "el remedio del mismo control se conserva en la evidencia, etiquetado", f.evidence);
-    // NETW-2704 está marcado como control que NO admite acción: que el remedio le montara un
-    // bloque de resolución contradecía el propio dato.
+    // NETW-2704 no admite acción, así que no lleva bloque de resolución.
     ok(f.noAction === true, "NETW-2704 se marca como control sin acción posible");
     ok(!f.fix, "y por tanto no emite pasos de resolución", JSON.stringify(f.fix));
     ok(!!f.primaryUrl, "pero sí la ficha oficial del control", f.primaryUrl);
@@ -124,8 +110,7 @@ if (!macRaw) {
   // El título es legible, no el código.
   ok(mac.every((f) => !/^Lynis:/.test(f.title)),
      "ningún título empieza por el código del control");
-  // El título viene ahora del diccionario de lib/lynis-i18n.js, indexado por ID de control. El
-  // original en inglés no se pierde: sigue en la evidencia, y `translated` dice cuál es cuál.
+  // El título sale de lib/lynis-i18n.js; el original sigue en la evidencia y `translated` lo indica.
   ok(auth && auth.title === "No hay ningún módulo PAM de robustez de contraseñas instalado: nada impide poner una contraseña trivial",
      "el título es la descripción del control, traducida", auth && auth.title);
   ok(auth && auth.translated === true, "y marcado como traducido");
@@ -168,9 +153,7 @@ if (!archRaw) {
   const auth9286 = byControl(arch, "AUTH-9286");
   ok(auth9286.length >= 2,
      "AUTH-9286 aparece más de una vez y no colapsa", `salieron ${auth9286.length}`);
-  // La traducción se indexa por ID, así que dos instancias del MISMO control comparten texto.
-  // Lo que las distingue —el detalle, o la descripción original— se añade entre paréntesis, y
-  // solo cuando el control se repite: si no, cada tarjeta parecía un duplicado de la otra.
+  // Si un control se repite, lo que distingue cada instancia va entre paréntesis.
   ok(new Set(auth9286.map((f) => f.title)).size === auth9286.length,
      "cada AUTH-9286 sigue siendo distinguible por su título",
      auth9286.map((f) => f.title).join(" | "));
@@ -204,10 +187,7 @@ if (!archRaw) {
     skipped++;
   }
 
-  // Campo 4 SIN prefijo: en este .dat aparecen dos valores de prosa suelta
-  // ("Install a tool like rkhunter…", "Change sysctl value or disable test
-  // (skip-test=KRNL-6000:<sysctl-key>)"). El segundo lleva dos puntos dentro,
-  // así que sirve de prueba de que no basta con buscar ':' para decidir.
+  // Campo 4 sin prefijo: uno de los valores lleva ':' dentro, así que no basta con buscarlo.
   const sinPrefijo = (archRaw.suggestions || []).filter(
     (e) => e.solution && !/^[a-z]+:/.test(e.solution)
   );
@@ -217,8 +197,7 @@ if (!archRaw) {
      "solo el token conocido produce actionType; la prosa suelta se descarta",
      arch.filter((f) => f.actionType).map((f) => f.control).join(", "));
 
-  // Toda entrada cae en un grupo con etiqueta: si aparece un prefijo nuevo,
-  // este test lo saca a la luz en vez de dejarlo en el cajón genérico.
+  // Toda entrada cae en un grupo con etiqueta; un prefijo nuevo hace fallar el test.
   const sinEtiqueta = arch.filter((f) => f.subcategory === "Otros controles de Lynis");
   ok(sinEtiqueta.length === 0,
      "ningún control cae en el cajón 'Otros controles de Lynis'",

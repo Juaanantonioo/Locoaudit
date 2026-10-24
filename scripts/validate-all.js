@@ -1,18 +1,15 @@
 "use strict";
 
 /**
- * validate-all.js — Validación end-to-end de los tres dashboards: siempre las mismas comprobaciones, en el mismo orden,
- * con un mensaje que dice qué criterio cayó y en qué dashboard.
+ * validate-all.js — Validación end-to-end de los tres dashboards; indica qué criterio falla y dónde.
  *
  *   node scripts/validate-all.js              # todo
  *   node scripts/validate-all.js --static     # solo lo que no necesita navegador
  *   node scripts/validate-all.js --only host  # un dashboard
  *   node scripts/validate-all.js --keep       # no parar Node-RED/Chrome al terminar
  *
- * El modo completo necesita Node-RED con los nodos de LoCoAudit resolubles, Chrome (contraste e impresión) y las
- * herramientas de cada nodo (trivy, lynis, nmap, docker); lo que falte da un dashboard con menos datos, no un fallo.
- * Levanta su PROPIO Node-RED en un userDir temporal con una copia de examples/flows.json y nunca escribe en ~/.node-red.
- * Exit code 0 solo si TODOS los criterios pasan.
+ * El modo completo necesita Node-RED, Chrome y las herramientas de cada nodo (si falta alguna, hay menos datos, no fallo).
+ * Usa su propio Node-RED en un userDir temporal y nunca escribe en ~/.node-red. Sale con 0 solo si todo pasa.
  */
 
 const { execFileSync, spawn } = require("child_process");
@@ -73,18 +70,10 @@ function bloqueTests() {
   reg("", `suite completa (${tests.length} tests)`, malos.length === 0, malos.length ? "fallan: " + malos.join(", ") : "");
 }
 
-// Emoji, fallbacks escondidos y hex sueltos. El generador de respaldo
-// (_buildHtmlReportFallback) es un documento aparte, con su propio CSS, y queda fuera.
+// Emoji, fallbacks escondidos y hex sueltos (fuera queda _buildHtmlReportFallback, con su propio CSS).
 const RE_EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{2705}\u{2713}\u{2714}\u{25B2}\u{25BC}\u{25B8}\u{25BE}\u{25A0}\u{2715}]/u;
 
-/**
- * Quita comentarios sustituyéndolos por espacios, para que las posiciones y los
- * números de línea no se muevan. Sin esto, un comentario que CITA lo que se retiró
- * —"antes era var(--accent, #7C3AED)", "el ▲/▼ de texto anterior"— se cuenta como
- * una infracción, y el runner acaba señalando su propia documentación.
- * Reconocer el comentario por cómo empieza la línea no vale: la cita suele estar en
- * la segunda o tercera línea del bloque.
- */
+/** Sustituye los comentarios por espacios (conserva posiciones) para no contar citas como infracciones. */
 function sinComentarios(txt) {
   const blanco = (m) => m.replace(/[^\n]/g, " ");
   return txt
@@ -119,14 +108,12 @@ function bloqueHigiene(d) {
   reg(d.id, "cero emoji", lineasEmoji.length === 0,
       lineasEmoji.length ? "líneas " + lineasEmoji.map(([n]) => n).join(", ") : "");
 
-  // var(--x, fallback): un token sin declarar pinta su fallback y no aparece en ningún
-  // :root, así que no hay dónde verlo.
+  // var(--x, fallback): un token sin declarar pinta su fallback sin que se note.
   const fb = [...t.limpioCss.matchAll(/var\(\s*(--[a-z0-9-]+)\s*,\s*[^)]+\)/g)];
   reg(d.id, "cero var(--x, fallback)", fb.length === 0,
       fb.length ? fb.map((m) => m[1]).join(", ") : "");
 
-  // Hex sueltos fuera del <style> (atributos SVG y cadenas JS) y fuera del generador
-  // de respaldo, que es un documento aparte con su propio CSS.
+  // Hex sueltos fuera del <style> (atributos SVG y cadenas JS), salvo en el generador de respaldo.
   const js = t.limpioAntes.replace(sinComentarios(t.fallback), "");
   const hex = [...js.matchAll(/#[0-9A-Fa-f]{6}\b|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+/g)];
   reg(d.id, "cero color a mano en JS/SVG", hex.length === 0,
@@ -134,9 +121,7 @@ function bloqueHigiene(d) {
 }
 
 // ═══ 2 · COHERENCIA ENTRE LOS TRES ═══════════════════════════════════════════
-// La comprobación que faltaba: nada vigilaba que los tres dashboards siguieran
-// pareciéndose. El pie de image se quedó con una anatomía propia (.footer, una línea
-// suelta) mientras host y network usaban .report-foot, y ningún test lo vio.
+// Los tres dashboards deben compartir la misma anatomía.
 
 const ESTRUCTURALES = [
   "lca-report-root", "lca-sprite", "header-card", "header-main", "header-aside",
@@ -147,12 +132,7 @@ const ESTRUCTURALES = [
 const NIVELES_AVISO = ["lvl-1", "lvl-2", "lvl-3", "is-ok", "is-warn", "is-info", "is-neutral"];
 const ORDEN = ["header-card", "report-foot"];   // el esqueleto que los tres comparten
 
-/**
- * Frontera de nombre de clase. `\b` NO vale: el guion es un carácter de no-palabra,
- * así que /\.report-foot\b/ casa dentro de `.report-foot-item` y un renombrado de
- * `.report-foot` pasa desapercibido. Comprobado: renombrando esa regla el criterio
- * seguía en verde.
- */
+/** Frontera de nombre de clase; `\b` no sirve porque el guion no es carácter de palabra. */
 function claseRe(nombre) {
   return new RegExp("\\." + nombre.replace(/[-]/g, "\\-") + "(?![\\w-])");
 }
@@ -252,11 +232,7 @@ async function esperarHttp(url, ms) {
   return false;
 }
 
-/**
- * Ejecuta una expresión dentro de una página, vía scripts/cdp.js.
- * `navegar: false` evalúa sobre la página ya abierta: es lo que permite sondear en
- * bucle sin reiniciar el componente en cada vuelta.
- */
+/** Evalúa una expresión en una página vía cdp.js; `navegar: false` usa la página ya abierta. */
 function enPagina(url, ficheroExpr, opts) {
   const o = opts || {};
   return sh(process.execPath, [path.join("scripts", "cdp.js"), url, ficheroExpr], {
@@ -284,12 +260,7 @@ async function lanzarAuditoria(d, flows) {
   return inj.id;
 }
 
-/**
- * Servidor estático mínimo, para imprimir por HTTP.
- * `listen` es ASÍNCRONO: esperarlo con un bucle síncrono no funciona, porque el bucle
- * de eventos no llega a correr y `address()` se queda en null para siempre. El puerto
- * salía 0 y Chrome se colgaba intentando abrir http://127.0.0.1:0/.
- */
+/** Servidor estático mínimo para imprimir por HTTP; `listen` es asíncrono y se espera con await. */
 function servirDirectorio(dir) {
   return new Promise((res) => {
     const server = http.createServer((req, resp) => {
@@ -304,17 +275,10 @@ function servirDirectorio(dir) {
   });
 }
 
-/**
- * Imprime el informe a PDF dos veces —con la regla @media print y sin ella— y compara
- * el número de páginas. Es la única forma de comprobar que la regla hace algo: si las
- * fichas no se abrieran al imprimir, los dos recuentos saldrían iguales y el informe
- * en papel llegaría con todo plegado sin que fallara nada más.
- */
+/** Imprime el informe a PDF con y sin la regla @media print y compara el número de páginas. */
 async function medirImpresion(d, url) {
   const dir = path.join(tmp, "print-" + d.id);
-  // El informe se DESCARGA a disco en vez de venir por el puente: con la auditoría de
-  // imagen son megabytes, y devolver eso como valor por el protocolo de DevTools lo
-  // mete en un JSON dentro de otro JSON que llega cortado.
+  // El informe se descarga a disco: por DevTools llegaría cortado.
   let origen;
   try {
     origen = sh(process.execPath, [path.join("scripts", "cdp-download.js"), url, dir], {
@@ -331,14 +295,9 @@ async function medirImpresion(d, url) {
 
   const chromeBin = process.env.CHROME_BIN ||
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-  // Servido por HTTP y no como file://: Chrome headless se QUEDA COLGADO imprimiendo
-  // un file:// (comprobado, no vuelve nunca), y el timeout se leería como "la regla
-  // no funciona" cuando el problema es el protocolo.
+  // Por HTTP y no file://, porque Chrome headless se cuelga imprimiendo un file://.
   const srv = await servirDirectorio(dir);
-  // Chrome se lanza de forma ASÍNCRONA. Con execFileSync el proceso se bloquea, el
-  // bucle de eventos no corre, y el servidor de arriba —que vive en este mismo
-  // proceso— no puede contestar: Chrome espera una página que nunca llega y la espera
-  // es mutua. Un subproceso síncrono mata a cualquier servidor que viva con él.
+  // Chrome se lanza en asíncrono: uno síncrono bloquearía el servidor de este mismo proceso.
   const paginas = (nombre) => new Promise((res) => {
     const pdf = path.join(dir, nombre + ".pdf");
     const hijo = spawn(chromeBin, ["--headless=new", "--disable-gpu", "--no-pdf-header-footer",
@@ -381,10 +340,7 @@ async function bloqueVivo(fuentes) {
     const inj = await lanzarAuditoria(d, flows);
     if (!inj) { reg(d.id, "auditoría real", false, "no hay inject cableado en flows.json"); continue; }
 
-    // Espera activa. Se navega UNA vez y a partir de ahí se sondea sobre la misma
-    // página: cada navegación reinicia el componente y tira el websocket por el que
-    // llega el payload, así que sondear navegando impide que llegue lo que se espera.
-    // Una auditoría de imagen con Trivy sobre decenas de imágenes tarda minutos.
+    // Se navega una vez y se sondea la misma página: navegar de nuevo tira el websocket.
     let listo = false;
     const fin = Date.now() + 20 * 60 * 1000;
     try { listo = JSON.parse(enPagina(url, estado, { waitMs: 9000 })).done; } catch (_) {}

@@ -1,16 +1,12 @@
 "use strict";
 
-/**
- * Quién tiene abierto cada puerto, con lsof, netstat y tasklist. "El 3306 está abierto" es una
- * alerta; "lo tiene abierto mysqld", o peor, "python3", ya es algo que se puede accionar. Si el
- * comando falla, el puerto sale sin enriquecer: este módulo nunca tumba al nodo.
- */
+// Qué proceso tiene abierto cada puerto (lsof, netstat, tasklist). Si falla, el puerto sale sin enriquecer.
 
 const { execCommand, commandExists } = require("../../../lib/executor");
 
 const ENRICH_TIMEOUT_MS = 5000;
 
-/** Salida de `lsof -i TCP:<port> -n -P -sTCP:LISTEN`: cabecera y, debajo, los procesos. */
+// Salida de `lsof -i TCP:<port> -n -P -sTCP:LISTEN`: cabecera y procesos debajo.
 function parseLsof(stdout) {
   const lines = stdout.trim().split("\n").filter(Boolean);
   if (lines.length < 2) return { pid: null, process: null, binds: [] };
@@ -19,8 +15,7 @@ function parseLsof(stdout) {
   const processName = parts[0] || null;
   const pid = parts[1] ? parseInt(parts[1], 10) : null;
 
-  // La columna NAME de cada LISTEN es "dirección:puerto (LISTEN)", y esa dirección separa el
-  // servicio solo-local del expuesto. Un mismo servicio puede escuchar en varias, IPv4 e IPv6.
+  // La dirección de escucha separa lo solo-local de lo expuesto; puede haber varias (IPv4 e IPv6).
   const binds = [];
   for (const line of lines.slice(1)) {
     const m = line.match(/(\S+):(?:\d+|\w+)\s+\(LISTEN\)/);
@@ -34,13 +29,13 @@ function parseLsof(stdout) {
   };
 }
 
-/** Loopback, en todas las formas que escriben lsof y netstat: localhost, 127.0.0.1, [::1]. */
+// Loopback tal como lo escriben lsof y netstat: localhost, 127.x, [::1].
 function isLoopbackBind(addr) {
   const a = String(addr || "").replace(/^\[|\]$/g, "").toLowerCase();
   return a === "localhost" || a === "::1" || /^127\./.test(a);
 }
 
-/** netstat -ano en Windows: "  TCP  0.0.0.0:80  0.0.0.0:0  LISTENING  1234". */
+// netstat -ano en Windows: "  TCP  0.0.0.0:80  0.0.0.0:0  LISTENING  1234".
 function parseNetstatPid(stdout, port) {
   const portStr = `:${port}`;
   for (const line of stdout.split("\n")) {
@@ -53,7 +48,7 @@ function parseNetstatPid(stdout, port) {
   return null;
 }
 
-/** Las direcciones de las líneas LISTENING, sin el sufijo :puerto. */
+// Direcciones de las líneas LISTENING, sin el :puerto.
 function parseNetstatBinds(stdout, port) {
   const portStr = `:${port}`;
   const binds = [];
@@ -69,7 +64,7 @@ function parseNetstatBinds(stdout, port) {
   return binds;
 }
 
-/** tasklist en CSV: la fila de datos va debajo de la cabecera y abre con el nombre del proceso. */
+// tasklist en CSV: el nombre del proceso es el primer campo de la segunda línea.
 function parseTasklist(stdout) {
   const lines = stdout.trim().split("\n").filter(Boolean);
   if (lines.length < 2) return null;
@@ -77,7 +72,7 @@ function parseTasklist(stdout) {
   return firstField ? firstField.replace(/"/g, "").trim() || null : null;
 }
 
-/** macOS y Linux, con lsof. */
+// macOS y Linux, con lsof.
 async function enrichUnix(port) {
   try {
     const stdout = await execCommand(
@@ -89,8 +84,7 @@ async function enrichUnix(port) {
     return {
       pid:       pid      ?? undefined,
       process:   procName ?? undefined,
-      // localOnly solo si todas las direcciones son loopback. Sin datos de bind queda
-      // undefined: no se sabe, no se afirma.
+      // Sin datos de bind queda undefined: no se afirma lo que no se sabe.
       bind:      binds.length > 0 ? binds.join(", ") : undefined,
       localOnly: binds.length > 0 ? binds.every(isLoopbackBind) : undefined,
     };
@@ -99,7 +93,7 @@ async function enrichUnix(port) {
   }
 }
 
-/** Windows, con netstat para el PID y tasklist para el nombre. */
+// Windows: netstat para el PID y tasklist para el nombre.
 async function enrichWindows(port) {
   try {
     const netstatOut = await execCommand(
@@ -128,79 +122,63 @@ async function enrichWindows(port) {
   }
 }
 
-/**
- * Qué cortafuegos hay y si está activo, todo sin sudo: ufw se lee de su fichero de configuración,
- * firewalld y nftables preguntando por su estado, y macOS y Windows con su comando propio. Nunca
- * lanza: ante cualquier fallo, { name: null, active: false }.
- */
+// Cortafuegos presente y activo, sin sudo. Nunca lanza: si no se puede consultar, active es null y va el error.
 async function detectFirewall(platform) {
   const plat = platform || process.platform;
   const FW_TIMEOUT_MS = 4000;
 
+  // Algunas órdenes salen con error al estar apagado ("not running", "inactive"): esa salida sí es un dato.
+  async function consultar(name, cmd, leer) {
+    let out;
+    try {
+      out = await execCommand(cmd, FW_TIMEOUT_MS);
+    } catch (err) {
+      // firewalld avisa de "not running" por stderr.
+      const active = leer(`${err.stdout || ""}\n${err.stderr || ""}`, true);
+      if (active !== null) return { name, active };
+      return { name, active: null, error: String((err.stderr || err.message || "sin detalle")).trim().slice(0, 200) };
+    }
+    const active = leer(String(out), false);
+    return active === null
+      ? { name, active: null, error: "respuesta no reconocida" }
+      : { name, active };
+  }
+
   try {
     if (plat === "linux") {
       if (await commandExists("ufw")) {
-        try {
-          const conf = await execCommand("grep -i '^ENABLED' /etc/ufw/ufw.conf", FW_TIMEOUT_MS);
-          return { name: "ufw", active: /yes/i.test(conf) };
-        } catch (_) {
-          return { name: "ufw", active: false };
-        }
+        return await consultar("ufw", "grep -i '^ENABLED' /etc/ufw/ufw.conf",
+          (s) => (/ENABLED\s*=\s*"?yes/i.test(s) ? true : /ENABLED\s*=\s*"?no/i.test(s) ? false : null));
       }
       if (await commandExists("firewall-cmd")) {
-        try {
-          const st = await execCommand("firewall-cmd --state", FW_TIMEOUT_MS);
-          return { name: "firewalld", active: /running/i.test(st) };
-        } catch (_) {
-          return { name: "firewalld", active: false };
-        }
+        return await consultar("firewalld", "firewall-cmd --state",
+          (s) => (/not running/i.test(s) ? false : /running/i.test(s) ? true : null));
       }
       if (await commandExists("nft")) {
-        try {
-          const st = await execCommand("systemctl is-active nftables", FW_TIMEOUT_MS);
-          return { name: "nftables", active: st.trim() === "active" };
-        } catch (_) {
-          return { name: "nftables", active: false };
-        }
+        return await consultar("nftables", "systemctl is-active nftables",
+          (s) => (s.trim() === "active" ? true : /^(inactive|failed|unknown|activating|deactivating)$/.test(s.trim()) ? false : null));
       }
       return { name: null, active: false };
     }
 
     if (plat === "darwin") {
-      try {
-        const st = await execCommand(
-          "/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate",
-          FW_TIMEOUT_MS
-        );
-        return { name: "alf", active: /enabled/i.test(st) };
-      } catch (_) {
-        return { name: "alf", active: false };
-      }
+      return await consultar("alf", "/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate",
+        (s) => (/enabled/i.test(s) ? true : /disabled/i.test(s) ? false : null));
     }
 
     if (plat === "win32") {
-      try {
-        const st = await execCommand("netsh advfirewall show currentprofile state", FW_TIMEOUT_MS);
-        return { name: "windows", active: /\bON\b/i.test(st) || /activad/i.test(st) };
-      } catch (_) {
-        return { name: "windows", active: false };
-      }
+      return await consultar("windows", "netsh advfirewall show currentprofile state",
+        (s, conError) => (/\bON\b/i.test(s) || /activad/i.test(s) ? true
+          : !conError && s.trim() ? false : null));
     }
-  } catch (_) { /* nunca bloquear la auditoría por esto */ }
+  } catch (err) {
+    return { name: null, active: null, error: String((err && err.message) || err).slice(0, 200) };
+  }
 
   return { name: null, active: false };
 }
 
-// ── API pública ───────────────────────────────────────────────────────────────
-
-/**
- * Enriquece un array de puertos abiertos con información de proceso.
- * Los puertos se procesan en paralelo con Promise.allSettled; si un puerto
- * falla, el resto continúa y ese puerto se devuelve sin enriquecer.
- *
- * @param {PortResult[]} openPorts  Array de puertos devuelto por runNmap()
- * @returns {Promise<EnrichedPort[]>}
- */
+// En paralelo con allSettled: el puerto que falle se devuelve sin enriquecer.
 async function enrichPorts(openPorts) {
   if (!Array.isArray(openPorts) || openPorts.length === 0) return [];
 

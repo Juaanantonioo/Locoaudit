@@ -1,12 +1,7 @@
 "use strict";
 
 /**
- * test-disk-dedupe.js — Una entrada por SISTEMA DE FICHEROS, no por montaje.
- *
- * En btrfs el layout por defecto (CachyOS, Fedora, openSUSE) monta 6-8
- * subvolúmenes desde el mismo dispositivo. `df` repite la misma fila una vez
- * por montaje, así que `fromDisk()` generaba un HOST-DISK-* por subvolumen:
- * el mismo disco contado 7 veces en la cabecera y en el donut del dashboard.
+ * test-disk-dedupe.js — Una entrada por sistema de ficheros, no por montaje (subvolúmenes btrfs).
  *
  * Comprueba, contra salidas reales de `df` (ver test/fixtures/df/README.md):
  *   1. btrfs real: 7 filas del mismo dispositivo → 1 entrada.
@@ -58,8 +53,7 @@ console.log("\n── 2 · CachyOS (btrfs + tmpfs de systemd) ──────
 
 const cachy = parseDfOutput(read("linux-btrfs-cachyos.txt"), true);
 
-// Recuento del comportamiento ANTERIOR: una entrada por montaje, sin filtrar
-// pseudo-filesystems — exactamente lo que hacía el parser previo.
+// Recuento de referencia: una entrada por montaje, sin filtrar pseudo-filesystems.
 function countLegacy(stdout) {
   return stdout.trim().split("\n").slice(1).filter((line) => {
     const p = line.trim().split(/\s+/);
@@ -107,8 +101,7 @@ ok(pools.length === 2, `2 pools → ${pools.length} entradas (${mounts(pools)})`
 const rpool = pools.find((d) => d.device.startsWith("rpool"));
 ok(rpool && rpool.mounts.length === 4,
    `rpool agrupa sus 4 datasets (${rpool && rpool.mounts.join(" ")})`);
-// El usado se SUMA (cada dataset tiene datos propios); el libre es el del pool,
-// idéntico en todas las filas, así que se toma una sola vez.
+// El usado se suma por dataset; el libre es el del pool y se toma una vez.
 ok(rpool && rpool.usedGB === 82.07,
    `rpool usado = suma de los datasets (${rpool && rpool.usedGB} GB)`, "esperado 82.07");
 ok(rpool && rpool.freeGB === 341.05,

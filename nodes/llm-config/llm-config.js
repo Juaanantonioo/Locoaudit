@@ -1,10 +1,6 @@
 "use strict";
 
-/**
- * Nodo de configuración: guarda la conexión con Ollama y registra /locoaudit/chat sobre el
- * servidor que ya tiene Node-RED, sin levantar otro. El endpoint solo conversa con el modelo,
- * nunca ejecuta comandos, y toma la conexión del primer llm-config desplegado.
- */
+/** Nodo de configuración de Ollama. Registra /locoaudit/chat en el servidor de Node-RED; el chat solo conversa, nunca ejecuta comandos. */
 
 const {
   chatWithLLM,
@@ -35,8 +31,7 @@ module.exports = function (RED) {
     // null mientras validateModel() no haya terminado: sin comprobar, no "sin modelo".
     node.modelCheck = null;
 
-    // Mismo principio que commandExists(): el modelo no se da por disponible. Comprobarlo al
-    // desplegar falla aquí, con un mensaje claro, y no en el primer chat del usuario.
+    // Como commandExists(): el modelo se comprueba al desplegar, no en el primer chat.
     validateModel(node);
 
     // Una sola vez por proceso: cada deploy recrea los nodos y duplicaría la ruta.
@@ -45,8 +40,7 @@ module.exports = function (RED) {
 
   RED.nodes.registerType("llm-config", LlmConfigNode);
 
-  // El botón "Probar conexión" del panel. Va sobre httpAdmin y pide permiso de lectura de flujos,
-  // como cualquier utilidad del editor, y devuelve el mismo diagnóstico que usa el runtime.
+  // Botón "Probar conexión" del editor, con permiso de lectura de flujos.
   RED.httpAdmin.get(
     "/locoaudit/llm/check",
     RED.auth.needsPermission("flows.read"),
@@ -59,9 +53,7 @@ module.exports = function (RED) {
     }
   );
 
-  // El selector del editor. Al contrario que /check no necesita modelo: sirve para descubrir
-  // cuáles hay. Usa la URL de la query, la que está en el formulario en ese momento y no la del
-  // nodo desplegado: si el usuario cambia de servidor, la lista tiene que ser la de ese.
+  // Selector de modelos del editor: usa la URL del formulario, no la del nodo desplegado.
   RED.httpAdmin.get(
     "/locoaudit/llm/models",
     RED.auth.needsPermission("flows.read"),
@@ -72,11 +64,7 @@ module.exports = function (RED) {
   );
 };
 
-/**
- * Contra /api/tags, con el resultado al log de Node-RED. Los dos fallos van por separado a
- * propósito: "Ollama no responde" y "el modelo no está" se arreglan de forma distinta, y
- * confundirlos manda al usuario a depurar lo que no es.
- */
+/** Valida el modelo al desplegar. "Ollama no responde" y "el modelo no está" se avisan por separado. */
 async function validateModel(node) {
   const result = await checkModel({ ollamaUrl: node.ollamaUrl, model: node.model });
   node.modelCheck = result;
@@ -102,9 +90,7 @@ function registerChatEndpoint(RED) {
   }
   RED.__locoauditChatEndpoint = true;
 
-  // Con esto el frontend decide si enseña el botón de chat, que la IA es opcional. `available`
-  // significa "hay un llm-config desplegado" y no se pone a false porque falte el modelo: al
-  // ocultar el chat, el usuario se quedaría sin saber por qué. El diagnóstico viaja aparte.
+  // El frontend decide aquí si muestra el chat. `available` no depende del modelo: el fallo va aparte.
   RED.httpNode.get("/locoaudit/chat/status", function (req, res) {
     const cfg = findLlmConfig(RED);
     if (!cfg) {
@@ -126,8 +112,7 @@ function registerChatEndpoint(RED) {
       const finding = body.finding || {};
       const question = body.question;
       const history = Array.isArray(body.history) ? body.history : [];
-      // Sin saber si es imagen, host o red, y en host de qué SO, el modelo da soluciones que no
-      // valen. Lo manda el cliente desde payload.auditType y payload.host.platform.
+      // Tipo de auditoría y plataforma, para que el modelo no proponga soluciones que no valen.
       const context = { auditType: body.auditType, platform: body.platform };
 
       if (!question || typeof question !== "string") {
@@ -155,8 +140,7 @@ function registerChatEndpoint(RED) {
         return;
       }
 
-      // Se revalida en cada turno, que es un GET local de milisegundos, en vez de fiarse del
-      // despliegue: tras un `ollama pull` el chat debe funcionar sin redesplegar el flujo.
+      // Se revalida en cada turno: tras un `ollama pull` el chat funciona sin redesplegar.
       const check = await checkModel({ ollamaUrl: cfg.ollamaUrl, model: cfg.model });
       if (!check.ok) {
         cfg.modelCheck = check;
@@ -165,16 +149,14 @@ function registerChatEndpoint(RED) {
       }
       cfg.modelCheck = check;
 
-      // Primer turno o seguimiento lo decide el servidor por el historial recibido, no un flag
-      // del cliente. El primero lleva plantilla y el finding entero; los siguientes, un prompt
-      // conversacional sin repetir nada de eso, que ya está en el historial.
+      // Primer turno o seguimiento lo decide el servidor por el historial, no el cliente.
       const isFirstTurn = history.length === 0;
       const systemPrompt = isFirstTurn
         ? buildSystemPrompt(finding, context)
         : buildFollowupSystemPrompt(finding, context);
       const messages = [...history, { role: "user", content: question }];
 
-      console.log(
+      cfg.log(
         `[locoaudit/chat] turno=${isFirstTurn ? "1-apertura" : "seguimiento"} ` +
           `history=${history.length} auditType=${context.auditType || "(derivado)"} ` +
           `platform=${context.platform || "?"} · system(1ª línea)="${systemPrompt.split("\n")[0]}"`

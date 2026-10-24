@@ -1,13 +1,8 @@
 "use strict";
 
 /**
- * build-dashboards.js — Sincroniza el generador del export en los 3 ui_template.
- *
- * Dashboard 2.0 solo acepta `export default {…}` en el <script> (un IIFE deja el widget en blanco), así que el generador
- * va como CUERPO del método `_buildHtmlReport()` de cada componente. Fuente única: lib/snapshot-body.txt.
- * Idempotente, en cada template: inserta el cuerpo entre // LCA:SNAPSHOT:START … // LCA:SNAPSHOT:END (con try/catch a
- * _buildHtmlReportFallback), garantiza el sentinel LCA-STYLE-DASH:<nodo> en el <style> y la clase lca-report-root, y
- * elimina cualquier IIFE de export de una versión anterior.
+ * build-dashboards.js — Copia lib/snapshot-body.txt como cuerpo de _buildHtmlReport() en los 3 ui_template.
+ * Idempotente: también asegura el sentinel LCA-STYLE-DASH y la clase lca-report-root.
  *
  *   node scripts/build-dashboards.js          → aplica
  *   node scripts/build-dashboards.js --check  → solo verifica (no escribe)

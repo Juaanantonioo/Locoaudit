@@ -1,17 +1,8 @@
 "use strict";
 
 /**
- * test-lynis-skip-kind.js — Naturaleza de un `skipped` de lynis.js.
- *
- * Mismo defecto que tenía trivy-fs.js antes de `kind`: el gate de audit-host.js
- * trataba CUALQUIER lynis.skipped como fatal y abortaba con done(err) antes del
- * send(msg), así que el dashboard no recibía payload y se quedaba enseñando la
- * ejecución anterior. Y el mensaje decía "no está instalado" en los cuatro
- * casos, mandando al usuario a reinstalar una herramienta que ya tiene.
- *
- * El caso que lo hacía visible: en Windows sin WSL no hay binario de Lynis, así
- * que el módulo caía en "not installed" y abortaba la auditoría entera — siendo
- * un límite conocido y documentado, no un olvido de instalación.
+ * test-lynis-skip-kind.js — Naturaleza (`kind`) de un `skipped` de lynis.js.
+ * Un Lynis omitido no aborta la auditoría y el motivo distingue "no instalado" de "no soportado".
  *
  * Uso:
  *   node test/manual/test-lynis-skip-kind.js
@@ -54,9 +45,7 @@ for (const forma of FORMAS) {
 
 console.log("\n── 2 · 'unsupported' se produce de verdad, no solo se etiqueta ───\n");
 
-// El caso no existía en el módulo: en win32 se caía en commandExists → "not
-// installed". La comprobación de plataforma va ANTES, así que hay que poder
-// obtenerlo sin tener Lynis instalado ni estar en Windows.
+// La comprobación de plataforma va antes de commandExists; se prueba sin Lynis ni Windows.
 const realPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 Object.defineProperty(process, "platform", { value: "win32", configurable: true });
 
@@ -73,8 +62,7 @@ runLynis()
 
     console.log("\n── 3 · Un skipped se declara, no desaparece ──────────────────────\n");
 
-    // Antes devolvía []: un Lynis omitido era indistinguible de un sistema sin
-    // hallazgos para todo el que solo lea findings[] (el chat, el informe).
+    // Un Lynis omitido deja rastro en findings[], para no confundirse con "sin hallazgos".
     for (const forma of FORMAS) {
       const res2 = Object.assign({ skipped: true }, forma);
       const fs2 = fromLynisRaw(res2, "win32", null);

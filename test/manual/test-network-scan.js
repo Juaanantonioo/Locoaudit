@@ -80,8 +80,7 @@ async function runPass(label, openPorts, normSource) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  // Nmap es el único escáner del nodo: ya no hay comparativa contra el escáner
-  // nativo (port-scanner.js se eliminó al pasar Nmap a requisito).
+  // Nmap es el único escáner del nodo.
   const nmapResult = await runNmap({ target: "127.0.0.1", timeout: 240000 });
 
   if (nmapResult.skipped && !nmapResult.inconclusive) {

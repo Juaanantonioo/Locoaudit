@@ -1,25 +1,18 @@
 "use strict";
 
-/**
- * Nodo audit-image, con dos modos: el local recorre lo que haya en el daemon, y el específico
- * escanea las referencias que le den, estén o no en el equipo. Sin Docker el nodo no propaga el
- * error: sale con un IMG-DOCKER-OFF informativo.
- */
+// Nodo audit-image. Modo local: imágenes del daemon. Modo específico: las referencias indicadas.
+// Sin Docker no lanza error: emite un IMG-DOCKER-OFF informativo.
 
 const os = require("os");
 const { getDockerInfo }      = require("./modules/docker-api");
 const { auditDockerConfig }  = require("./modules/config-audit");
-const { runTrivyImage }      = require("./modules/cve-checker");
+const { runTrivyImage, imageRef } = require("./modules/cve-checker");
 const { normalizeImage, buildSkippedChecksSummary } = require("../../lib/normalizer");
 const { summarize }          = require("../../lib/severity-map");
 const { createFinding }      = require("../../lib/finding-schema");
 const { commandExists }      = require("../../lib/executor");
 
-/**
- * La URL de Docker Hub que el usuario pega en el navegador, convertida en algo que entienda
- * `trivy image`: hub.docker.com/_/nginx → nginx, hub.docker.com/r/user/repo → user/repo. Si no
- * se puede parsear con confianza devuelve la referencia tal cual, sin romper nada.
- */
+// URL de Docker Hub a referencia de trivy (hub.docker.com/_/nginx → nginx). Si no encaja, se devuelve tal cual.
 function parseImageRef(ref) {
   if (!/^https?:\/\/hub\.docker\.com\//i.test(ref)) return ref;
   let m = ref.match(/hub\.docker\.com\/r\/([^/?#]+\/[^/?#]+)/i);
@@ -29,28 +22,30 @@ function parseImageRef(ref) {
   return ref;
 }
 
-/** El error crudo de Trivy, legible. El original se guarda entero en raw.trivy.failed. */
+// Error de Trivy en lenguaje claro; el original queda en raw.trivy.failed. El orden de las comprobaciones importa.
 function summarizeScanError(err) {
   const e = String(err || "");
   if (/^INVALID_REF:/.test(e)) {
     return "La referencia no tiene la forma de una imagen (registro/repositorio:tag o @sha256:digest) y no se ha escaneado. " +
            "Revisa que no lleve espacios ni otros caracteres, por ejemplo nginx:latest.";
   }
-  // Las causas de infraestructura van primero: el mensaje genérico "revisa el nombre" las tapaba.
+  if (/^NO_OS:/.test(e)) {
+    return "Trivy no ha reconocido el sistema operativo de la imagen ni ha encontrado paquetes que revisar, " +
+           "así que no se ha podido comprobar si tiene vulnerabilidades. No significa que esté limpia. " +
+           "Suele pasar con imágenes muy mínimas o con un sistema que Trivy no soporta.";
+  }
   if (/^MAXBUFFER:|maxBuffer/i.test(e)) {
     return "El informe del análisis es demasiado grande para procesarlo (imagen muy voluminosa con cientos de paquetes). " +
            "El límite de memoria ya se ha ampliado; si persiste, escanea la imagen directamente con 'trivy image <ref>'.";
   }
-  // El lock de la caché va antes que el timeout a propósito: su texto crudo lleva la palabra
-  // "timeout" y caería ahí, aconsejando subir un límite que no tiene nada que ver.
+  // Antes que el timeout: el error del lock también contiene "timeout".
   if (/^LOCK:|cache may be in use by another process|unable to initialize (fs )?cache/i.test(e)) {
     return "Trivy no pudo escanear esta imagen porque otro análisis estaba usando su caché al mismo tiempo " +
            "(Trivy solo admite un escaneo a la vez). LoCoAudit ya escanea las imágenes de una en una; " +
            "si ves este aviso, comprueba que no haya otro 'trivy' en marcha (otra auditoría de LoCoAudit " +
            "en paralelo o una terminal) y repite el escaneo.";
   }
-  // La caché de Trivy con dueño equivocado (se creó alguna vez con sudo): el análisis se cae al bajar la base de
-  // datos de Java, y el texto crudo lleva "failed to download" y acabaría en el mensaje de red.
+  // Caché creada con sudo; su error dice "failed to download" y si no acabaría en el de red.
   const perm = e.match(/(\/\S*?\/trivy)\/[^\s:]*: permission denied/i);
   if (perm) {
     return `Trivy no puede escribir en su caché (${perm[1]}): pertenece a otro usuario, normalmente porque alguna vez ` +
@@ -63,18 +58,16 @@ function summarizeScanError(err) {
   if (/no space left on device|disk quota exceeded/i.test(e)) {
     return "Sin espacio en disco para descargar la imagen. Libera espacio con 'docker image prune' y reintenta.";
   }
-  // El rate limit, antes que auth: su mensaje también contiene "denied".
+  // Antes que la autenticación: su mensaje también contiene "denied".
   if (/TOOMANYREQUESTS|toomanyrequests|429|rate limit/i.test(e)) {
     return "Límite de descargas del registro alcanzado (rate limit de Docker Hub). Inicia sesión con 'docker login' o reintenta más tarde.";
   }
-  // Y la autenticación antes que "no encontrada": con la imagen ausente en local y un registro
-  // que pide credenciales, el error trae los dos patrones a la vez, el "No such image" del
-  // daemon y el 401 del registro, y la causa real son las credenciales.
+  // Antes que "no encontrada": con registro privado el error trae también "No such image".
   if (/unauthorized|authentication required|access.*denied|denied:/i.test(e) || /\b401\b/.test(e)) {
     return "La imagen está en un registro privado que requiere autenticación ('docker login <registro>'). " +
            "LoCoAudit soporta imágenes públicas; los registros privados quedan como trabajo futuro.";
   }
-  // Antes que "no encontrada": el daemon tiene la imagen, pero le falta una capa y no la puede exportar.
+  // Antes que "no encontrada": la imagen está pero le falta una capa.
   if (/unable to export the image|content digest \S+: not found/i.test(e)) {
     return "La imagen está en Docker pero su copia local está incompleta: le falta una capa y no se puede leer. " +
            "Vuelve a descargarla con 'docker pull' o bórrala si ya no la usas.";
@@ -85,9 +78,7 @@ function summarizeScanError(err) {
   if (/no such host|dial tcp|network is unreachable|i\/o timeout|connection refused|TLS handshake/i.test(e)) {
     return "No se pudo contactar con el registro (problema de red o sin conexión).";
   }
-  // Para las causas sin catalogar, quitando el prefijo de log de trivy ("2026-…\tFATAL\tFatal
-  // error\trun error: "): son 40 caracteres de ruido que empujaban la causa fuera del recorte.
-  // Con el error del lock, el corte caía en "…cache may be in use" y se comía la explicación.
+  // Sin catalogar: se quita el prefijo de log de trivy para que la causa quepa en el recorte.
   const clean = e
     .replace(/^\S+\s+FATAL\s+Fatal error\s+/m, "")
     .replace(/^run error:\s*/, "");
@@ -95,10 +86,61 @@ function summarizeScanError(err) {
   return firstLine.slice(0, 400);
 }
 
-/**
- * A nivel de módulo porque lo usan los dos modos: el específico ya lo hacía, pero el local tiraba
- * `trivy.failed` en silencio y una imagen que fallaba desaparecía sin finding y sin contarse.
- */
+function plural(n, uno, varios) {
+  return `${n} ${n === 1 ? uno : varios}`;
+}
+
+// Sin análisis de CVE una imagen no puede darse por limpia: se dice que no se hizo y por qué.
+function cveSkippedFinding(trivy, rejectReason) {
+  let kind = trivy && trivy.kind;
+  let reason = trivy && trivy.reason;
+  if (rejectReason) {
+    kind = "error";
+    reason = rejectReason;
+  }
+  // "nothing-to-scan" no deja nada sin revisar y el fallo de todas ya tiene sus propios hallazgos.
+  if (!["not-installed", "disabled", "error"].includes(kind)) return null;
+  if (kind === "error" && !rejectReason) return null;
+
+  const fix = {
+    "not-installed": "Instala Trivy y vuelve a lanzar la auditoría: https://trivy.dev/",
+    "disabled":      "Activa el análisis de vulnerabilidades en las opciones del nodo si quieres revisar las imágenes.",
+    "error":         "Vuelve a lanzar la auditoría. Si se repite, comprueba que Trivy funciona con 'trivy --version'.",
+  }[kind];
+  return createFinding({
+    id:        "IMG-TRIVY-SKIP",
+    title:     "Vulnerabilidades de las imágenes: no se han analizado",
+    severity:  "info",
+    evidence:  `${String(reason || "sin detalle").trim()}. ` +
+               "Que no aparezcan CVE no significa que las imágenes no los tengan.",
+    fix,
+    category:  "image",
+    source:    "native",
+    isCommand: false,
+    skipped:   true,
+    kind,
+  });
+}
+
+// Consulta a Docker fallida: comprobación no realizada, no "sin resultados".
+function listFailedFinding(id, label, reason, checkCmd) {
+  return createFinding({
+    id,
+    title:     `${label}: no se ha podido comprobar`,
+    severity:  "info",
+    evidence:  `Docker no respondió al consultarlo: ${String(reason || "sin detalle").trim()}. ` +
+               "Que no aparezcan resultados de esta parte no significa que no los haya.",
+    fix:       "Vuelve a lanzar la auditoría. Si se repite, comprueba que el servicio de Docker responde.\n" +
+               `$ ${checkCmd}`,
+    category:  "image",
+    source:    "native",
+    isCommand: false,
+    skipped:   true,
+    kind:      "error",
+  });
+}
+
+// Un hallazgo por imagen fallida, en los dos modos, para que ninguna desaparezca sin avisar.
 function buildScanErrorFindings(failed) {
   return (failed || []).map((fa, i) =>
     createFinding({
@@ -106,12 +148,14 @@ function buildScanErrorFindings(failed) {
       title:    `No se pudo escanear la imagen «${fa.ref || "desconocida"}»`,
       severity: "info",
       evidence: summarizeScanError(fa.error),
-      // La causa concreta ya está en la evidencia: el fix remite a ella en vez de dar un
-      // consejo genérico que la contradiga.
+      // La causa concreta ya va en la evidencia.
       fix:      "Consulta el detalle del error arriba: indica la causa (tiempo de espera, tamaño, red, credenciales, caché ocupada o nombre) y cómo resolverla.",
       category: "image",
       source:   "trivy",
       image:    fa.ref || null,
+      // Cuenta como comprobación no realizada, no como imagen revisada.
+      skipped:  true,
+      kind:     "error",
     })
   );
 }
@@ -124,8 +168,7 @@ function buildImagePayload(findings, scanMeta, raw, scannedImages) {
     auditType: "image",
     host: { hostname: os.hostname(), platform: process.platform },
     scanMeta,
-    // Sale del informe de Trivy, igual en local que en remoto: es a lo que cae la tarjeta del
-    // dashboard cuando no hay metadatos de `docker images`, o sea con una imagen remota.
+    // El dashboard lo usa cuando no hay datos de `docker images` (imágenes remotas).
     scannedImages: Array.isArray(scannedImages) ? scannedImages : [],
     raw,
     timestamp: new Date().toISOString(),
@@ -144,14 +187,13 @@ module.exports = function (RED) {
       const scanMode     = config.scanMode || "local";
       const enableConfig = config.enableConfig !== false;
       const enableTrivy  = config.enableTrivy  !== false;
-      // Configurable porque una imagen de varios GB necesita descargarse antes de escanearse.
+      // Configurable porque una imagen grande tarda en descargarse.
       const imageTimeout = Math.min(1800, Math.max(30, parseInt(config.imageTimeout, 10) || 300)) * 1000;
 
       const startTime = Date.now();
 
       try {
-        // Modo específico: una lista separada por comas. `trivy image` se apaña solo, descarga
-        // del registro lo que no esté en local, y no necesita el daemon de Docker.
+        // Modo específico: lista separada por comas; trivy descarga lo que falte y no necesita el daemon.
         if (scanMode === "specific") {
           node.status({ fill: "blue", shape: "dot", text: "Auditando imágenes..." });
 
@@ -175,8 +217,7 @@ module.exports = function (RED) {
                 title:    "No se indicó ninguna imagen a escanear",
                 severity: "info",
                 evidence: "scanMode='specific' pero la referencia de imagen está vacía",
-                // Sin ": " en el texto: el dashboard lo leería como "etiqueta: comando" y
-                // ofrecería copiar media frase. Esto es una instrucción, no un comando.
+                // Sin ": " para que el dashboard no lo tome por "etiqueta: comando".
                 fix:      "Indica una imagen en el nodo, por ejemplo nginx:latest, o proporciónala vía msg.",
                 category: "image",
                 source:   "native",
@@ -193,7 +234,7 @@ module.exports = function (RED) {
             return;
           }
 
-          // La única herramienta que hace falta en este modo.
+          // Única herramienta necesaria en este modo.
           const trivyAvailable = await commandExists("trivy");
           if (!trivyAvailable) {
             const findings = [
@@ -218,8 +259,7 @@ module.exports = function (RED) {
             return;
           }
 
-          // Un target por referencia, sintético: con repository vacío, imageRef() en cve-checker
-          // devuelve el campo id tal cual.
+          // Con repository vacío, imageRef() de cve-checker usa el id tal cual.
           const targets = refs.map((r) => ({ id: r, repository: "", tag: "" }));
           const trivy   = await runTrivyImage(targets, imageTimeout);
 
@@ -227,7 +267,6 @@ module.exports = function (RED) {
             ? normalizeImage(trivy, "trivy")
             : [];
 
-          // Un finding por imagen fallida, diciendo cuál y por qué: el flujo no se cae.
           const failed = (trivy && trivy.failed) || [];
           findings.push(...buildScanErrorFindings(failed));
 
@@ -240,15 +279,17 @@ module.exports = function (RED) {
             scannedImages
           );
 
+          msg.payload.scanMeta.checksSkipped = buildSkippedChecksSummary(findings);
+
           const maxSev = msg.payload.summary.maxSeverity || "info";
           const statusColor =
             maxSev === "critical" || maxSev === "high" ? "red"
-            : maxSev === "medium"                      ? "yellow"
+            : maxSev === "medium" || failed.length     ? "yellow"
             :                                            "green";
           const statusTxt = failed.length
-            ? `${scannedImages.length} ok · ${failed.length} fallo(s) · riesgo: ${maxSev}`
-            : `${scannedImages.length} imagen(es) · riesgo: ${maxSev}`;
-          node.status({ fill: statusColor, shape: "dot", text: statusTxt });
+            ? `${scannedImages.length} ok · ${plural(failed.length, "fallo", "fallos")} · riesgo: ${maxSev}`
+            : `${plural(scannedImages.length, "imagen", "imágenes")} · riesgo: ${maxSev}`;
+          node.status({ fill: statusColor, shape: failed.length ? "ring" : "dot", text: statusTxt });
 
           send(msg);
           done();
@@ -302,12 +343,23 @@ module.exports = function (RED) {
           enableConfig ? auditDockerConfig(docker)         : Promise.resolve([]),
           enableTrivy
             ? runTrivyImage(docker.images, imageTimeout)
-            // `kind` explícito: es lo que separa "lo apagaste tú" de "falló". El texto
-            // es para leer, el kind es para decidir.
+            // kind distingue "desactivado" de "falló"; reason es solo para leer.
             : Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de vulnerabilidades de las imágenes está desactivado en las opciones del nodo." }),
         ]);
 
         const configFindings = configResult.status === "fulfilled" ? configResult.value : [];
+        // Un fallo de la revisión o de los listados no puede quedar como lista vacía.
+        const dockerGaps = [];
+        if (configResult.status === "rejected") {
+          dockerGaps.push(listFailedFinding("IMG-CFG-SKIP", "Configuración de los contenedores",
+            String((configResult.reason && configResult.reason.message) || configResult.reason), "docker ps -a"));
+        }
+        if (docker.imagesError) {
+          dockerGaps.push(listFailedFinding("IMG-DOCKER-IMAGES-SKIP", "Inventario de imágenes locales", docker.imagesError, "docker images"));
+        }
+        if (docker.containersError) {
+          dockerGaps.push(listFailedFinding("IMG-DOCKER-CONTAINERS-SKIP", "Inventario de contenedores", docker.containersError, "docker ps -a"));
+        }
         const trivy          = trivyResult.status  === "fulfilled" ? trivyResult.value  : null;
 
         if (configResult.status === "rejected") {
@@ -321,11 +373,22 @@ module.exports = function (RED) {
           ? normalizeImage(trivy, "trivy")
           : [];
 
-        // `trivy.failed` se lee siempre, también con skipped:true: cuando no se escanea ni una
-        // imagen, runTrivyImage devuelve justo eso, y ese es el caso que no puede quedarse mudo.
+        // trivy.failed se lee también con skipped:true: es el caso en que fallaron todas.
         const scanErrors = buildScanErrorFindings(trivy && trivy.failed);
+        const cveGap = cveSkippedFinding(trivy,
+          trivyResult.status === "rejected" ? String((trivyResult.reason && trivyResult.reason.message) || trivyResult.reason) : null);
 
-        const findings   = [...configFindings, ...trivyFindings, ...scanErrors];
+        // El dashboard solo pinta "Limpia" en las imágenes que Trivy analizó de verdad.
+        const analizadas = new Set(((trivy && trivy.scannedImages) || []).map((m) => m.name));
+        const fallidas = new Set(((trivy && trivy.failed) || []).map((f) => f.ref));
+        for (const img of docker.images) {
+          const ref = imageRef(img);
+          if (fallidas.has(ref)) img.cveScan = "fallida";
+          else if (analizadas.has(ref)) img.cveScan = "analizada";
+          else img.cveScan = "sin-analizar";
+        }
+
+        const findings   = [...configFindings, ...dockerGaps, ...trivyFindings, ...scanErrors, ...(cveGap ? [cveGap] : [])];
         const summary    = summarize(findings);
         const durationMs = Date.now() - startTime;
 
@@ -342,16 +405,13 @@ module.exports = function (RED) {
           auditType: "image",
           host: { hostname: os.hostname(), platform: process.platform },
           scanMeta: {
-            // Mismo resumen que en audit-host, del mismo helper y derivado de los mismos
-            // findings: el dashboard de imagen saca las comprobaciones no realizadas de la
-            // lista de hallazgos y las enseña agregadas.
+            // Mismo resumen que audit-host, sacado de los hallazgos.
             checksSkipped: buildSkippedChecksSummary(findings),
             modulesRun,
             imagesFound:       docker.images.length,
             containersFound:   docker.containers.length,
             containersRunning: docker.containers.filter((c) => c.running).length,
-            // Con qué se escaneó. Sin esto el informe no es reproducible: la base de
-            // datos de Trivy cambia y el mismo comando da otro resultado más adelante.
+            // Para que el informe sea reproducible: la base de datos de Trivy cambia.
             trivyVersion:      (trivy && trivy.trivyVersion) || null,
             engineVersion:     docker.serverVersion || null,
             durationMs,
@@ -363,16 +423,20 @@ module.exports = function (RED) {
         };
 
         const maxSev = summary.maxSeverity || "info";
-        const statusColor =
-          maxSev === "critical" || maxSev === "high" ? "red"
-          : maxSev === "medium"                      ? "yellow"
-          :                                            "green";
+        // Cualquier parte que no se pudo revisar impide el verde; desactivarla a propósito, no.
+        const incompleto = scanErrors.length > 0 || dockerGaps.length > 0 ||
+          Boolean(cveGap && cveGap.kind !== "disabled");
+        let statusColor = "green";
+        if (maxSev === "critical" || maxSev === "high") statusColor = "red";
+        else if (maxSev === "medium" || incompleto) statusColor = "yellow";
 
         node.status({
           fill:  statusColor,
-          shape: "dot",
-          text:  `${docker.images.length} imágenes · ${docker.containers.length} contenedores` +
-                 (scanErrors.length ? ` · ${scanErrors.length} fallo(s)` : "") +
+          shape: incompleto ? "ring" : "dot",
+          text:  `${plural(docker.images.length, "imagen", "imágenes")} · ` +
+                 `${plural(docker.containers.length, "contenedor", "contenedores")}` +
+                 (scanErrors.length ? ` · ${plural(scanErrors.length, "fallo", "fallos")}` : "") +
+                 (cveGap ? " · CVE sin analizar" : "") +
                  ` · riesgo: ${maxSev}`,
         });
 

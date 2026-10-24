@@ -5,8 +5,7 @@
  *   A) CABLEADO: cada ui_template usa el cuerpo snapshot compartido (lib/snapshot-body.txt), con sentinel + report-root,
  *      fallback y sin código global (rompería Dashboard 2.0).
  *   B) SNAPSHOT (smoke): el MISMO cuerpo contra un DOM falso quita IA + descargas, reabre grupos, abre detalles y da un documento autocontenido.
- *   C) FLOWS: el `format` embebido de examples/flows.json tiene que ser BYTE A BYTE el .html de examples/ (en julio de 2026
- *      flows.json se quedó tres semanas con dashboards viejos mientras A) y B) daban verde).
+ *   C) FLOWS: el `format` embebido de examples/flows.json tiene que ser byte a byte el .html de examples/.
  * Sin navegador ni dependencias: `node scripts/export-parity.js`.
  */
 
@@ -135,8 +134,7 @@ ok(body.includes('data-lca-open="0"'), "el detalle no inicia cerrado (como el da
 ok(html.includes("data-lca-open"), "falta el toggle vanilla del acordeón");
 ok(body.includes("command-btn"), "eliminó el botón Copiar (debe conservarse)");
 ok(body.includes("sudo cosa"), "perdió el comando del hallazgo");
-// PASO 3: el export conserva el aviso inline (comando + copiar + aviso) —
-// la resolución vive en un solo sitio (inline), sin botón/modal redundante.
+// PASO 3: el export conserva el aviso inline (comando + copiar + aviso), sin botón ni modal aparte.
 ok(body.includes("cmd-warn") && body.includes("no ejecuta"), "perdió el aviso inline en el export");
 ok(html.includes("--accent"), "no embebió el CSS del dashboard");
 if (fails === before) console.log("  ✓ prune IA/descargas · acordeón interactivo (grupos abiertos, detalles cerrados) · copiar conservado");
@@ -148,15 +146,13 @@ const FLOWS_REL = "examples/flows.json";
 const flows = JSON.parse(fs.readFileSync(path.join(ROOT, FLOWS_REL), "utf8"));
 const uiTemplates = flows.filter((n) => n.type === "ui-template");
 
-// Quién apunta a quién: un ui-template sin wire de entrada nunca recibe msg —
-// es basura de una edición anterior y no debe viajar en el flujo de ejemplo.
+// Un ui-template sin wire de entrada nunca recibe msg y no debe ir en el flujo de ejemplo.
 const targeted = new Set();
 for (const n of flows) {
   for (const outs of n.wires || []) for (const t of outs) targeted.add(t);
 }
 
-// El nodo al que pertenece cada template se deduce del sentinel que A) ya exige,
-// no del nombre: el nombre lo cambia cualquiera desde el editor.
+// El nodo de cada template se deduce del sentinel, no del nombre editable.
 function nodeOf(fmt) {
   const found = Object.keys(TEMPLATES).filter((k) => String(fmt).includes("LCA-STYLE-DASH:" + k));
   return found.length === 1 ? found[0] : null;
@@ -185,8 +181,7 @@ for (const n of uiTemplates) {
 
   const disk = fs.readFileSync(path.join(ROOT, TEMPLATES[node]), "utf8");
   const fmt = String(n.format || "");
-  // Un simple "no coincide" no dice si sobra contenido o si es otra versión:
-  // se señala la primera diferencia para poder ir al sitio exacto.
+  // Se señala la primera diferencia para localizarla.
   let diff = -1;
   if (fmt !== disk) {
     const min = Math.min(fmt.length, disk.length);
