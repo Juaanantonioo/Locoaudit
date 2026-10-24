@@ -111,8 +111,9 @@ const JOURNAL_OK = {
   await seccion("audit-host", () => conPlataforma("linux", async () => {
     esc = JOURNAL_OK;
     let r = await ejecutarNodo(BASE);
-    ok(r.err === null && r.status.fill === "green" && r.status.shape === "dot",
-       "sin fallos el nodo sigue en verde", JSON.stringify(r.status));
+    // El color depende de los datos reales del equipo (la memoria puede dar un high); lo que no puede salir es "incompleto".
+    ok(r.err === null && r.status.shape === "dot" && !/sin completar/.test(r.status.text),
+       "sin fallos el nodo no se marca como incompleto", JSON.stringify(r.status));
     // Los módulos apagados en BASE salen como 'disabled', que no es un fallo.
     ok(!r.msg.payload.findings.some((f) => f.skipped && f.kind !== "disabled"), "sin fallos no hay comprobaciones fallidas",
        JSON.stringify(r.msg.payload.findings.filter((f) => f.skipped).map((f) => [f.id, f.kind])));
@@ -123,7 +124,8 @@ const JOURNAL_OK = {
     const m2 = Object.fromEntries(r.msg.payload.scanMeta.modules.map((m) => [m.id, m.status]));
     ok(m2["disk-storage"] === "failed" && m2["security-events"] === "failed" && m2["cpu-memory"] === "ok",
        "disco y eventos rechazan → failed; cpu sigue ok", JSON.stringify(m2));
-    ok(r.status.fill !== "green", "y el nodo no queda en verde", JSON.stringify(r.status));
+    ok(r.status.fill !== "green" && r.status.shape === "ring" && /2 módulos sin completar/.test(r.status.text),
+       "y el nodo se marca como incompleto, no en verde", JSON.stringify(r.status));
 
     lanza.runSystemModule = lanza.getDiskInfo = lanza.runSecurityEvents = true;
     r = await ejecutarNodo(BASE);
@@ -141,8 +143,8 @@ const JOURNAL_OK = {
     }
     ok(r.msg.payload.scanMeta.checksSkipped && r.msg.payload.scanMeta.checksSkipped.failed === 3,
        "los tres fallos llegan a checksSkipped", JSON.stringify(r.msg.payload.scanMeta.checksSkipped && r.msg.payload.scanMeta.checksSkipped.failed));
-    ok(r.status.fill === "yellow" && r.status.shape === "ring",
-       "con módulos fallidos el nodo queda amarillo en anillo, no verde", JSON.stringify(r.status));
+    ok(r.status.fill !== "green" && r.status.shape === "ring" && /3 módulos sin completar/.test(r.status.text),
+       "con módulos fallidos el nodo queda en anillo y lo dice, no en verde", JSON.stringify(r.status));
     lanza.runSystemModule = lanza.getDiskInfo = lanza.runSecurityEvents = false;
 
     lanza.runTrivyFs = true;
