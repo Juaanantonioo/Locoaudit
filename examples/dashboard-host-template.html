@@ -2300,6 +2300,11 @@ export default {
   .sev-cell.high     { background: var(--high-bg); }
   .sev-cell.medium   { background: var(--medium-bg); }
   .sev-cell.low      { background: var(--low-bg); }
+  /* Sobre el fondo de color, el gris secundario no llega a 4,5:1. */
+  .sev-cell.critical .sev-cell-sub { color: var(--critical-text); }
+  .sev-cell.high     .sev-cell-sub { color: var(--high-text); }
+  .sev-cell.medium   .sev-cell-sub { color: var(--medium-text); }
+  .sev-cell.low      .sev-cell-sub { color: var(--low-text); }
   .sev-cell.critical .sev-cell-label, .sev-cell.critical .sev-cell-num { color: var(--critical-text); }
   .sev-cell.high     .sev-cell-label, .sev-cell.high     .sev-cell-num { color: var(--high-text); }
   .sev-cell.medium   .sev-cell-label, .sev-cell.medium   .sev-cell-num { color: var(--medium-text); }
