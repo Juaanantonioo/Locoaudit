@@ -32,21 +32,27 @@ PROJECT_ROOT = os.path.dirname(LAUNCHER_DIR)
 NODE_RED_DIR = os.path.expanduser("~/.node-red")
 FLOWS_SRC    = os.path.join(PROJECT_ROOT, "examples", "flows.json")
 FLOWS_DST    = os.path.join(NODE_RED_DIR, "flows.json")
-NPM_CMD      = "npm.cmd"      if OS == "Windows" else "npm"
-NODE_RED_CMD = "node-red.cmd" if OS == "Windows" else "node-red"
+if OS == "Windows":
+    NPM_CMD      = "npm.cmd"
+else:
+    NPM_CMD      = "npm"
+if OS == "Windows":
+    NODE_RED_CMD = "node-red.cmd"
+else:
+    NODE_RED_CMD = "node-red"
 # Settings propios (loopback y guardián de origen); -u fija el userDir, que con --settings no se deduce.
 NODE_RED_SETTINGS = os.path.join(LAUNCHER_DIR, "node-red-settings.js")
 NODE_RED_ARGS = [NODE_RED_CMD, "--settings", NODE_RED_SETTINGS, "-u", NODE_RED_DIR]
 
 
-def _read_version() -> str:
+def _leer_version() -> str:
     try:
         with open(os.path.join(PROJECT_ROOT, "package.json")) as fh:
             return json.load(fh).get("version", "?")
     except Exception:
         return "?"
 
-VERSION = _read_version()
+VERSION = _leer_version()
 
 
 # ─────────────────────────────────────────────
@@ -75,7 +81,7 @@ _gui_card_items = []  # list of (icon, text, color)
 _gui_step_label = ""  # texto del pie del paso actual, para restaurarlo tras instalar
 
 
-def _gui_flush_card():
+def _volcar_tarjeta():
     if OUTPUT_QUEUE is not None and _gui_card_items:
         OUTPUT_QUEUE.put({"type": "card", "title": _gui_card_title,
                           "items": list(_gui_card_items)})
@@ -85,7 +91,7 @@ def _gui_flush_card():
 # ─────────────────────────────────────────────
 #  Auto-instalar rich si no está disponible
 # ─────────────────────────────────────────────
-def _ensure_rich() -> bool:
+def _asegurar_rich() -> bool:
     try:
         import rich  # noqa: F401
         return True
@@ -123,7 +129,7 @@ def _ensure_rich() -> bool:
     print("  El launcher funcionará en modo texto básico.\n")
     return False
 
-RICH = _ensure_rich()
+RICH = _asegurar_rich()
 
 # ─────────────────────────────────────────────
 #  Importaciones rich (condicionales)
@@ -141,23 +147,35 @@ if RICH:
 #  ANSI fallback (desactivado en Windows cmd.exe nativo)
 # ─────────────────────────────────────────────
 _color = OS != "Windows" or bool(os.environ.get("WT_SESSION") or os.environ.get("TERM"))
-BO = "\033[1m"  if _color else ""
-RS = "\033[0m"  if _color else ""
-CY = "\033[96m" if _color else ""
-YL = "\033[93m" if _color else ""
+if _color:
+    BO = "\033[1m"
+else:
+    BO = ""
+if _color:
+    RS = "\033[0m"
+else:
+    RS = ""
+if _color:
+    CY = "\033[96m"
+else:
+    CY = ""
+if _color:
+    YL = "\033[93m"
+else:
+    YL = ""
 
 # ─────────────────────────────────────────────
 #  Funciones de output — plain text (fallback)
 # ─────────────────────────────────────────────
-def _ok_p(msg):   print(f"  ✅  {msg}")
-def _err_p(msg):  print(f"  ❌  {msg}")
-def _warn_p(msg): print(f"  ⚠️   {msg}")
-def _work_p(msg): print(f"  🔧  {msg}", flush=True)
-def _tip_p(msg):  print(f"       {YL}↳ {msg}{RS}")
-def _blank_p():   print()
-def _sep_p():     print(f"  {'═' * 54}")
+def _correcto_plano(msg): print(f"  ✅  {msg}")
+def _fallo_plano(msg):    print(f"  ❌  {msg}")
+def _aviso_plano(msg):    print(f"  ⚠️   {msg}")
+def _tarea_plano(msg):    print(f"  🔧  {msg}", flush=True)
+def _consejo_plano(msg):  print(f"       {YL}↳ {msg}{RS}")
+def _vacia_plano():       print()
+def _separador_plano():   print(f"  {'═' * 54}")
 
-def _step_header_p(n: int, title: str):
+def _cabecera_plano(n: int, title: str):
     bar = "─" * max(1, 44 - len(title))
     print(f"\n  {BO}{CY}── Paso {n}/6 — {title} {bar}{RS}\n")
 
@@ -165,15 +183,15 @@ def _step_header_p(n: int, title: str):
 #  Funciones de output — rich
 # ─────────────────────────────────────────────
 if RICH:
-    def _ok_r(msg):   console.print(f"  [bold green]✅[/]  {msg}")
-    def _err_r(msg):  console.print(f"  [bold red]❌[/]  {msg}")
-    def _warn_r(msg): console.print(f"  [bold yellow]⚠️ [/]  {msg}")
-    def _work_r(msg): console.print(f"  [bold blue]🔧[/]  [bold]{msg}[/bold]")
-    def _tip_r(msg):  console.print(f"     [yellow]↳[/yellow] [dim]{msg}[/dim]")
-    def _blank_r():   console.print()
-    def _sep_r():     console.rule(style="dim white")
+    def _correcto_rich(msg): console.print(f"  [bold green]✅[/]  {msg}")
+    def _fallo_rich(msg):    console.print(f"  [bold red]❌[/]  {msg}")
+    def _aviso_rich(msg):    console.print(f"  [bold yellow]⚠️ [/]  {msg}")
+    def _tarea_rich(msg):    console.print(f"  [bold blue]🔧[/]  [bold]{msg}[/bold]")
+    def _consejo_rich(msg):  console.print(f"     [yellow]↳[/yellow] [dim]{msg}[/dim]")
+    def _vacia_rich():       console.print()
+    def _separador_rich():   console.rule(style="dim white")
 
-    def _step_header_r(n: int, title: str):
+    def _cabecera_rich(n: int, title: str):
         console.print()
         console.rule(f"[bold cyan] Paso {n}/6 — {title} [/bold cyan]", style="cyan")
         console.print()
@@ -182,77 +200,77 @@ if RICH:
 # ─────────────────────────────────────────────
 #  Dispatch — wrappers que comprueban OUTPUT_QUEUE
 # ─────────────────────────────────────────────
-def ok(msg):
+def correcto(msg):
     if OUTPUT_QUEUE is not None:
         _gui_card_items.append(("✓", msg, "#a6e3a1"))
     elif RICH:
-        _ok_r(msg)
+        _correcto_rich(msg)
     else:
-        _ok_p(msg)
+        _correcto_plano(msg)
 
-def err(msg):
+def fallo(msg):
     if OUTPUT_QUEUE is not None:
         _gui_card_items.append(("✗", msg, "#f38ba8"))
     elif RICH:
-        _err_r(msg)
+        _fallo_rich(msg)
     else:
-        _err_p(msg)
+        _fallo_plano(msg)
 
-def warn(msg):
+def aviso(msg):
     if OUTPUT_QUEUE is not None:
         _gui_card_items.append(("⚠", msg, "#f9e2af"))
     elif RICH:
-        _warn_r(msg)
+        _aviso_rich(msg)
     else:
-        _warn_p(msg)
+        _aviso_plano(msg)
 
-def work(msg):
+def tarea(msg):
     if OUTPUT_QUEUE is not None:
         _gui_card_items.append(("⟳", msg, "#89b4fa"))
     elif RICH:
-        _work_r(msg)
+        _tarea_rich(msg)
     else:
-        _work_p(msg)
+        _tarea_plano(msg)
 
-def tip(msg):
+def consejo(msg):
     if OUTPUT_QUEUE is not None:
         _gui_card_items.append(("↳", msg, "#6c7086"))
     elif RICH:
-        _tip_r(msg)
+        _consejo_rich(msg)
     else:
-        _tip_p(msg)
+        _consejo_plano(msg)
 
-def status(msg):
+def estado_pie(msg):
     """Texto vivo en el pie de la GUI para que una descarga larga muestre actividad."""
     if OUTPUT_QUEUE is not None:
         OUTPUT_QUEUE.put({"type": "status", "text": msg})
 
-def blank():
+def linea_vacia():
     if OUTPUT_QUEUE is None:
         if RICH:
-            _blank_r()
+            _vacia_rich()
         else:
-            _blank_p()
+            _vacia_plano()
 
-def sep():
+def separador():
     if OUTPUT_QUEUE is None:
         if RICH:
-            _sep_r()
+            _separador_rich()
         else:
-            _sep_p()
+            _separador_plano()
 
-def step_header(n: int, title: str):
+def cabecera_paso(n: int, title: str):
     global _gui_card_title, _gui_card_items, _gui_step_label
     if OUTPUT_QUEUE is not None:
-        _gui_flush_card()
+        _volcar_tarjeta()
         _gui_card_title = title
         _gui_card_items = []
         _gui_step_label = f"Paso {n}/6 — {title}"
         OUTPUT_QUEUE.put({"type": "progress", "step": n, "label": _gui_step_label})
     elif RICH:
-        _step_header_r(n, title)
+        _cabecera_rich(n, title)
     else:
-        _step_header_p(n, title)
+        _cabecera_plano(n, title)
 
 
 # ─────────────────────────────────────────────
@@ -334,7 +352,7 @@ _REBOOT_CODES = {
 # Instaladores que necesitan administrador: solo Nmap, que escribe en el PATH de sistema.
 _NEEDS_ELEVATION = {"nmap"}
 
-def _default_windows_tool_dirs() -> tuple:
+def _carpetas_windows() -> tuple:
     """Carpetas fijas donde acaban los binarios de las herramientas en Windows."""
     dirs = [
         # Instalador oficial de Nmap.
@@ -348,7 +366,7 @@ def _default_windows_tool_dirs() -> tuple:
     return tuple(dirs)
 
 
-_WINDOWS_TOOL_DIRS = _default_windows_tool_dirs()
+_WINDOWS_TOOL_DIRS = _carpetas_windows()
 
 # Extensiones que se prueban al buscar una herramienta en esas carpetas.
 _WINDOWS_EXEC_EXTS = (".exe", ".cmd", ".bat", "")
@@ -362,7 +380,7 @@ _ERROR_CANCELLED     = 1223  # GetLastError: el usuario canceló el diálogo de 
 # El aviso de que Windows va a pedir permisos se da una sola vez por ejecución.
 _uac_notice_shown = False
 
-# True si run_install() vio que la herramienta ya estaba; solo cambia el mensaje final.
+# True si instalar() vio que la herramienta ya estaba; solo cambia el mensaje final.
 _already_installed = False
 
 # Estado de cada herramienta opcional ({"state", "reason"}); lo rellena el paso 2 y alimenta ambos resúmenes.
@@ -375,17 +393,20 @@ _node_red_pending_install = False
 TOOL_STATES = ("available", "not_operational", "unsupported", "unknown", "missing")
 
 
-def _set_tool_state(cmd: str, state: str, reason: str = "") -> None:
+def _fijar_estado(cmd: str, state: str, reason: str = "") -> None:
     """Registra el estado de una herramienta y su motivo, si lo hay."""
     _tool_status[cmd] = {"state": state, "reason": reason}
 
 
-def _tool_state(cmd: str) -> str:
+def _estado_herramienta(cmd: str) -> str:
     registro = _tool_status.get(cmd)
-    return registro.get("state", "missing") if registro else "missing"
+    if registro:
+        return registro.get("state", "missing")
+    else:
+        return "missing"
 
 
-def _tool_groups() -> dict:
+def _agrupar_herramientas() -> dict:
     """Agrupa las herramientas por estado. De aquí salen AMBOS resúmenes."""
     grupos = {estado: [] for estado in TOOL_STATES}
     for cmd, label in OPTIONAL_TOOLS:
@@ -397,16 +418,21 @@ def _tool_groups() -> dict:
     return grupos
 
 
-def _tool_summary_lines() -> list:
+def _lineas_resumen() -> list:
     """Líneas [(tipo, texto)] del resumen de herramientas, sin grupos vacíos."""
-    g = _tool_groups()
+    g = _agrupar_herramientas()
     lineas = []
     if g["available"]:
         lineas.append(("ok", "Módulos activos: " +
                        ", ".join(l for l, _, _ in g["available"])))
     if g["not_operational"]:
+        def _parte(l, r):
+            if r:
+                return f"{l} ({_motivo_corto(r)})"
+            else:
+                return l
         detalle = ", ".join(
-            f"{l} ({_short_reason(r)})" if r else l for l, _, r in g["not_operational"]
+            _parte(l, r) for l, _, r in g["not_operational"]
         )
         lineas.append(("warn", "Requieren atención: " + detalle))
     if g["unsupported"]:
@@ -422,7 +448,7 @@ def _tool_summary_lines() -> list:
     return lineas
 
 
-def _short_reason(reason: str) -> str:
+def _motivo_corto(reason: str) -> str:
     """Quita el "instalado pero" del motivo: el grupo ya lo dice."""
     return reason.removeprefix("instalado pero ").strip()
 
@@ -437,11 +463,11 @@ OPTIONAL_TOOLS = [
 # ─────────────────────────────────────────────
 #  Utilidades de plataforma
 # ─────────────────────────────────────────────
-def command_exists(cmd: str) -> bool:
+def existe_comando(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
-def detect_pkg_manager() -> str | None:
+def detectar_gestor() -> str | None:
     if OS != "Linux":
         return None
     for pm in ("apt-get", "dnf", "pacman", "zypper"):
@@ -450,7 +476,7 @@ def detect_pkg_manager() -> str | None:
     return None
 
 
-def is_wsl() -> bool:
+def es_wsl() -> bool:
     if OS != "Linux":
         return False
     try:
@@ -460,7 +486,7 @@ def is_wsl() -> bool:
         return False
 
 
-def get_node_version() -> tuple:
+def version_node() -> tuple:
     try:
         r = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=5)
         ver = r.stdout.strip().lstrip("v")
@@ -470,9 +496,9 @@ def get_node_version() -> tuple:
         return False, "no detectado"
 
 
-def check_docker_daemon() -> str | None:
+def comprobar_daemon_docker() -> str | None:
     # Ruta por la fuente única: en Windows docker puede no estar en el PATH de este proceso.
-    exe = _tool_path("docker") or "docker"
+    exe = _ruta_herramienta("docker") or "docker"
     try:
         r = subprocess.run([exe, "info"], capture_output=True, text=True, timeout=8)
         if r.returncode != 0:
@@ -482,7 +508,7 @@ def check_docker_daemon() -> str | None:
         return "no se pudo conectar con el daemon de Docker"
 
 
-def get_auto_install_cmd(tool: str) -> str | None:
+def comando_instalacion(tool: str) -> str | None:
     if tool == "node-red":
         if OS == "Linux":
             return "sudo npm install -g node-red"
@@ -498,7 +524,7 @@ def get_auto_install_cmd(tool: str) -> str | None:
         }.get(tool)
 
     if OS == "Linux":
-        pm = detect_pkg_manager()
+        pm = detectar_gestor()
         tables = {
             "apt-get": {
                 "nmap":   "sudo apt-get install -y nmap",
@@ -544,7 +570,7 @@ def get_auto_install_cmd(tool: str) -> str | None:
     return None
 
 
-def _is_windows_admin():
+def _es_admin_windows():
     """True/False en Windows, None en otros sistemas; ante un error, False."""
     if OS != "Windows":
         return None
@@ -555,7 +581,7 @@ def _is_windows_admin():
         return False
 
 
-def _shellexecuteinfo_type():
+def _tipo_shellexecuteinfo():
     """Construye SHELLEXECUTEINFOW con tipos de ancho fijo (layout igual en cualquier SO)."""
     import ctypes
     DWORD  = ctypes.c_uint32
@@ -584,7 +610,7 @@ def _shellexecuteinfo_type():
     return SHELLEXECUTEINFOW
 
 
-def _run_elevated_windows(cmd: str, timeout: int):
+def _ejecutar_elevado(cmd: str, timeout: int):
     """Ejecuta `cmd` elevado vía UAC y devuelve (returncode, salida).
 
     returncode None significa que el usuario canceló el diálogo de UAC.
@@ -596,7 +622,7 @@ def _run_elevated_windows(cmd: str, timeout: int):
     SW_SHOWNORMAL = 1
     WAIT_TIMEOUT  = 0x00000102
 
-    SHELLEXECUTEINFOW = _shellexecuteinfo_type()
+    SHELLEXECUTEINFOW = _tipo_shellexecuteinfo()
     DWORD  = ctypes.c_uint32
     HANDLE = ctypes.c_void_p
 
@@ -655,7 +681,7 @@ def _run_elevated_windows(cmd: str, timeout: int):
 
         try:
             with open(log_path, "rb") as fh:
-                output = _decode_output(fh.read()).strip()
+                output = _decodificar_salida(fh.read()).strip()
         except OSError:
             output = ""
         return code, output
@@ -666,18 +692,18 @@ def _run_elevated_windows(cmd: str, timeout: int):
             pass
 
 
-def _run_plain(cmd: str, timeout: int):
+def _ejecutar_normal(cmd: str, timeout: int):
     """Ejecución normal, sin elevar. Devuelve (returncode, salida)."""
     result = subprocess.run(
         cmd, shell=True, timeout=timeout,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
-    salida = _decode_output(result.stderr).strip() or _decode_output(result.stdout).strip()
+    salida = _decodificar_salida(result.stderr).strip() or _decodificar_salida(result.stdout).strip()
     return result.returncode, salida
 
 
-def _tool_in_known_dirs(tool: str):
+def _carpeta_conocida(tool: str):
     """Carpeta conocida donde está el binario de `tool`, o None."""
     if OS != "Windows":
         return None
@@ -704,7 +730,7 @@ _JS_PROBE = (
 )
 
 
-def _probe_tools_with_node(tools: list) -> dict | None:
+def _sondear_con_node(tools: list) -> dict | None:
     """Consulta a lib/executor.js todas las herramientas en una llamada a Node.
 
     Devuelve {tool: ruta|None}, o None si Node no respondió ("no lo sé", no "falta").
@@ -715,7 +741,7 @@ def _probe_tools_with_node(tools: list) -> dict | None:
     try:
         proc = subprocess.run(
             ["node", "-e", _JS_PROBE, executor] + list(tools),
-            capture_output=True, text=True, timeout=20, env=_child_env(),
+            capture_output=True, text=True, timeout=20, env=_entorno_hijo(),
         )
         if proc.returncode != 0 or not proc.stdout.strip():
             return None
@@ -726,13 +752,13 @@ def _probe_tools_with_node(tools: list) -> dict | None:
     return {t: datos.get(t) or None for t in tools}
 
 
-def _prime_tool_probe(tools: list = None) -> None:
+def _preparar_sondeo(tools: list = None) -> None:
     """Rellena la caché con una sola llamada a Node. Idempotente."""
     global _js_probe_ok
     if _js_probe_ok is not None:
         return
     lista = tools or [c for c, _ in OPTIONAL_TOOLS]
-    datos = _probe_tools_with_node(lista)
+    datos = _sondear_con_node(lista)
     if datos is None:
         _js_probe_ok = False
         return
@@ -740,13 +766,13 @@ def _prime_tool_probe(tools: list = None) -> None:
     _js_probe_ok = True
 
 
-def _tool_path(tool: str):
+def _ruta_herramienta(tool: str):
     """Ruta del ejecutable de `tool`, o None. Fuente única de disponibilidad.
 
     Orden: lib/executor.js, el PATH de este proceso y _WINDOWS_TOOL_DIRS
     (los dos últimos solo como respaldo cuando aún no hay Node).
     """
-    _prime_tool_probe()
+    _preparar_sondeo()
     if _js_probe_ok and tool in _js_probe_cache:
         ruta = _js_probe_cache[tool]
         if ruta:
@@ -755,7 +781,7 @@ def _tool_path(tool: str):
     ruta = shutil.which(tool)
     if ruta:
         return ruta
-    carpeta = _tool_in_known_dirs(tool)
+    carpeta = _carpeta_conocida(tool)
     if carpeta:
         for ext in _WINDOWS_EXEC_EXTS:
             candidato = os.path.join(carpeta, tool + ext)
@@ -764,21 +790,21 @@ def _tool_path(tool: str):
     return None
 
 
-def _tool_available(tool: str) -> bool:
-    """¿Puede LoCoAudit usar esta herramienta? Ver _tool_path()."""
-    return _tool_path(tool) is not None
+def _herramienta_disponible(tool: str) -> bool:
+    """¿Puede LoCoAudit usar esta herramienta? Ver _ruta_herramienta()."""
+    return _ruta_herramienta(tool) is not None
 
 
-def _probe_is_conclusive() -> bool:
+def _sondeo_concluyente() -> bool:
     """¿Se pudo consultar lib/executor.js? Si no, un "no la encuentro" no es concluyente."""
-    _prime_tool_probe()
+    _preparar_sondeo()
     return _js_probe_ok is True
 
 
 # ─────────────────────────────────────────────
 #  Permisos de instalación
 # ─────────────────────────────────────────────
-def _can_sudo() -> bool | None:
+def _puede_sudo() -> bool | None:
     """True: sudo sin contraseña; False: no está en sudoers; None: no se sabe (o pedirá contraseña)."""
     if OS == "Windows":
         return None
@@ -799,19 +825,19 @@ def _can_sudo() -> bool | None:
     return None
 
 
-def _needs_sudo(cmd: str) -> bool:
+def _necesita_sudo(cmd: str) -> bool:
     """¿El comando de instalación necesita privilegios?"""
     return "sudo " in (cmd or "")
 
 
-def _can_run_install(cmd: str) -> bool:
+def _puede_instalar(cmd: str) -> bool:
     """¿Se ofrece esta instalación? Solo se descarta si consta que va a fallar."""
-    if not _needs_sudo(cmd):
+    if not _necesita_sudo(cmd):
         return True
-    return _can_sudo() is not False
+    return _puede_sudo() is not False
 
 
-def _child_env() -> dict:
+def _entorno_hijo() -> dict:
     """Copia en memoria del entorno con las carpetas de herramientas añadidas al PATH."""
     env = os.environ.copy()
     if OS != "Windows":
@@ -822,7 +848,7 @@ def _child_env() -> dict:
     return env
 
 
-def _decode_output(raw: bytes) -> str:
+def _decodificar_salida(raw: bytes) -> str:
     """Decodifica la salida de un proceso sin lanzar nunca (la consola de Windows no es UTF-8)."""
     if not raw:
         return ""
@@ -834,17 +860,17 @@ def _decode_output(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _format_rc(rc: int) -> str:
+def _formatear_rc(rc: int) -> str:
     """Código de salida en decimal y en hex de 32 bits sin signo, como lo documenta Windows."""
     return f"{rc} (0x{rc & 0xFFFFFFFF:08X})"
 
 
-def _tail_lines(text: str, n: int = 8) -> list:
+def _ultimas_lineas(text: str, n: int = 8) -> list:
     lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
     return lines[-n:]
 
 
-def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
+def instalar(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
     """Ejecuta una instalación y devuelve True si la herramienta quedó instalada.
 
     `tool` es la clave interna ("nmap", "docker"...); si falta, se deriva del label.
@@ -858,52 +884,52 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
     elevar = (
         OS == "Windows"
         and tool in _NEEDS_ELEVATION
-        and _is_windows_admin() is False
+        and _es_admin_windows() is False
     )
 
-    work(f"Instalando {label}...")
+    tarea(f"Instalando {label}...")
     # El comando solo se muestra si falla, dentro del bloque de error.
     if elevar and not _uac_notice_shown:
         _uac_notice_shown = True
         # La justificación de la elevación está en README.md.
-        warn(f"Windows va a pedirte permisos de administrador para instalar {label}")
-        tip("Solo se usa para este paso — Node-RED seguirá sin privilegios de "
-            "administrador")
-        tip("Si rechazas el permiso, se salta la instalación y puedes hacerla a mano")
-    status(f"Instalando {label} — puede tardar varios minutos, no cierres la ventana")
-    blank()
+        aviso(f"Windows va a pedirte permisos de administrador para instalar {label}")
+        consejo("Solo se usa para este paso — Node-RED seguirá sin privilegios de "
+                "administrador")
+        consejo("Si rechazas el permiso, se salta la instalación y puedes hacerla a mano")
+    estado_pie(f"Instalando {label} — puede tardar varios minutos, no cierres la ventana")
+    linea_vacia()
 
     try:
         if elevar:
             try:
-                rc, salida = _run_elevated_windows(cmd, timeout)
+                rc, salida = _ejecutar_elevado(cmd, timeout)
             except subprocess.TimeoutExpired:
                 raise
             except Exception as exc:
                 # Si la ruta elevada falla de forma imprevista, se sigue por la normal.
-                warn(f"No se pudo lanzar la instalación elevada: {exc}")
-                tip("Se reintenta sin permisos de administrador")
-                rc, salida = _run_plain(cmd, timeout)
+                aviso(f"No se pudo lanzar la instalación elevada: {exc}")
+                consejo("Se reintenta sin permisos de administrador")
+                rc, salida = _ejecutar_normal(cmd, timeout)
         else:
-            rc, salida = _run_plain(cmd, timeout)
+            rc, salida = _ejecutar_normal(cmd, timeout)
     except subprocess.TimeoutExpired:
-        status(_gui_step_label)
-        err(f"La instalación de {label} superó el tiempo límite ({timeout}s)")
-        tip(f"Comando: {cmd}")
-        tip(f"Intenta manualmente: {MANUAL_INSTALL.get(tool, {}).get(OS, '?')}")
+        estado_pie(_gui_step_label)
+        fallo(f"La instalación de {label} superó el tiempo límite ({timeout}s)")
+        consejo(f"Comando: {cmd}")
+        consejo(f"Intenta manualmente: {MANUAL_INSTALL.get(tool, {}).get(OS, '?')}")
         return False
     except Exception as exc:
-        status(_gui_step_label)
-        err(f"Error inesperado instalando {label}: {exc}")
+        estado_pie(_gui_step_label)
+        fallo(f"Error inesperado instalando {label}: {exc}")
         return False
 
-    status(_gui_step_label)
+    estado_pie(_gui_step_label)
 
     # UAC cancelado: es decisión del usuario, se avisa y se sigue con el resto.
     if rc is None:
-        warn(f"Instalación de {label} cancelada: se necesitan permisos de administrador")
-        tip(f"Puedes instalarlo manualmente: "
-            f"{MANUAL_INSTALL.get(tool, {}).get(OS, 'Consulta la documentación oficial')}")
+        aviso(f"Instalación de {label} cancelada: se necesitan permisos de administrador")
+        consejo(f"Puedes instalarlo manualmente: "
+                f"{MANUAL_INSTALL.get(tool, {}).get(OS, 'Consulta la documentación oficial')}")
         return False
 
     if rc == 0:
@@ -911,42 +937,42 @@ def run_install(cmd: str, label: str, tool: str = "", timeout: int = 0) -> bool:
 
     # Códigos estándar del instalador de Windows: terminó bien, falta reiniciar.
     if rc in _REBOOT_CODES:
-        warn(f"{label}: {_REBOOT_CODES[rc]}")
+        aviso(f"{label}: {_REBOOT_CODES[rc]}")
         return True
 
     # Otro código no cero: si la herramienta ya está disponible, se da por buena.
-    if _tool_available(tool):
+    if _herramienta_disponible(tool):
         _already_installed = True
         return True
 
-    err(f"La instalación de {label} falló — código de salida {_format_rc(rc)}")
-    tip(f"Comando: {cmd}")
+    fallo(f"La instalación de {label} falló — código de salida {_formatear_rc(rc)}")
+    consejo(f"Comando: {cmd}")
     if salida:
-        for line in _tail_lines(salida):
-            tip(line)
+        for line in _ultimas_lineas(salida):
+            consejo(line)
     else:
-        tip("El comando no devolvió ningún mensaje de error.")
-    tip(f"Intenta manualmente: {MANUAL_INSTALL.get(tool, {}).get(OS, 'Consulta la documentación oficial')}")
+        consejo("El comando no devolvió ningún mensaje de error.")
+    consejo(f"Intenta manualmente: {MANUAL_INSTALL.get(tool, {}).get(OS, 'Consulta la documentación oficial')}")
     return False
 
 
-def _run_npm(cmd: str, label: str, timeout: int = 120) -> bool:
+def _ejecutar_npm(cmd: str, label: str, timeout: int = 120) -> bool:
     """Run an npm command. Uses rich spinner + captured output when available."""
     if OUTPUT_QUEUE is not None:
-        work(label + "...")
+        tarea(label + "...")
         try:
             result = subprocess.run(
                 cmd, shell=True, timeout=timeout,
                 capture_output=True, text=True,
             )
             if result.returncode != 0 and result.stderr.strip():
-                err(result.stderr.strip()[:300])
+                fallo(result.stderr.strip()[:300])
             return result.returncode == 0
         except subprocess.TimeoutExpired:
-            err(f"Timeout ({timeout}s) instalando {label}")
+            fallo(f"Timeout ({timeout}s) instalando {label}")
             return False
         except Exception as exc:
-            err(str(exc))
+            fallo(str(exc))
             return False
 
     if RICH:
@@ -974,8 +1000,8 @@ def _run_npm(cmd: str, label: str, timeout: int = 120) -> bool:
                 console.print(f"[red]{err_text}[/red]")
         return success
     else:
-        work(label + "...")
-        blank()
+        tarea(label + "...")
+        linea_vacia()
         try:
             result = subprocess.run(cmd, shell=True, timeout=timeout)
             return result.returncode == 0
@@ -985,7 +1011,7 @@ def _run_npm(cmd: str, label: str, timeout: int = 120) -> bool:
             return False
 
 
-def _ask_install_node_red(is_tty: bool) -> bool:
+def _preguntar_node_red(is_tty: bool) -> bool:
     """Pregunta si se debe instalar Node-RED con el npm ya disponible."""
     cmd = "npm install -g node-red"
     if OUTPUT_QUEUE is not None:
@@ -1005,8 +1031,8 @@ def _ask_install_node_red(is_tty: bool) -> bool:
     if not is_tty:
         return False
 
-    tip(f"Comando: {cmd}")
-    tip("Si después no aparece el comando, reinicia el equipo para recargar el PATH.")
+    consejo(f"Comando: {cmd}")
+    consejo("Si después no aparece el comando, reinicia el equipo para recargar el PATH.")
     if RICH:
         try:
             return bool(Confirm.ask(
@@ -1014,30 +1040,36 @@ def _ask_install_node_red(is_tty: bool) -> bool:
                 default=False,
             ))
         except (EOFError, KeyboardInterrupt):
-            blank()
+            linea_vacia()
             return False
     print(f"\n  ¿Deseas instalar {BO}Node-RED{RS} ahora? (s/n)")
     try:
         return input("  → ").strip().lower() in ("s", "si", "sí", "y", "yes")
     except (EOFError, KeyboardInterrupt):
-        blank()
+        linea_vacia()
         return False
 
 
 # ─────────────────────────────────────────────
 #  Pantalla de bienvenida
 # ─────────────────────────────────────────────
-def print_welcome():
+def mostrar_bienvenida():
     if not RICH:
-        _blank_p()
-        _sep_p()
+        _vacia_plano()
+        _separador_plano()
         print(f"  {BO}  LoCoAudit — Asistente de configuración{RS}")
-        wsl_note = "  (WSL)" if is_wsl() else ""
+        if es_wsl():
+            wsl_note = "  (WSL)"
+        else:
+            wsl_note = ""
         print(f"  Sistema: {OS}{wsl_note} ({ARCH})   Python {platform.python_version()}")
-        _sep_p()
+        _separador_plano()
         return
 
-    wsl_note = "  [dim yellow](WSL)[/dim yellow]" if is_wsl() else ""
+    if es_wsl():
+        wsl_note = "  [dim yellow](WSL)[/dim yellow]"
+    else:
+        wsl_note = ""
 
     content = Text()
     content.append("\n")
@@ -1046,7 +1078,7 @@ def print_welcome():
     content.append("   Node-RED Security Audit Suite\n", style="white")
     content.append("\n")
     content.append(f"   Sistema: {OS}", style="dim")
-    if is_wsl():
+    if es_wsl():
         content.append("  (WSL)", style="dim yellow")
     content.append(f"  {ARCH}   Python {platform.python_version()}\n", style="dim")
 
@@ -1064,22 +1096,25 @@ _SUMMARY_SECTIONS = [
     ("available",       "Módulos activos",               "green"),
     ("not_operational", "Requieren atención",            "yellow"),
     ("unsupported",     "No disponibles en este sistema", "yellow"),
-    # Mismo orden que _tool_summary_lines().
+    # Mismo orden que _lineas_resumen().
     ("unknown",         "Sin comprobar",                 "yellow"),
     ("missing",         "No instaladas",                 "yellow"),
 ]
 
 
-def _print_summary():
+def _mostrar_resumen():
     if OUTPUT_QUEUE is not None:
-        for tipo, texto in _tool_summary_lines():
-            (ok if tipo == "ok" else warn)(texto)
+        for tipo, texto in _lineas_resumen():
+            if tipo == "ok":
+                correcto(texto)
+            else:
+                aviso(texto)
         return
 
     if not RICH:
         return
 
-    grupos = _tool_groups()
+    grupos = _agrupar_herramientas()
 
     t = Table(box=rbox.SIMPLE, show_header=False, pad_edge=False, expand=True)
     t.add_column("icon", width=5,  no_wrap=True)
@@ -1094,11 +1129,17 @@ def _print_summary():
         if not primera:
             t.add_row("", "", "")
         primera = False
-        icono = "✅" if estado == "available" else "⚠️ "
+        if estado == "available":
+            icono = "✅"
+        else:
+            icono = "⚠️ "
         t.add_row("", f"[bold {color}]{titulo}[/bold {color}]", "")
         for label, desc, reason in filas:
             # Si hay motivo, se muestra en lugar de la descripción.
-            detalle = _short_reason(reason) if reason else desc
+            if reason:
+                detalle = _motivo_corto(reason)
+            else:
+                detalle = desc
             t.add_row(f"  [{color}]{icono}[/{color}]", f"[{color}]{label}[/{color}]", detalle)
 
     if primera:
@@ -1123,9 +1164,9 @@ def _print_summary():
 # ─────────────────────────────────────────────
 #  Paso 1 — Dependencias requeridas
 # ─────────────────────────────────────────────
-def step1_required_deps() -> list:
+def paso1_dependencias() -> list:
     global _node_red_pending_install
-    step_header(1, "Dependencias requeridas")
+    cabecera_paso(1, "Dependencias requeridas")
     missing = []
     node_red_missing = False
 
@@ -1142,7 +1183,7 @@ def step1_required_deps() -> list:
         table.add_column("Detalle",     style="dim")
 
         # Node.js
-        if not command_exists("node"):
+        if not existe_comando("node"):
             table.add_row(
                 "Node.js",
                 "[bold red]❌  falta[/bold red]",
@@ -1150,7 +1191,7 @@ def step1_required_deps() -> list:
             )
             missing.append("Node.js")
         else:
-            is_ok, label = get_node_version()
+            is_ok, label = version_node()
             if is_ok:
                 table.add_row("Node.js", "[bold green]✅  ok[/bold green]", label)
             else:
@@ -1162,7 +1203,7 @@ def step1_required_deps() -> list:
                 missing.append("Node.js ≥ v18")
 
         # npm
-        if not command_exists("npm"):
+        if not existe_comando("npm"):
             table.add_row(
                 "npm",
                 "[bold red]❌  falta[/bold red]",
@@ -1173,7 +1214,7 @@ def step1_required_deps() -> list:
             table.add_row("npm", "[bold green]✅  ok[/bold green]", "instalado")
 
         # Node-RED
-        if not command_exists("node-red"):
+        if not existe_comando("node-red"):
             table.add_row(
                 "Node-RED",
                 "[bold red]❌  falta[/bold red]",
@@ -1189,43 +1230,43 @@ def step1_required_deps() -> list:
 
         if missing:
             for item in missing:
-                _err_r(f"{item} — dependencia requerida no encontrada")
+                _fallo_rich(f"{item} — dependencia requerida no encontrada")
     else:
         # ── Node.js ──
-        if not command_exists("node"):
-            err("Node.js no encontrado")
-            tip(f"Instálalo: {MANUAL_INSTALL['node'].get(OS, 'https://nodejs.org')}")
+        if not existe_comando("node"):
+            fallo("Node.js no encontrado")
+            consejo(f"Instálalo: {MANUAL_INSTALL['node'].get(OS, 'https://nodejs.org')}")
             missing.append("Node.js")
         else:
-            is_ok, label = get_node_version()
+            is_ok, label = version_node()
             if is_ok:
-                ok(f"Node.js {label}")
+                correcto(f"Node.js {label}")
             else:
-                err(f"Node.js {label} — se requiere v18 o superior")
-                tip(f"Actualiza: {MANUAL_INSTALL['node'].get(OS)}")
+                fallo(f"Node.js {label} — se requiere v18 o superior")
+                consejo(f"Actualiza: {MANUAL_INSTALL['node'].get(OS)}")
                 missing.append("Node.js ≥ v18")
 
         # ── npm ──
-        if not command_exists("npm"):
-            err("npm no encontrado")
-            tip(f"Instálalo: {MANUAL_INSTALL['npm'].get(OS, 'https://nodejs.org')}")
+        if not existe_comando("npm"):
+            fallo("npm no encontrado")
+            consejo(f"Instálalo: {MANUAL_INSTALL['npm'].get(OS, 'https://nodejs.org')}")
             missing.append("npm")
         else:
-            ok("npm instalado")
+            correcto("npm instalado")
 
         # ── Node-RED ──
-        if not command_exists("node-red"):
-            err("Node-RED no encontrado")
-            tip(f"Instálalo: {MANUAL_INSTALL['node-red'].get(OS)}")
+        if not existe_comando("node-red"):
+            fallo("Node-RED no encontrado")
+            consejo(f"Instálalo: {MANUAL_INSTALL['node-red'].get(OS)}")
             missing.append("Node-RED")
             node_red_missing = True
         else:
-            ok("Node-RED instalado")
+            correcto("Node-RED instalado")
 
     if node_red_missing and "Node.js" not in missing and "Node.js ≥ v18" not in missing and "npm" not in missing:
         _node_red_pending_install = True
         missing.remove("Node-RED")
-        tip("Node-RED se ofrecerá junto con las herramientas opcionales en el paso 2")
+        consejo("Node-RED se ofrecerá junto con las herramientas opcionales en el paso 2")
 
     return missing
 
@@ -1233,7 +1274,7 @@ def step1_required_deps() -> list:
 # ─────────────────────────────────────────────
 #  Paso 2 — Herramientas opcionales
 # ─────────────────────────────────────────────
-def _ask_install_all(pending: list, is_tty: bool) -> bool:
+def _preguntar_instalar_todas(pending: list, is_tty: bool) -> bool:
     """Ofrece instalar de golpe lo que falta y tiene instalación automática."""
     names = ", ".join(label for _, label in pending)
     note  = "  ".join(_INSTALL_NOTES[c] for c, _ in pending if c in _INSTALL_NOTES)
@@ -1258,157 +1299,160 @@ def _ask_install_all(pending: list, is_tty: bool) -> bool:
     if not is_tty:
         return False
 
-    blank()
-    tip(f"Faltan {len(pending)} herramientas recomendadas: {names}")
+    linea_vacia()
+    consejo(f"Faltan {len(pending)} herramientas recomendadas: {names}")
     if note:
-        tip(note)
+        consejo(note)
     if RICH:
         try:
             return bool(Confirm.ask("  ¿Instalarlas [bold]todas[/bold] ahora?", default=False))
         except (EOFError, KeyboardInterrupt):
-            blank()
+            linea_vacia()
             return False
     print(f"\n  ¿Instalarlas {BO}todas{RS} ahora? (s/n)")
     try:
         return input("  → ").strip().lower() in ("s", "si", "sí", "y", "yes")
     except (EOFError, KeyboardInterrupt):
-        blank()
+        linea_vacia()
         return False
 
 
-def _report_install_result(cmd: str, label: str) -> None:
-    """Mensaje final tras una instalación que run_install() dio por buena."""
-    if not _tool_available(cmd):
+def _informar_instalacion(cmd: str, label: str) -> None:
+    """Mensaje final tras una instalación que instalar() dio por buena."""
+    if not _herramienta_disponible(cmd):
         # Instalada pero fuera del alcance de los nodos: no cuenta como disponible.
-        _set_tool_state(cmd, "not_operational", "el sistema todavía no lo encuentra")
-        warn(f"{label} se instaló, pero el sistema todavía no lo encuentra")
-        tip("Abre una ventana de terminal nueva o reinicia el equipo "
-            "para empezar a usarlo.")
+        _fijar_estado(cmd, "not_operational", "el sistema todavía no lo encuentra")
+        aviso(f"{label} se instaló, pero el sistema todavía no lo encuentra")
+        consejo("Abre una ventana de terminal nueva o reinicia el equipo "
+                "para empezar a usarlo.")
         return
 
-    _set_tool_state(cmd, "available")
+    _fijar_estado(cmd, "available")
     # Una sola línea, distinta si ya estaba instalada.
     if _already_installed:
-        ok(f"{label} ya estaba instalado — listo para usar")
+        correcto(f"{label} ya estaba instalado — listo para usar")
     else:
-        ok(f"{label} instalado correctamente — listo para usar")
+        correcto(f"{label} instalado correctamente — listo para usar")
 
     if cmd == "docker":
-        daemon_warn = check_docker_daemon()
+        daemon_warn = comprobar_daemon_docker()
         if daemon_warn:
-            _set_tool_state(cmd, "not_operational", daemon_warn)
-            warn(f"Docker {daemon_warn}")
+            _fijar_estado(cmd, "not_operational", daemon_warn)
+            aviso(f"Docker {daemon_warn}")
 
 
-def step2_optional_tools():
+def paso2_opcionales():
     global _node_red_pending_install
-    step_header(2, "Herramientas opcionales")
+    cabecera_paso(2, "Herramientas opcionales")
 
     is_tty = sys.stdin.isatty()
 
     # Si falta más de una herramienta instalable, se ofrece instalarlas todas a la vez.
     # Antes se consulta a Node una sola vez para dejar la caché llena.
-    _prime_tool_probe()
+    _preparar_sondeo()
 
     # Mismo filtro que dentro del bucle.
     pending = [
         (c, l) for c, l in OPTIONAL_TOOLS
-        if not _tool_available(c)
-        and _probe_is_conclusive()
-        and get_auto_install_cmd(c)
-        and _can_run_install(get_auto_install_cmd(c))
+        if not _herramienta_disponible(c)
+        and _sondeo_concluyente()
+        and comando_instalacion(c)
+        and _puede_instalar(comando_instalacion(c))
     ]
     if _node_red_pending_install:
-        node_red_cmd = get_auto_install_cmd("node-red")
-        if node_red_cmd and _can_run_install(node_red_cmd):
+        node_red_cmd = comando_instalacion("node-red")
+        if node_red_cmd and _puede_instalar(node_red_cmd):
             pending.insert(0, ("node-red", "Node-RED"))
-    install_all = _ask_install_all(pending, is_tty) if len(pending) >= 2 else False
+    if len(pending) >= 2:
+        install_all = _preguntar_instalar_todas(pending, is_tty)
+    else:
+        install_all = False
     if install_all:
-        ok(f"Se instalarán sin preguntar: {', '.join(l for _, l in pending)}")
-        blank()
+        correcto(f"Se instalarán sin preguntar: {', '.join(l for _, l in pending)}")
+        linea_vacia()
 
         if _node_red_pending_install:
-            node_red_cmd = get_auto_install_cmd("node-red")
-            if node_red_cmd and _run_npm(node_red_cmd, "Instalando Node-RED"):
-                if command_exists("node-red"):
-                    ok("Node-RED instalado correctamente")
+            node_red_cmd = comando_instalacion("node-red")
+            if node_red_cmd and _ejecutar_npm(node_red_cmd, "Instalando Node-RED"):
+                if existe_comando("node-red"):
+                    correcto("Node-RED instalado correctamente")
                     _node_red_pending_install = False
                 else:
-                    warn("Node-RED se instaló, pero el comando todavía no aparece en el PATH")
-                    tip("Reinicia el equipo y vuelve a ejecutar el launcher para recargar el PATH")
+                    aviso("Node-RED se instaló, pero el comando todavía no aparece en el PATH")
+                    consejo("Reinicia el equipo y vuelve a ejecutar el launcher para recargar el PATH")
             else:
-                err("No se pudo instalar Node-RED automáticamente")
-                tip(f"Instálalo manualmente: {MANUAL_INSTALL['node-red'].get(OS)}")
+                fallo("No se pudo instalar Node-RED automáticamente")
+                consejo(f"Instálalo manualmente: {MANUAL_INSTALL['node-red'].get(OS)}")
 
     elif _node_red_pending_install:
-        node_red_cmd = get_auto_install_cmd("node-red")
-        if node_red_cmd and not _can_run_install(node_red_cmd):
-            tip("Tu usuario no tiene permisos para instalar Node-RED automáticamente")
-            tip(f"Instálalo manualmente: {MANUAL_INSTALL['node-red'].get(OS)}")
-        elif _ask_install_node_red(is_tty):
-            node_red_cmd = get_auto_install_cmd("node-red")
-            if node_red_cmd and _run_npm(node_red_cmd, "Instalando Node-RED"):
-                if command_exists("node-red"):
-                    ok("Node-RED instalado correctamente")
+        node_red_cmd = comando_instalacion("node-red")
+        if node_red_cmd and not _puede_instalar(node_red_cmd):
+            consejo("Tu usuario no tiene permisos para instalar Node-RED automáticamente")
+            consejo(f"Instálalo manualmente: {MANUAL_INSTALL['node-red'].get(OS)}")
+        elif _preguntar_node_red(is_tty):
+            node_red_cmd = comando_instalacion("node-red")
+            if node_red_cmd and _ejecutar_npm(node_red_cmd, "Instalando Node-RED"):
+                if existe_comando("node-red"):
+                    correcto("Node-RED instalado correctamente")
                     _node_red_pending_install = False
                 else:
-                    warn("Node-RED se instaló, pero el comando todavía no aparece en el PATH")
-                    tip("Reinicia el equipo y vuelve a ejecutar el launcher para recargar el PATH")
+                    aviso("Node-RED se instaló, pero el comando todavía no aparece en el PATH")
+                    consejo("Reinicia el equipo y vuelve a ejecutar el launcher para recargar el PATH")
             else:
-                err("No se pudo instalar Node-RED automáticamente")
-                tip(f"Instálalo manualmente: {MANUAL_INSTALL['node-red'].get(OS)}")
+                fallo("No se pudo instalar Node-RED automáticamente")
+                consejo(f"Instálalo manualmente: {MANUAL_INSTALL['node-red'].get(OS)}")
 
     for cmd, label in OPTIONAL_TOOLS:
         # Lynis is not available natively on Windows
         if cmd == "lynis" and OS == "Windows":
             # No existe para esta plataforma, que no es lo mismo que no estar instalada.
-            _set_tool_state(cmd, "unsupported", "no existe versión para Windows sin WSL")
-            warn(f"{label} — no disponible en Windows sin WSL")
-            tip("Instala WSL: https://learn.microsoft.com/es-es/windows/wsl/install")
-            blank()
+            _fijar_estado(cmd, "unsupported", "no existe versión para Windows sin WSL")
+            aviso(f"{label} — no disponible en Windows sin WSL")
+            consejo("Instala WSL: https://learn.microsoft.com/es-es/windows/wsl/install")
+            linea_vacia()
             continue
 
         # Misma vara de medir que el resto: si LoCoAudit puede usarla, está.
-        if _tool_available(cmd):
+        if _herramienta_disponible(cmd):
             if cmd == "docker":
-                daemon_warn = check_docker_daemon()
+                daemon_warn = comprobar_daemon_docker()
                 if daemon_warn:
-                    _set_tool_state(cmd, "not_operational", daemon_warn)
-                    warn(f"Docker {daemon_warn}")
+                    _fijar_estado(cmd, "not_operational", daemon_warn)
+                    aviso(f"Docker {daemon_warn}")
                 else:
-                    _set_tool_state(cmd, "available")
-                    ok("Docker instalado y daemon activo")
+                    _fijar_estado(cmd, "available")
+                    correcto("Docker instalado y daemon activo")
             else:
-                _set_tool_state(cmd, "available")
-                ok(f"{label} instalado — {TOOL_DESC.get(cmd, '')}")
-            if not command_exists(cmd):
-                tip("Está en el equipo, pero el sistema no la tiene registrada: "
-                    "LoCoAudit la usará igualmente, y otros programas no la "
-                    "encontrarán hasta que la reinstales desde su instalador oficial.")
+                _fijar_estado(cmd, "available")
+                correcto(f"{label} instalado — {TOOL_DESC.get(cmd, '')}")
+            if not existe_comando(cmd):
+                consejo("Está en el equipo, pero el sistema no la tiene registrada: "
+                        "LoCoAudit la usará igualmente, y otros programas no la "
+                        "encontrarán hasta que la reinstales desde su instalador oficial.")
             continue
 
         # ── No se ha encontrado ──
         # Con Node se puede afirmar que falta; sin Node solo que no se pudo comprobar.
-        if not _probe_is_conclusive():
-            _set_tool_state(cmd, "unknown", "no se ha podido comprobar desde el asistente")
-            warn(f"{label} — no se ha podido comprobar si está instalado")
-            tip("El asistente no ha podido consultarlo con Node. Si ya lo tienes, "
-                "LoCoAudit lo usará igualmente.")
-            tip(f"Para instalarlo: {MANUAL_INSTALL.get(cmd, {}).get(OS, 'Consulta la documentación oficial')}")
-            blank()
+        if not _sondeo_concluyente():
+            _fijar_estado(cmd, "unknown", "no se ha podido comprobar desde el asistente")
+            aviso(f"{label} — no se ha podido comprobar si está instalado")
+            consejo("El asistente no ha podido consultarlo con Node. Si ya lo tienes, "
+                    "LoCoAudit lo usará igualmente.")
+            consejo(f"Para instalarlo: {MANUAL_INSTALL.get(cmd, {}).get(OS, 'Consulta la documentación oficial')}")
+            linea_vacia()
             continue
 
-        _set_tool_state(cmd, "missing")
-        warn(f"{label} no encontrado — {TOOL_DESC.get(cmd, '')}")
+        _fijar_estado(cmd, "missing")
+        aviso(f"{label} no encontrado — {TOOL_DESC.get(cmd, '')}")
 
-        auto_cmd = get_auto_install_cmd(cmd)
+        auto_cmd = comando_instalacion(cmd)
 
         # Sin permisos no se ofrece la instalación: se da el comando para ejecutarlo a mano.
-        if auto_cmd and not _can_run_install(auto_cmd):
-            tip("Tu usuario no tiene permisos de administrador en este equipo, así "
-                "que el asistente no puede instalarlo por ti.")
-            tip(f"Pídeselo a quien administre el equipo, o ejecútalo tú con una cuenta que pueda: {auto_cmd}")
-            blank()
+        if auto_cmd and not _puede_instalar(auto_cmd):
+            consejo("Tu usuario no tiene permisos de administrador en este equipo, así "
+                    "que el asistente no puede instalarlo por ti.")
+            consejo(f"Pídeselo a quien administre el equipo, o ejecútalo tú con una cuenta que pueda: {auto_cmd}")
+            linea_vacia()
             continue
 
         if auto_cmd and OUTPUT_QUEUE is not None:
@@ -1430,108 +1474,111 @@ def step2_optional_tools():
                 # result queda vacía si se cierra la ventana, o con False si se omite.
                 answer = bool(result and result[0])
             if answer:
-                blank()
-                success = run_install(auto_cmd, label)
+                linea_vacia()
+                success = instalar(auto_cmd, label)
                 if success:
                     # Si ya estaba, no cuenta para el aviso final de reinicio.
                     if not _already_installed:
                         _installed_this_run.append(label)
-                    _report_install_result(cmd, label)
-                # Si falla, run_install() ya ha mostrado el detalle.
+                    _informar_instalacion(cmd, label)
+                # Si falla, instalar() ya ha mostrado el detalle.
             else:
-                warn(f"Omitiendo {label} — el nodo correspondiente funcionará en modo reducido")
+                aviso(f"Omitiendo {label} — el nodo correspondiente funcionará en modo reducido")
 
         elif auto_cmd and is_tty:
             if install_all:
                 answer = True
             elif RICH:
-                tip(f"Comando: {auto_cmd}")
-                blank()
+                consejo(f"Comando: {auto_cmd}")
+                linea_vacia()
                 try:
                     answer = Confirm.ask(
                         f"  ¿Deseas instalar [bold]{label}[/bold] ahora?",
                         default=False,
                     )
                 except (EOFError, KeyboardInterrupt):
-                    blank()
-                    warn(f"Omitiendo {label}")
-                    blank()
+                    linea_vacia()
+                    aviso(f"Omitiendo {label}")
+                    linea_vacia()
                     continue
             else:
                 print(f"\n  ¿Deseas instalar {BO}{label}{RS} ahora? (s/n)")
-                tip(f"Comando: {auto_cmd}")
+                consejo(f"Comando: {auto_cmd}")
                 try:
                     answer = input("  → ").strip().lower() in ("s", "si", "sí", "y", "yes")
                 except (EOFError, KeyboardInterrupt):
-                    blank()
-                    warn(f"Omitiendo {label}")
-                    blank()
+                    linea_vacia()
+                    aviso(f"Omitiendo {label}")
+                    linea_vacia()
                     continue
 
             if answer:
-                blank()
-                success = run_install(auto_cmd, label)
+                linea_vacia()
+                success = instalar(auto_cmd, label)
                 if success:
                     # Si ya estaba, no cuenta para el aviso final de reinicio.
                     if not _already_installed:
                         _installed_this_run.append(label)
-                    _report_install_result(cmd, label)
-                # Si falla, run_install() ya ha mostrado el detalle.
+                    _informar_instalacion(cmd, label)
+                # Si falla, instalar() ya ha mostrado el detalle.
             else:
-                warn(f"Omitiendo {label} — el nodo correspondiente funcionará en modo reducido")
+                aviso(f"Omitiendo {label} — el nodo correspondiente funcionará en modo reducido")
         else:
             # No auto-install available or non-interactive shell
-            tip(f"Para instalarlo: {MANUAL_INSTALL.get(cmd, {}).get(OS, 'Consulta la documentación oficial')}")
+            consejo(f"Para instalarlo: {MANUAL_INSTALL.get(cmd, {}).get(OS, 'Consulta la documentación oficial')}")
 
-        blank()
+        linea_vacia()
 
     # Se deriva siempre de _tool_status.
-    lineas = _tool_summary_lines()
+    lineas = _lineas_resumen()
     if len(lineas) == 1 and lineas[0][0] == "ok":
-        ok("Todas las herramientas opcionales están disponibles")
+        correcto("Todas las herramientas opcionales están disponibles")
     else:
         for tipo, texto in lineas:
-            (ok if tipo == "ok" else warn)(texto)
+            if tipo == "ok":
+                correcto(texto)
+            else:
+                aviso(texto)
         # Solo si alguna falta o no funciona de verdad.
-        grupos = _tool_groups()
+        grupos = _agrupar_herramientas()
         if grupos["missing"] or grupos["not_operational"] or grupos["unsupported"]:
-            tip("Los nodos que dependen de ellas seguirán funcionando en modo "
-                "reducido: avisarán en el panel en vez de dar un resultado vacío.")
+            consejo("Los nodos que dependen de ellas seguirán funcionando en modo "
+                    "reducido: avisarán en el panel en vez de dar un resultado vacío.")
         if grupos["unknown"]:
-            tip("No se ha podido comprobar su estado desde el asistente. Si están "
-                "instaladas, los nodos las usarán igualmente: LoCoAudit las busca "
-                "también fuera del PATH de esta ventana.")
+            consejo("No se ha podido comprobar su estado desde el asistente. Si están "
+                    "instaladas, los nodos las usarán igualmente: LoCoAudit las busca "
+                    "también fuera del PATH de esta ventana.")
 
     if _installed_this_run:
-        blank()
-        ok(f"Instaladas en esta sesión: {', '.join(_installed_this_run)}")
-        tip("LoCoAudit ya puede usarlas. Puedes continuar sin reiniciar nada.")
+        linea_vacia()
+        correcto(f"Instaladas en esta sesión: {', '.join(_installed_this_run)}")
+        consejo("LoCoAudit ya puede usarlas. Puedes continuar sin reiniciar nada.")
         if OS == "Windows":
-            tip("Cuando te venga bien, reinicia Windows para que queden disponibles "
-                "también en cualquier otro programa o ventana de terminal. Es una "
-                "recomendación, no un requisito para usar LoCoAudit.")
+            consejo("Cuando te venga bien, reinicia Windows para que queden disponibles "
+                    "también en cualquier otro programa o ventana de terminal. Es una "
+                    "recomendación, no un requisito para usar LoCoAudit.")
 
-    return not _node_red_pending_install or command_exists("node-red")
+    return not _node_red_pending_install or existe_comando("node-red")
 
 
 # ─────────────────────────────────────────────
 #  Paso 3 — Registrar LoCoAudit en Node-RED
 # ─────────────────────────────────────────────
-def step3_register_package():
-    step_header(3, "Registrando LoCoAudit en Node-RED")
+def paso3_registrar():
+    cabecera_paso(3, "Registrando LoCoAudit en Node-RED")
 
     os.makedirs(NODE_RED_DIR, exist_ok=True)
     cmd = f'{NPM_CMD} install "{PROJECT_ROOT}" --prefix "{NODE_RED_DIR}"'
-    tip(cmd)
+    consejo(cmd)
 
-    success = _run_npm(cmd, "Registrando LoCoAudit en Node-RED")
+    success = _ejecutar_npm(cmd, "Registrando LoCoAudit en Node-RED")
 
     if success:
-        ok(f"LoCoAudit registrado en {NODE_RED_DIR}")
+        correcto(f"LoCoAudit registrado en {NODE_RED_DIR}")
     else:
-        err("npm install terminó con error")
-        warn("Los nodos de LoCoAudit podrían no aparecer en la paleta de Node-RED")
-        tip(f"Intenta manualmente desde la carpeta del proyecto: {cmd}")
+        fallo("npm install terminó con error")
+        aviso("Los nodos de LoCoAudit podrían no aparecer en la paleta de Node-RED")
+        consejo(f"Intenta manualmente desde la carpeta del proyecto: {cmd}")
 
 
 # ─────────────────────────────────────────────
@@ -1541,54 +1588,54 @@ _DASHBOARD_PKG  = "@flowfuse/node-red-dashboard"
 _DASHBOARD_PATH = os.path.join(NODE_RED_DIR, "node_modules", "@flowfuse", "node-red-dashboard")
 
 
-def step4_install_dashboard():
-    step_header(4, "Dependencias de Node-RED")
+def paso4_dashboard():
+    cabecera_paso(4, "Dependencias de Node-RED")
 
     if os.path.isdir(_DASHBOARD_PATH):
-        ok(f"{_DASHBOARD_PKG} ya instalado")
+        correcto(f"{_DASHBOARD_PKG} ya instalado")
         return
 
     cmd = f'{NPM_CMD} install {_DASHBOARD_PKG} --prefix "{NODE_RED_DIR}"'
-    tip(cmd)
+    consejo(cmd)
 
-    success = _run_npm(cmd, f"Instalando {_DASHBOARD_PKG}")
+    success = _ejecutar_npm(cmd, f"Instalando {_DASHBOARD_PKG}")
 
     if success:
-        ok(f"{_DASHBOARD_PKG} instalado correctamente")
+        correcto(f"{_DASHBOARD_PKG} instalado correctamente")
     else:
-        err(f"npm install {_DASHBOARD_PKG} terminó con error")
-        tip(f"Instálalo manualmente: {cmd}")
+        fallo(f"npm install {_DASHBOARD_PKG} terminó con error")
+        consejo(f"Instálalo manualmente: {cmd}")
 
 
 # ─────────────────────────────────────────────
 #  Paso 5 — Cargar flujos de demo
 # ─────────────────────────────────────────────
-def step5_copy_flows():
-    step_header(5, "Flujos de demo")
+def paso5_flujos():
+    cabecera_paso(5, "Flujos de demo")
 
     if not os.path.exists(FLOWS_SRC):
-        warn(f"No se encontró {FLOWS_SRC} — omitiendo este paso")
-        tip("Puedes importar flujos manualmente desde Node-RED → menú ≡ → Import")
+        aviso(f"No se encontró {FLOWS_SRC} — omitiendo este paso")
+        consejo("Puedes importar flujos manualmente desde Node-RED → menú ≡ → Import")
         return
 
     if os.path.exists(FLOWS_DST):
-        blank()
-        warn("Ya tienes flujos en Node-RED. Para cargar los flujos de demo de LoCoAudit,")
+        linea_vacia()
+        aviso("Ya tienes flujos en Node-RED. Para cargar los flujos de demo de LoCoAudit,")
         if RICH and OUTPUT_QUEUE is None:
             console.print("       importa manualmente el archivo [bold]examples/flows.json[/bold] desde el menú de Node-RED.")
         else:
-            tip("importa manualmente el archivo examples/flows.json desde el menú de Node-RED.")
-        tip("Node-RED → menú ≡ (esquina superior derecha) → Import → sube el archivo")
-        tip(f"Ruta del archivo: {FLOWS_SRC}")
+            consejo("importa manualmente el archivo examples/flows.json desde el menú de Node-RED.")
+        consejo("Node-RED → menú ≡ (esquina superior derecha) → Import → sube el archivo")
+        consejo(f"Ruta del archivo: {FLOWS_SRC}")
     else:
         os.makedirs(NODE_RED_DIR, exist_ok=True)
         import shutil as _sh
         try:
             _sh.copy2(FLOWS_SRC, FLOWS_DST)
-            ok(f"Flujos de demo cargados en {FLOWS_DST}")
+            correcto(f"Flujos de demo cargados en {FLOWS_DST}")
         except OSError as exc:
-            err(f"No se pudo copiar flows.json: {exc}")
-            tip(f"Cópialo manualmente: cp \"{FLOWS_SRC}\" \"{FLOWS_DST}\"")
+            fallo(f"No se pudo copiar flows.json: {exc}")
+            consejo(f"Cópialo manualmente: cp \"{FLOWS_SRC}\" \"{FLOWS_DST}\"")
 
 
 # ─────────────────────────────────────────────
@@ -1597,34 +1644,34 @@ def step5_copy_flows():
 NODE_RED_PROC = None   # subprocess.Popen mientras Node-RED corre en modo GUI
 
 
-def _detached_popen_kwargs() -> dict:
+def _opciones_popen() -> dict:
     """Flags de arranque que permiten matar luego al hijo y a su descendencia."""
     if OS == "Windows":
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
 
 
-def is_node_red_running() -> bool:
+def node_red_activo() -> bool:
     """¿Está Node-RED corriendo? Fuente única para el estado de la ventana."""
     return NODE_RED_PROC is not None and NODE_RED_PROC.poll() is None
 
 
-def start_node_red() -> bool:
+def arrancar_node_red() -> bool:
     """Lanza Node-RED en segundo plano (sin repetir los pasos previos). True si arrancó."""
     global NODE_RED_PROC
     try:
         NODE_RED_PROC = subprocess.Popen(
-            NODE_RED_ARGS, env=_child_env(), **_detached_popen_kwargs()
+            NODE_RED_ARGS, env=_entorno_hijo(), **_opciones_popen()
         )
     except FileNotFoundError:
         NODE_RED_PROC = None
-        err(f"No se pudo lanzar '{NODE_RED_CMD}' — comprueba que está en el PATH")
-        tip(f"Instálalo: {MANUAL_INSTALL['node-red'].get(OS)}")
+        fallo(f"No se pudo lanzar '{NODE_RED_CMD}' — comprueba que está en el PATH")
+        consejo(f"Instálalo: {MANUAL_INSTALL['node-red'].get(OS)}")
         return False
     return True
 
 
-def stop_node_red(timeout: int = 10) -> bool:
+def detener_node_red(timeout: int = 10) -> bool:
     """Detiene Node-RED y su descendencia. True si había algo que parar."""
     global NODE_RED_PROC
     proc = NODE_RED_PROC
@@ -1652,75 +1699,75 @@ def stop_node_red(timeout: int = 10) -> bool:
 # ─────────────────────────────────────────────
 #  Paso 6 — Arrancar Node-RED
 # ─────────────────────────────────────────────
-def step6_launch():
-    step_header(6, "Iniciando Node-RED")
-    _print_summary()
-    ok("Todo listo. Arrancando Node-RED...")
+def paso6_arrancar():
+    cabecera_paso(6, "Iniciando Node-RED")
+    _mostrar_resumen()
+    correcto("Todo listo. Arrancando Node-RED...")
 
     if OUTPUT_QUEUE is not None:
         # GUI mode: launch without blocking the background thread
-        if start_node_red():
-            blank()
-            ok("Node-RED iniciado — abre http://localhost:1880 en tu navegador")
+        if arrancar_node_red():
+            linea_vacia()
+            correcto("Node-RED iniciado — abre http://localhost:1880 en tu navegador")
         return
 
     # Terminal mode: blocking
     if RICH:
         console.print()
-        sep()
+        separador()
         console.print()
     else:
-        tip(f"Abre tu navegador en: {BO}http://localhost:1880{RS}")
-        blank()
-        sep()
-        blank()
+        consejo(f"Abre tu navegador en: {BO}http://localhost:1880{RS}")
+        linea_vacia()
+        separador()
+        linea_vacia()
 
     try:
-        subprocess.run(NODE_RED_ARGS, env=_child_env())
+        subprocess.run(NODE_RED_ARGS, env=_entorno_hijo())
     except KeyboardInterrupt:
-        blank()
-        warn("Node-RED detenido por el usuario")
-        blank()
+        linea_vacia()
+        aviso("Node-RED detenido por el usuario")
+        linea_vacia()
     except FileNotFoundError:
-        err(f"No se pudo lanzar '{NODE_RED_CMD}' — comprueba que está en el PATH")
-        tip(f"Instálalo: {MANUAL_INSTALL['node-red'].get(OS)}")
+        fallo(f"No se pudo lanzar '{NODE_RED_CMD}' — comprueba que está en el PATH")
+        consejo(f"Instálalo: {MANUAL_INSTALL['node-red'].get(OS)}")
         sys.exit(1)
 
 
-def _gui_start_node_red() -> bool:
+def _arrancar_desde_gui() -> bool:
     """Arranque desde el botón de la ventana; vuelca la tarjeta pendiente al terminar."""
     global _gui_card_title
-    exito = start_node_red()
+    exito = arrancar_node_red()
     if exito:
-        ok("Node-RED iniciado — abre http://localhost:1880 en tu navegador")
+        correcto("Node-RED iniciado — abre http://localhost:1880 en tu navegador")
     _gui_card_title = "Node-RED"
-    _gui_flush_card()
+    _volcar_tarjeta()
     return exito
 
 
 # ─────────────────────────────────────────────
-#  run_all_steps — hilo de fondo para el modo GUI
+#  ejecutar_pasos — hilo de fondo para el modo GUI
 # ─────────────────────────────────────────────
-def run_all_steps():
+def ejecutar_pasos():
     """Ejecuta los 6 pasos en el hilo de fondo y envía 'done' al terminar."""
-    missing = step1_required_deps()
+    missing = paso1_dependencias()
     if missing:
-        err(f"Faltan dependencias requeridas: {', '.join(missing)}")
-        tip("Instálalas y vuelve a ejecutar el launcher")
-        _gui_flush_card()
+        fallo(f"Faltan dependencias requeridas: {', '.join(missing)}")
+        consejo("Instálalas y vuelve a ejecutar el launcher")
+        _volcar_tarjeta()
         OUTPUT_QUEUE.put({"type": "done"})
         return
-    if not step2_optional_tools():
-        err("Node-RED sigue sin estar disponible")
-        tip("Reinicia el equipo si acabas de instalarlo y vuelve a ejecutar el launcher")
-        _gui_flush_card()
+    if not paso2_opcionales():
+        fallo("Node-RED sigue sin estar disponible")
+        consejo("Reinicia el equipo si acabas de instalarlo y vuelve a ejecutar el launcher")
+        _volcar_tarjeta()
         OUTPUT_QUEUE.put({"type": "done"})
         return
-    step3_register_package()
-    step4_install_dashboard()
-    step5_copy_flows()
-    step6_launch()
-    _gui_flush_card()
+    paso3_registrar()
+    paso4_dashboard()
+    paso5_flujos()
+    paso6_arrancar()
+    _volcar_tarjeta()
     OUTPUT_QUEUE.put({"type": "done", "node_red": NODE_RED_PROC is not None})
 
 
@@ -1730,30 +1777,30 @@ def run_all_steps():
 if __name__ == "__main__":
     if HAS_GUI:
         gui = LoCoAuditGUI(VERSION, OS, platform.python_version(),
-                           on_stop=stop_node_red,
-                           on_start=_gui_start_node_red,
-                           is_running=is_node_red_running)
+                           on_stop=detener_node_red,
+                           on_start=_arrancar_desde_gui,
+                           is_running=node_red_activo)
         OUTPUT_QUEUE = gui.q
-        threading.Thread(target=run_all_steps, daemon=True).start()
-        gui.run()
+        threading.Thread(target=ejecutar_pasos, daemon=True).start()
+        gui.ejecutar()
     else:
-        print_welcome()
+        mostrar_bienvenida()
 
-        missing = step1_required_deps()
+        missing = paso1_dependencias()
         if missing:
-            blank()
-            err(f"Faltan dependencias requeridas: {', '.join(missing)}")
-            tip("Instálalas y vuelve a ejecutar: python3 launcher/lcaudit_launcher.py")
-            blank()
+            linea_vacia()
+            fallo(f"Faltan dependencias requeridas: {', '.join(missing)}")
+            consejo("Instálalas y vuelve a ejecutar: python3 launcher/lcaudit_launcher.py")
+            linea_vacia()
             sys.exit(1)
 
-        if not step2_optional_tools():
-            blank()
-            err("Node-RED sigue sin estar disponible")
-            tip("Reinicia el equipo si acabas de instalarlo y vuelve a ejecutar el launcher")
-            blank()
+        if not paso2_opcionales():
+            linea_vacia()
+            fallo("Node-RED sigue sin estar disponible")
+            consejo("Reinicia el equipo si acabas de instalarlo y vuelve a ejecutar el launcher")
+            linea_vacia()
             sys.exit(1)
-        step3_register_package()
-        step4_install_dashboard()
-        step5_copy_flows()
-        step6_launch()
+        paso3_registrar()
+        paso4_dashboard()
+        paso5_flujos()
+        paso6_arrancar()

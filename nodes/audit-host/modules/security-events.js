@@ -4,20 +4,20 @@
  *  Sin fuentes devuelve { skipped, reason }; las que fallan sueltas van en `partial`. */
 
 const fs = require("fs");
-const { execCommand, commandExists } = require("../../../lib/executor");
+const { ejecutar, existeComando } = require("../../../lib/executor");
 const {
-  isServiceAccount,
-  normalizeWinIp,
-  correlateWindowsLogons,
+  esCuentaDeServicio,
+  normalizarIpWindows,
+  correlacionarInicios,
 } = require("../../../lib/win-logons");
-const { withTempFile } = require("../../../lib/utils");
+const { conFicheroTemporal } = require("../../../lib/utils");
 
 const LOG_TIMEOUT_MS = 60000;   // `log show` en macOS puede tardar
 const CMD_TIMEOUT_MS = 15000;   // journalctl / who / last / lastb
 const AUTH_LOG = "/var/log/auth.log";
 
 /** Timestamp del principio de la línea, venga en ISO o en syslog. */
-function extractTimestamp(line) {
+function extraerFecha(line) {
   // `log show --style syslog`: 2026-07-02 10:15:30.123456+0200
   const iso = line.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/);
   if (iso) return `${iso[1]} ${iso[2]}`;
@@ -31,24 +31,32 @@ function extractTimestamp(line) {
 }
 
 /** El PID identifica la sesión y sirve para deduplicar las líneas de un mismo intento. */
-function tagPid(line, tagRe) {
+function pidDeEtiqueta(line, tagRe) {
   const m = line.match(tagRe);
-  return m ? m[1] : null;
+  if (m) {
+    return m[1];
+  } else {
+    return null;
+  }
 }
 
 /** "sshd-session[5775]:" → "5775"; también sshd y sshd-auth. */
 const SSHD_PID_RE = /sshd(?:-session|-auth)?\[(\d+)\]/;
 
 /** Clave de sesión sin [PID] (OpenSSH de Windows): IP:puerto, único por conexión TCP. */
-function connKey(line) {
+function claveConexion(line) {
   let m = line.match(/\bfrom (\S+) port (\d+)/);
   if (!m) m = line.match(/\buser \S+ (\S+) port (\d+)/);
-  return m ? `${m[1]}:${m[2]}` : null;
+  if (m) {
+    return `${m[1]}:${m[2]}`;
+  } else {
+    return null;
+  }
 }
 
 /** Líneas de sshd y el error PAM de macOS. Solo cuenta "Failed password"; "Invalid user" y "Connection closed"
  *  son respaldo, uno por sesión, para los fallos de publickey. */
-function parseSshdLines(text) {
+function leerSshd(text) {
   const accepted = [];
   const failed = [];
   const failedKeys = new Set();        // sesiones con al menos un "Failed password"
@@ -59,7 +67,7 @@ function parseSshdLines(text) {
     const line = rawLine.trim();
     if (!line) continue;
     // PID cuando lo hay; si no, IP:puerto.
-    const sessionKey = tagPid(line, SSHD_PID_RE) || connKey(line);
+    const sessionKey = pidDeEtiqueta(line, SSHD_PID_RE) || claveConexion(line);
 
     let m = line.match(/Accepted (\S+) for (?:invalid user )?(\S+) from (\S+)/);
     if (m) {
@@ -67,7 +75,7 @@ function parseSshdLines(text) {
         method: m[1],
         user: m[2],
         ip: m[3],
-        timestamp: extractTimestamp(line),
+        timestamp: extraerFecha(line),
         line,
       });
       continue;
@@ -82,7 +90,7 @@ function parseSshdLines(text) {
       failed.push({
         user: m[1],
         ip: m[2],
-        timestamp: extractTimestamp(line),
+        timestamp: extraerFecha(line),
         line,
       });
       if (sessionKey) failedKeys.add(sessionKey);
@@ -100,7 +108,7 @@ function parseSshdLines(text) {
       if (!fallbackByKey.has(key)) {
         fallbackByKey.set(key, {
           key: sessionKey,
-          ev: { user: m[1], ip: m[2], timestamp: extractTimestamp(line), line },
+          ev: { user: m[1], ip: m[2], timestamp: extraerFecha(line), line },
         });
       }
     }
@@ -116,7 +124,7 @@ function parseSshdLines(text) {
 }
 
 /** Líneas de sudo y su: un sudo correcto lleva COMMAND=; los fallos, los mensajes de contraseña de sudo o pam_unix. */
-function parseSudoLines(text) {
+function leerSudo(text) {
   const ok = [];
   const failed = [];
   for (const rawLine of String(text || "").split("\n")) {
@@ -128,7 +136,7 @@ function parseSudoLines(text) {
       ok.push({
         user: m[1],
         command: m[2].trim(),
-        timestamp: extractTimestamp(line),
+        timestamp: extraerFecha(line),
         line,
       });
       continue;
@@ -137,12 +145,16 @@ function parseSudoLines(text) {
     m = line.match(/(\S+) : \d+ incorrect password attempt/);
     if (!m) m = line.match(/(\S+) : a password is required/);
     if (!m) {
-      m = /authentication failure/.test(line) ? line.match(/\buser=(\S+)/) : null;
+      if (/authentication failure/.test(line)) {
+        m = line.match(/\buser=(\S+)/);
+      } else {
+        m = null;
+      }
     }
     if (m) {
       failed.push({
         user: m[1],
-        timestamp: extractTimestamp(line),
+        timestamp: extraerFecha(line),
         line,
       });
       continue;
@@ -154,7 +166,7 @@ function parseSudoLines(text) {
       failed.push({
         user: m[1],
         target: m[2],
-        timestamp: extractTimestamp(line),
+        timestamp: extraerFecha(line),
         line,
       });
       continue;
@@ -166,7 +178,7 @@ function parseSudoLines(text) {
       ok.push({
         user: m[2],
         command: `su → ${m[1]}`,
-        timestamp: extractTimestamp(line),
+        timestamp: extraerFecha(line),
         line,
       });
     }
@@ -175,7 +187,7 @@ function parseSudoLines(text) {
 }
 
 /** `who`: <user> <tty> <fecha> [(origen)], con el origen solo en las sesiones remotas. */
-function parseWhoLines(text) {
+function leerWho(text) {
   const sessions = [];
   for (const rawLine of String(text || "").split("\n")) {
     const line = rawLine.trim();
@@ -197,9 +209,9 @@ function parseWhoLines(text) {
 const JOURNAL_DENIED_RE = /not seeing messages from other users|insufficient permissions|permission denied/i;
 
 /** Si el comando falla, el motivo va a partial[] y devuelve null, para no confundirlo con una salida vacía. */
-async function tryExec(cmd, timeoutMs, sourceName, partial) {
+async function intentarEjecutar(cmd, timeoutMs, sourceName, partial) {
   try {
-    return await execCommand(cmd, timeoutMs);
+    return await ejecutar(cmd, timeoutMs);
   } catch (err) {
     partial.push({ source: sourceName, reason: err.message || "exec failed" });
     return null;
@@ -207,39 +219,45 @@ async function tryExec(cmd, timeoutMs, sourceName, partial) {
 }
 
 /** journalctl con stderr: { text, denied }, o null si falló. Un fallo por permisos lleva kind propio. */
-async function tryJournal(cmd, sourceName, partial) {
+async function intentarJournal(cmd, sourceName, partial) {
   try {
-    const { stdout, stderr } = await execCommand(cmd, CMD_TIMEOUT_MS, { withStderr: true });
+    const { stdout, stderr } = await ejecutar(cmd, CMD_TIMEOUT_MS, { withStderr: true });
     return { text: stdout, denied: JOURNAL_DENIED_RE.test(stderr || "") };
   } catch (err) {
     const denied = JOURNAL_DENIED_RE.test(`${err.stderr || ""} ${err.message || ""}`);
+    let permiso;
+    if (denied) {
+      permiso = { kind: "no-permission" };
+    } else {
+      permiso = {};
+    }
     partial.push({
       source: sourceName,
       reason: err.message || "exec failed",
-      ...(denied ? { kind: "no-permission" } : {}),
+      ...permiso,
     });
     return null;
   }
 }
 
 /** Linux: journalctl primero, auth.log de respaldo. */
-async function collectLinux(windowHours, sources, partial) {
+async function recogerLinux(windowHours, sources, partial) {
   let sshText = "";
   let sudoText = "";
   let logsChecked = false;
 
-  if (await commandExists("journalctl")) {
+  if (await existeComando("journalctl")) {
     // Desde OpenSSH 9.8 autentica `sshd-session` (y `sshd-auth`): hace falta más de un _COMM=.
     // `-o short-iso` porque para deduplicar hacen falta timestamp y [PID].
-    const sshRes = await tryJournal(
+    const sshRes = await intentarJournal(
       `journalctl _COMM=sshd _COMM=sshd-session _COMM=sshd-auth --since "-${windowHours}h" --no-pager -o short-iso`,
       "journalctl(sshd)", partial
     );
-    const sudoRes = await tryJournal(
+    const sudoRes = await intentarJournal(
       `journalctl _COMM=sudo --since "-${windowHours}h" --no-pager -o short-iso`,
       "journalctl(sudo)", partial
     );
-    const suRes = await tryJournal(
+    const suRes = await intentarJournal(
       `journalctl _COMM=su --since "-${windowHours}h" --no-pager -o short-iso`,
       "journalctl(su)", partial
     );
@@ -271,10 +289,16 @@ async function collectLinux(windowHours, sources, partial) {
       sources.push("auth.log");
       logsChecked = true;
     } catch (err) {
+      let permiso;
+      if (err.code === "EACCES" || err.code === "EPERM") {
+        permiso = { kind: "no-permission" };
+      } else {
+        permiso = {};
+      }
       partial.push({
         source: "auth.log",
         reason: `no legible: ${err.message}`,
-        ...(err.code === "EACCES" || err.code === "EPERM" ? { kind: "no-permission" } : {}),
+        ...permiso,
       });
     }
   } else {
@@ -284,13 +308,13 @@ async function collectLinux(windowHours, sources, partial) {
     });
   }
 
-  const ssh = parseSshdLines(sshText);
-  const sudo = parseSudoLines(sudoText);
+  const ssh = leerSshd(sshText);
+  const sudo = leerSudo(sudoText);
 
   // lastb suele pedir root: solo se intenta si no hubo fallidos por otra vía, y su fallo es un skip parcial.
-  if (ssh.failed.length === 0 && (await commandExists("lastb"))) {
+  if (ssh.failed.length === 0 && (await existeComando("lastb"))) {
     try {
-      const lastbOut = await execCommand("lastb -20", CMD_TIMEOUT_MS);
+      const lastbOut = await ejecutar("lastb -20", CMD_TIMEOUT_MS);
       for (const line of lastbOut.split("\n")) {
         const m = line.trim().match(/^(\S+)\s+(\S+)\s+(\S+)/);
         if (m && m[1] !== "btmp") {
@@ -307,25 +331,25 @@ async function collectLinux(windowHours, sources, partial) {
 }
 
 /** macOS: todo sale del log unificado. */
-async function collectDarwin(windowHours, sources, partial) {
+async function recogerMac(windowHours, sources, partial) {
   let sshText = "";
   let sudoText = "";
   let logsChecked = false;
 
-  if (await commandExists("log")) {
+  if (await existeComando("log")) {
     // Desde OpenSSH 9.8 los "Accepted" salen de `sshd-session` a nivel Info: hace falta --info.
-    const sshOut = await tryExec(
+    const sshOut = await intentarEjecutar(
       `log show --style syslog --info --predicate '(process == "sshd") OR (process == "sshd-session")' --last ${windowHours}h`,
       LOG_TIMEOUT_MS, "log(sshd)", partial
     );
-    const sudoOut = await tryExec(
+    const sudoOut = await intentarEjecutar(
       `log show --style syslog --info --predicate 'process == "sudo"' --last ${windowHours}h`,
       LOG_TIMEOUT_MS, "log(sudo)", partial
     );
     sshText = sshOut || "";
     sudoText = sudoOut || "";
     // `su` es otro proceso: sus fallos salen como "BAD SU ..." a nivel Default.
-    const suText = await tryExec(
+    const suText = await intentarEjecutar(
       `log show --style syslog --predicate 'process == "su"' --last ${windowHours}h`,
       LOG_TIMEOUT_MS, "log(su)", partial
     );
@@ -339,20 +363,26 @@ async function collectDarwin(windowHours, sources, partial) {
     partial.push({ source: "log", reason: "comando `log` no disponible" });
   }
 
-  return { ssh: parseSshdLines(sshText), sudo: parseSudoLines(sudoText), logsChecked };
+  return { ssh: leerSshd(sshText), sudo: leerSudo(sudoText), logsChecked };
 }
 
 const PS_TIMEOUT_MS = 60000; // Get-WinEvent sobre el canal Security puede tardar
 
 /** ConvertTo-Json da objeto con un elemento y array con varios; aquí siempre array. */
-function toArray(v) {
-  return Array.isArray(v) ? v : v == null ? [] : [v];
+function comoLista(v) {
+  if (Array.isArray(v)) {
+    return v;
+  } else if (v == null) {
+    return [];
+  } else {
+    return [v];
+  }
 }
 
 /** Canales Security y OpenSSH/Operational en una sola invocación de PowerShell, con fechas yyyy-MM-dd HH:mm:ss.
  *  Properties por índice: 4624 5=user 7=logonId 8=tipo 18=IP; 4625 5=user 10=tipo 19=IP; 4672 1=user 3=logonId.
  *  Sin permisos, Get-WinEvent responde como con la ventana vacía: por eso se sondea el canal con -ListLog. */
-function buildWinEventsScript(windowHours) {
+function scriptEventosWindows(windowHours) {
   return `
 $ErrorActionPreference = 'Stop'
 $start = (Get-Date).AddHours(-${windowHours})
@@ -429,48 +459,86 @@ $out | ConvertTo-Json -Depth 4 -Compress
 }
 
 /** JSON del script a la estructura `windows`. `logonId` se conserva tal cual: es la clave de correlación 4624↔4672. */
-function parseWinEventsJson(jsonText) {
+function leerEventosWindows(jsonText) {
   const data = JSON.parse(String(jsonText).trim());
+  const denegado = data.denied === true;
+  const lineasSsh = comoLista(data.ssh).map((l) => String(l));
+  // El tipo .NET de la excepción, no su mensaje, que llega traducido.
+  let errorSsh;
+  if (data.sshLog) {
+    errorSsh = String(data.sshLog);
+  } else {
+    errorSsh = "";
+  }
   return {
-    securityLogDenied: data.denied === true,
-    // El tipo .NET de la excepción, no su mensaje, que llega traducido.
-    sshLines: toArray(data.ssh).map((l) => String(l)),
-    sshLogError: data.sshLog ? String(data.sshLog) : "",
+    securityLogDenied: denegado,
+    sshLines: lineasSsh,
+    sshLogError: errorSsh,
     logons: {
-      remote: toArray(data.logons)
-        .filter((l) => !isServiceAccount(l.user))
-        .map((l) => ({
-          user: l.user || "",
-          ip: normalizeWinIp(l.ip),
-          logonType: typeof l.type === "number" ? l.type : parseInt(l.type, 10) || -1,
-          logonId: l.logonId ? String(l.logonId) : null,
-          timestamp: l.t || null,
-        })),
+      remote: comoLista(data.logons)
+        .filter((l) => !esCuentaDeServicio(l.user))
+        .map((l) => {
+          let tipo;
+          if (typeof l.type === "number") {
+            tipo = l.type;
+          } else {
+            tipo = parseInt(l.type, 10) || -1;
+          }
+          let sesion;
+          if (l.logonId) {
+            sesion = String(l.logonId);
+          } else {
+            sesion = null;
+          }
+          return {
+            user: l.user || "",
+            ip: normalizarIpWindows(l.ip),
+            logonType: tipo,
+            logonId: sesion,
+            timestamp: l.t || null,
+          };
+        }),
       localCount: parseInt(data.localLogonCount, 10) || 0,
     },
-    failed: toArray(data.failed)
-      .filter((f) => !isServiceAccount(f.user))
-      .map((f) => ({
-        user: f.user || "",
-        ip: normalizeWinIp(f.ip),
-        logonType: typeof f.type === "number" ? f.type : parseInt(f.type, 10) || -1,
-        timestamp: f.t || null,
-      })),
-    privileged: toArray(data.privileged)
-      .filter((p) => !isServiceAccount(p.user))
-      .map((p) => ({
-        user: p.user || "",
-        remote: p.remote === true,
-        ip: normalizeWinIp(p.ip),
-        logonId: p.logonId ? String(p.logonId) : null,
-        timestamp: p.t || null,
-      })),
+    failed: comoLista(data.failed)
+      .filter((f) => !esCuentaDeServicio(f.user))
+      .map((f) => {
+        let tipo;
+        if (typeof f.type === "number") {
+          tipo = f.type;
+        } else {
+          tipo = parseInt(f.type, 10) || -1;
+        }
+        return {
+          user: f.user || "",
+          ip: normalizarIpWindows(f.ip),
+          logonType: tipo,
+          timestamp: f.t || null,
+        };
+      }),
+    privileged: comoLista(data.privileged)
+      .filter((p) => !esCuentaDeServicio(p.user))
+      .map((p) => {
+        let sesion;
+        if (p.logonId) {
+          sesion = String(p.logonId);
+        } else {
+          sesion = null;
+        }
+        return {
+          user: p.user || "",
+          remote: p.remote === true,
+          ip: normalizarIpWindows(p.ip),
+          logonId: sesion,
+          timestamp: p.t || null,
+        };
+      }),
   };
 }
 
 /** `query user` en la forma de `who`. Se lee por posición (la cabecera cambia con el idioma); las sesiones
  *  desconectadas no traen SESSIONNAME y desplazan las columnas. */
-function parseQueryUserLines(text) {
+function leerQueryUser(text) {
   const sessions = [];
   const lines = String(text || "").split("\n");
   for (const rawLine of lines.slice(1)) {
@@ -487,18 +555,24 @@ function parseQueryUserLines(text) {
       tty = tokens[1];
       rest = tokens.slice(4);
     }
+    let origen;
+    if (tty && /^rdp-/i.test(tty)) {
+      origen = "RDP";
+    } else {
+      origen = null;
+    }
     sessions.push({
       user: tokens[0],
       tty,
       since: rest.slice(1).join(" ") || null, // rest[0] es el idle; el resto, la hora de entrada
-      origin: tty && /^rdp-/i.test(tty) ? "RDP" : null,
+      origin: origen,
     });
   }
   return sessions;
 }
 
 /** `qwinsta`, de respaldo: sin hora de entrada; solo valen las filas con usuario. */
-function parseQwinstaLines(text) {
+function leerQwinsta(text) {
   const sessions = [];
   const lines = String(text || "").split("\n");
   for (const rawLine of lines.slice(1)) {
@@ -506,18 +580,24 @@ function parseQwinstaLines(text) {
     if (!line) continue;
     const tokens = line.split(/\s+/);
     if (tokens.length < 3 || /^\d+$/.test(tokens[1])) continue;
+    let origen;
+    if (/^rdp-/i.test(tokens[0])) {
+      origen = "RDP";
+    } else {
+      origen = null;
+    }
     sessions.push({
       user: tokens[1],
       tty: tokens[0],
       since: null,
-      origin: /^rdp-/i.test(tokens[0]) ? "RDP" : null,
+      origin: origen,
     });
   }
   return sessions;
 }
 
 /** Windows: canal Security y sesiones activas. Sin permisos sobre Security se marca securityLogDenied y se sigue. */
-async function collectWin32(windowHours, sources, partial) {
+async function recogerWindows(windowHours, sources, partial) {
   const windows = {
     securityLogDenied: false,
     logons: { remote: [], localCount: 0 },
@@ -529,8 +609,8 @@ async function collectWin32(windowHours, sources, partial) {
   let ssh = { accepted: [], failed: [] };
 
   let psCmd = null;
-  if (await commandExists("powershell")) psCmd = "powershell";
-  else if (await commandExists("pwsh")) psCmd = "pwsh";
+  if (await existeComando("powershell")) psCmd = "powershell";
+  else if (await existeComando("pwsh")) psCmd = "pwsh";
 
   if (!psCmd) {
     partial.push({
@@ -540,14 +620,14 @@ async function collectWin32(windowHours, sources, partial) {
   } else {
     // Fichero temporal y no -EncodedCommand ni -Command: el límite de 8191 caracteres falla en silencio.
     // Lo guarda test/manual/test-security-events-win32.js.
-    const script = buildWinEventsScript(windowHours);
+    const script = scriptEventosWindows(windowHours);
     let out = "";
     try {
-      out = await withTempFile(
+      out = await conFicheroTemporal(
         script,
         { prefix: "lcaudit-winevents-", ext: ".ps1", bom: true },
         (scriptPath) =>
-          tryExec(
+          intentarEjecutar(
             `${psCmd} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`,
             PS_TIMEOUT_MS,
             "Get-WinEvent(Security)",
@@ -563,18 +643,22 @@ async function collectWin32(windowHours, sources, partial) {
     }
     if (out) {
       try {
-        const parsed = parseWinEventsJson(out);
+        const parsed = leerEventosWindows(out);
 
         // OpenSSH Server no viene de fábrica en Windows: que falte es un skip parcial, nunca un hallazgo.
         if (parsed.sshLogError) {
+          let motivo;
+          if (parsed.sshLogError === "EventLogNotFoundException") {
+            motivo = "el canal no existe: OpenSSH Server no está instalado";
+          } else {
+            motivo = `no se pudo leer (${parsed.sshLogError})`;
+          }
           partial.push({
             source: "Get-WinEvent(OpenSSH/Operational)",
-            reason: parsed.sshLogError === "EventLogNotFoundException"
-              ? "el canal no existe: OpenSSH Server no está instalado"
-              : `no se pudo leer (${parsed.sshLogError})`,
+            reason: motivo,
           });
         } else {
-          ssh = parseSshdLines(parsed.sshLines.join("\n"));
+          ssh = leerSshd(parsed.sshLines.join("\n"));
           sources.push("Get-WinEvent(OpenSSH)");
         }
 
@@ -608,17 +692,17 @@ async function collectWin32(windowHours, sources, partial) {
                   "(herramientas de Servicios de Escritorio Remoto no instaladas)";
   let sessionsChecked = false;
 
-  if (await commandExists("query")) {
-    const quOut = await tryExec("query user", CMD_TIMEOUT_MS, "query user", partial);
+  if (await existeComando("query")) {
+    const quOut = await intentarEjecutar("query user", CMD_TIMEOUT_MS, "query user", partial);
     if (quOut) {
-      sessions = parseQueryUserLines(quOut);
+      sessions = leerQueryUser(quOut);
       sources.push("query user");
       sessionsChecked = true;
     }
-  } else if (await commandExists("qwinsta")) {
-    const qwOut = await tryExec("qwinsta", CMD_TIMEOUT_MS, "qwinsta", partial);
+  } else if (await existeComando("qwinsta")) {
+    const qwOut = await intentarEjecutar("qwinsta", CMD_TIMEOUT_MS, "qwinsta", partial);
     if (qwOut) {
-      sessions = parseQwinstaLines(qwOut);
+      sessions = leerQwinsta(qwOut);
       sources.push("qwinsta");
       sessionsChecked = true;
     }
@@ -632,7 +716,7 @@ async function collectWin32(windowHours, sources, partial) {
 const MAX_EVENT_LIST = 200; // tope de eventos en payload.securityEvents.events
 
 /** Timestamp a epoch, 0 si no se entiende. Solo para ordenar: el ts se muestra tal como vino. */
-function tsToEpoch(ts) {
+function fechaAEpoch(ts) {
   if (!ts) return 0;
   const s = String(ts).trim();
   let t = Date.parse(s.replace(" ", "T"));           // ISO con espacio
@@ -650,14 +734,14 @@ function tsToEpoch(ts) {
 
 /** Lista plana para el dashboard, ts descendente. En Windows, una fila por acceso: queda la de SSH y lo del 4672
  *  va en `detail` y `privileged` (cuenta administradora, no sesión elevada). Correlación en win-logons.js. */
-function buildEventList(result) {
+function listaDeEventos(result) {
   const windowHours = (result && result.windowHours) || 24;
   if (!result || result.skipped) {
     return { windowHours, events: [], truncated: false, sessionsChecked: false };
   }
 
   const events = [];
-  const push = (ts, type, user, origin, detail, extra) =>
+  const agregar = (ts, type, user, origin, detail, extra) =>
     events.push({
       ts: ts || null,
       type,
@@ -669,58 +753,97 @@ function buildEventList(result) {
 
   const ssh = result.ssh || { accepted: [], failed: [] };
   const sudo = result.sudo || { ok: [], failed: [] };
-  const sessions = Array.isArray(result.sessions) ? result.sessions : [];
+  let sessions;
+  if (Array.isArray(result.sessions)) {
+    sessions = result.sessions;
+  } else {
+    sessions = [];
+  }
 
   // En Linux y macOS no hay segunda fuente: la correlación sale vacía y los bucles no cambian.
-  const corr = correlateWindowsLogons(result);
+  const corr = correlacionarInicios(result);
 
   for (const a of ssh.accepted) {
-    const priv = corr.hasPrivilege(a);
-    push(
+    const priv = corr.tienePrivilegio(a);
+    let sufijo;
+    let marca;
+    if (priv) {
+      sufijo = " · con una cuenta que tiene privilegios de administrador (4672)";
+      marca = { privileged: true };
+    } else {
+      sufijo = "";
+      marca = null;
+    }
+    agregar(
       a.timestamp, "ssh-accepted", a.user, a.ip,
-      `Login SSH correcto (${a.method || "?"})` +
-        (priv ? " · con una cuenta que tiene privilegios de administrador (4672)" : ""),
-      priv ? { privileged: true } : null
+      `Login SSH correcto (${a.method || "?"})` + sufijo,
+      marca
     );
   }
-  for (const f of ssh.failed) push(f.timestamp, "ssh-failed", f.user, f.ip, "Intento de login SSH fallido");
-  for (const s of sudo.ok) push(s.timestamp, "sudo", s.user, null, s.command || "sudo");
-  for (const f of sudo.failed)
-    push(f.timestamp, "sudo-failed", f.user, null,
-      f.target ? `Fallo de autenticación su → ${f.target}` : "Fallo de autenticación sudo");
+  for (const f of ssh.failed) agregar(f.timestamp, "ssh-failed", f.user, f.ip, "Intento de login SSH fallido");
+  for (const s of sudo.ok) agregar(s.timestamp, "sudo", s.user, null, s.command || "sudo");
+  for (const f of sudo.failed) {
+    let texto;
+    if (f.target) {
+      texto = `Fallo de autenticación su → ${f.target}`;
+    } else {
+      texto = "Fallo de autenticación sudo";
+    }
+    agregar(f.timestamp, "sudo-failed", f.user, null, texto);
+  }
 
   if (result.windows) {
     const win = result.windows;
     // Los `absorbed*` ya salen en una fila de SSH.
     for (const [i, l] of (((win.logons && win.logons.remote) || [])).entries()) {
       if (corr.absorbedRemote.has(i)) continue;
-      push(l.timestamp, "logon-remote", l.user, l.ip,
-        l.logonType === 10 ? "Login remoto RDP (4624)" : "Login remoto de red (4624)");
+      let texto;
+      if (l.logonType === 10) {
+        texto = "Login remoto RDP (4624)";
+      } else {
+        texto = "Login remoto de red (4624)";
+      }
+      agregar(l.timestamp, "logon-remote", l.user, l.ip, texto);
     }
     for (const [i, f] of ((win.failed || [])).entries()) {
       if (corr.absorbedFailed.has(i)) continue;
-      push(f.timestamp, "logon-failed", f.user, f.ip, `Login fallido (4625, tipo ${f.logonType})`);
+      agregar(f.timestamp, "logon-failed", f.user, f.ip, `Login fallido (4625, tipo ${f.logonType})`);
     }
     for (const [i, p] of ((win.privileged || [])).entries()) {
       if (corr.absorbedPriv.has(i)) continue;
-      push(p.timestamp, "logon-privileged", p.user, p.ip,
-        p.remote
-          ? "Acceso remoto con una cuenta que tiene privilegios de administrador (4672)"
-          : "Acceso local con una cuenta que tiene privilegios de administrador (4672)");
+      let texto;
+      if (p.remote) {
+        texto = "Acceso remoto con una cuenta que tiene privilegios de administrador (4672)";
+      } else {
+        texto = "Acceso local con una cuenta que tiene privilegios de administrador (4672)";
+      }
+      agregar(p.timestamp, "logon-privileged", p.user, p.ip, texto);
     }
   }
 
   for (const s of sessions) {
-    push(s.since, "session", s.user, s.origin,
-      `Sesión activa en ${s.tty || "?"}${s.origin ? " (remota)" : " (local)"}`);
+    let sufijo;
+    if (s.origin) {
+      sufijo = " (remota)";
+    } else {
+      sufijo = " (local)";
+    }
+    agregar(s.since, "session", s.user, s.origin,
+      `Sesión activa en ${s.tty || "?"}${sufijo}`);
   }
 
-  events.sort((a, b) => tsToEpoch(b.ts) - tsToEpoch(a.ts));
+  events.sort((a, b) => fechaAEpoch(b.ts) - fechaAEpoch(a.ts));
 
   const truncated = events.length > MAX_EVENT_LIST;
+  let lista;
+  if (truncated) {
+    lista = events.slice(0, MAX_EVENT_LIST);
+  } else {
+    lista = events;
+  }
   return {
     windowHours,
-    events: truncated ? events.slice(0, MAX_EVENT_LIST) : events,
+    events: lista,
     truncated,
     // Para que el dashboard no diga "sin sesiones remotas activas" cuando no se pudo preguntar.
     sessionsChecked: result.sessionsChecked === true,
@@ -728,7 +851,7 @@ function buildEventList(result) {
 }
 
 /** Eventos de las últimas `windowHours` horas, entre 1 y 168, en crudo. */
-async function runSecurityEvents(windowHours = 24) {
+async function ejecutarEventos(windowHours = 24) {
   const hours = Math.min(168, Math.max(1, parseInt(windowHours, 10) || 24));
   const platform = process.platform;
   const sources = [];
@@ -754,16 +877,17 @@ async function runSecurityEvents(windowHours = 24) {
   let logsChecked = true;
 
   if (platform === "win32") {
-    ({ windows, sessions, ssh, sessionsChecked } = await collectWin32(hours, sources, partial));
+    ({ windows, sessions, ssh, sessionsChecked } = await recogerWindows(hours, sources, partial));
   } else {
-    ({ ssh, sudo, logsChecked } =
-      platform === "linux"
-        ? await collectLinux(hours, sources, partial)
-        : await collectDarwin(hours, sources, partial));
+    if (platform === "linux") {
+      ({ ssh, sudo, logsChecked } = await recogerLinux(hours, sources, partial));
+    } else {
+      ({ ssh, sudo, logsChecked } = await recogerMac(hours, sources, partial));
+    }
 
-    if (await commandExists("who")) {
-      const whoOut = await tryExec("who", CMD_TIMEOUT_MS, "who", partial);
-      sessions = parseWhoLines(whoOut);
+    if (await existeComando("who")) {
+      const whoOut = await intentarEjecutar("who", CMD_TIMEOUT_MS, "who", partial);
+      sessions = leerWho(whoOut);
       if (whoOut) {
         sources.push("who");
         sessionsChecked = true;
@@ -778,11 +902,23 @@ async function runSecurityEvents(windowHours = 24) {
     // Por permisos solo si todo lo que falló fue por permisos.
     const fallos = partial.filter((p) => p.source !== "lastb");
     const sinPermiso = fallos.length > 0 && fallos.every((p) => p.kind === "no-permission");
+    let tipo;
+    if (sinPermiso) {
+      tipo = "no-permission";
+    } else {
+      tipo = "error";
+    }
+    let prefijo;
+    if (sources.length) {
+      prefijo = "no se ha podido leer ningún log de autenticación: ";
+    } else {
+      prefijo = "ninguna fuente de eventos disponible: ";
+    }
     return {
       skipped: true,
-      kind: sinPermiso ? "no-permission" : "error",
+      kind: tipo,
       reason:
-        (sources.length ? "no se ha podido leer ningún log de autenticación: " : "ninguna fuente de eventos disponible: ") +
+        prefijo +
         partial.map((p) => `${p.source} (${p.reason})`).join("; "),
       windowHours: hours,
       platform,
@@ -805,14 +941,14 @@ async function runSecurityEvents(windowHours = 24) {
 }
 
 module.exports = {
-  runSecurityEvents,
-  buildEventList,
-  parseSshdLines,
-  parseSudoLines,
-  parseWhoLines,
+  ejecutarEventos,
+  listaDeEventos,
+  leerSshd,
+  leerSudo,
+  leerWho,
   // Expuestos para los tests de win32.
-  parseWinEventsJson,
-  parseQueryUserLines,
-  parseQwinstaLines,
-  buildWinEventsScript,
+  leerEventosWindows,
+  leerQueryUser,
+  leerQwinsta,
+  scriptEventosWindows,
 };

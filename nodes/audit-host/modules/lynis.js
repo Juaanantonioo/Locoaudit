@@ -5,7 +5,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execCommand, commandExists } = require("../../../lib/executor");
+const { ejecutar, existeComando } = require("../../../lib/executor");
 
 // Informe y log en un directorio mkdtemp (0700, nombre impredecible) que se borra al terminar.
 const TMP_PREFIX = "lcaudit-lynis-";
@@ -16,24 +16,28 @@ const REPORT_FALLBACK = "/var/log/lynis-report.dat";
 const TIMEOUT_MS = 180000;   // en macOS una pasada tarda minutos
 
 /** Lynis escribe "-" o cadena vacía cuando no hay dato; las dos cosas son lo mismo. */
-function field(v) {
+function campo(v) {
   const t = (v || "").trim();
-  return t === "" || t === "-" ? null : t;
+  if (t === "" || t === "-") {
+    return null;
+  } else {
+    return t;
+  }
 }
 
 /** Entrada <ID>|<descripción>|<detalle>|<tipo_solución>|. El detalle distingue entradas repetidas con el mismo ID. */
-function parseEntry(value) {
+function leerEntrada(value) {
   const parts = value.split("|");
   return {
     id: parts[0] || "UNKNOWN",
     description: (parts[1] || "").trim() || value,
-    detail: field(parts[2]),
-    solution: field(parts[3]),
+    detail: campo(parts[2]),
+    solution: campo(parts[3]),
   };
 }
 
 /** El .dat es clave=valor, un par por línea, con comentarios que empiezan por #. */
-function parseLynisReport(content) {
+function leerInformeLynis(content) {
   const warnings = [];
   const suggestions = [];
   let hardeningIndex = null;
@@ -68,12 +72,12 @@ function parseLynisReport(content) {
     }
 
     if (key === "warning[]") {
-      warnings.push(parseEntry(value));
+      warnings.push(leerEntrada(value));
       continue;
     }
 
     if (key === "suggestion[]") {
-      suggestions.push(parseEntry(value));
+      suggestions.push(leerEntrada(value));
     }
   }
 
@@ -81,12 +85,12 @@ function parseLynisReport(content) {
 }
 
 /** Un informe sin fecha de fin ni índice de hardening es de una pasada que no terminó. */
-function reportComplete(content) {
+function comprobarInforme(content) {
   return /^\s*(report_datetime_end|hardening_index)\s*=\s*\S/m.test(content);
 }
 
 /** Lynis termina antes de acabar de escribir el .dat: se espera un poco a que aparezca. */
-async function waitForReport(file, tries = 5, delayMs = 200) {
+async function esperarInforme(file, tries = 5, delayMs = 200) {
   for (let i = 0; i < tries; i++) {
     if (fs.existsSync(file)) return true;
     await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -95,7 +99,7 @@ async function waitForReport(file, tries = 5, delayMs = 200) {
 }
 
 // opts solo lo usan los tests: ruta de respaldo y límite de tiempo.
-async function runLynis(opts = {}) {
+async function ejecutarLynis(opts = {}) {
   // La plataforma va antes que la instalación: en Windows nativo no hay nada que instalar (WSL reporta 'linux').
   if (process.platform === "win32") {
     return {
@@ -106,7 +110,7 @@ async function runLynis(opts = {}) {
   }
 
   // La ruta encontrada: en Debian lynis está en /usr/sbin, fuera del PATH.
-  const lynisPath = await commandExists("lynis");
+  const lynisPath = await existeComando("lynis");
   if (!lynisPath) {
     return { skipped: true, kind: "not-installed", reason: "Lynis no está instalado en este equipo" };
   }
@@ -124,15 +128,15 @@ async function runLynis(opts = {}) {
   }
 
   try {
-    return await runInDir(lynisPath, tmpDir, opts);
+    return await ejecutarEnCarpeta(lynisPath, tmpDir, opts);
   } finally {
     // También en el camino de error: el informe no sobrevive a la auditoría.
     await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-/** La ejecución y la lectura del informe, dentro del directorio temporal que borra runLynis(). */
-async function runInDir(lynisPath, tmpDir, opts = {}) {
+/** La ejecución y la lectura del informe, dentro del directorio temporal que borra ejecutarLynis(). */
+async function ejecutarEnCarpeta(lynisPath, tmpDir, opts = {}) {
   const reportFile = path.join(tmpDir, REPORT_NAME);
   const logFile = path.join(tmpDir, LOG_NAME);
   const fallback = opts.reportFallback || REPORT_FALLBACK;
@@ -141,7 +145,7 @@ async function runInDir(lynisPath, tmpDir, opts = {}) {
   const startedMs = Date.now() - 2000;
 
   try {
-    await execCommand(
+    await ejecutar(
       `"${lynisPath}" audit system --quick --quiet --no-colors --log-file "${logFile}" --report-file "${reportFile}"`,
       timeoutMs
     );
@@ -166,7 +170,7 @@ async function runInDir(lynisPath, tmpDir, opts = {}) {
 
   // Si la versión instalada ignora --report-file, el .dat está en la ruta por defecto.
   let reportPath = null;
-  if (await waitForReport(reportFile)) {
+  if (await esperarInforme(reportFile)) {
     reportPath = reportFile;
   } else if (fs.existsSync(fallback)) {
     // Un informe de una pasada anterior no es el de esta auditoría.
@@ -194,7 +198,7 @@ async function runInDir(lynisPath, tmpDir, opts = {}) {
     };
   }
 
-  if (!reportComplete(content)) {
+  if (!comprobarInforme(content)) {
     return {
       skipped: true,
       kind: "error",
@@ -202,7 +206,7 @@ async function runInDir(lynisPath, tmpDir, opts = {}) {
     };
   }
 
-  return parseLynisReport(content);
+  return leerInformeLynis(content);
 }
 
-module.exports = { runLynis, parseLynisReport, reportComplete };
+module.exports = { ejecutarLynis, leerInformeLynis, comprobarInforme };

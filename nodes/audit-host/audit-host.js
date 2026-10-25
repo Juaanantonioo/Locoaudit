@@ -2,20 +2,20 @@
 
 /** Nodo audit-host: lanza los módulos de host en paralelo y emite findings normalizados. */
 
-const { runSystemModule } = require("./modules/cpu-memory");
-const { getDiskInfo } = require("./modules/disk-storage");
-const { getSwInventory } = require("./modules/sw-inventory");
-const { getOsInfo } = require("./modules/os-info");
-const { runLynis } = require("./modules/lynis");
-const { runTrivyFs, runTrivySecrets } = require("./modules/trivy-fs");
-const { runTrivyRootfs, systemPackagesSupport } = require("../../lib/trivy-rootfs");
-const { runSecurityEvents, buildEventList } = require("./modules/security-events");
-const { getPendingUpdates } = require("./modules/pending-updates");
-const { normalizeHost, esNoAplica, buildSkippedChecksSummary, lynisCoverage } = require("../../lib/normalizer");
-const { detectPackageManager, managerLabel } = require("../../lib/pkg-manager");
-const { commandExists } = require("../../lib/executor");
-const { summarize } = require("../../lib/severity-map");
-const { withoutResults } = require("../../lib/utils");
+const { ejecutarModuloSistema } = require("./modules/cpu-memory");
+const { infoDisco } = require("./modules/disk-storage");
+const { inventarioSoftware } = require("./modules/sw-inventory");
+const { infoSistema } = require("./modules/os-info");
+const { ejecutarLynis } = require("./modules/lynis");
+const { ejecutarTrivyFs, ejecutarTrivySecretos } = require("./modules/trivy-fs");
+const { ejecutarTrivyRootfs, soportePaquetesSistema } = require("../../lib/trivy-rootfs");
+const { ejecutarEventos, listaDeEventos } = require("./modules/security-events");
+const { actualizacionesPendientes } = require("./modules/pending-updates");
+const { normalizarHost, esNoAplica, resumenOmitidas, coberturaLynis } = require("../../lib/normalizer");
+const { detectarGestor, nombreGestor } = require("../../lib/pkg-manager");
+const { existeComando } = require("../../lib/executor");
+const { resumir } = require("../../lib/severity-map");
+const { sinResultados } = require("../../lib/utils");
 
 /** Avisa de un módulo omitido: log si lo apagó el usuario o no aplica, warn si es un fallo. */
 function avisarOmitido(node, modulo, res) {
@@ -26,31 +26,44 @@ function avisarOmitido(node, modulo, res) {
 }
 
 /** Resultado de un módulo: si lanzó, un skipped 'error' en vez de null, para que no parezca ejecutado sin datos. */
-function resolveOrSkip(settled, enabled, what) {
+function resolverUOmitir(settled, enabled, what) {
   if (settled.status === "fulfilled") return settled.value;
-  return enabled ? { skipped: true, kind: "error", reason: `${what} falló: ${String(settled.reason)}` } : null;
+  if (enabled) {
+    return { skipped: true, kind: "error", reason: `${what} falló: ${String(settled.reason)}` };
+  } else {
+    return null;
+  }
 }
 
 /** Paquetes inventariados: array plano, u objeto con `packages` si el inventario fue parcial. */
-function swPackageCount(sw) {
+function numeroDePaquetes(sw) {
   if (Array.isArray(sw)) return sw.length;
   if (sw && Array.isArray(sw.packages)) return sw.packages.length;
   return null;
 }
 
 /** Herramienta que hizo el inventario ('dpkg', 'brew'…); todas las entradas comparten la misma. */
-function swPackageSource(sw) {
-  const list = Array.isArray(sw) ? sw : (sw && sw.packages) || [];
+function fuenteDePaquetes(sw) {
+  let list;
+  if (Array.isArray(sw)) {
+    list = sw;
+  } else {
+    list = (sw && sw.packages) || [];
+  }
   return (list[0] && list[0].source) || null;
 }
 
 module.exports = function (RED) {
-  function AuditHostNode(config) {
+  function NodoAuditoriaHost(config) {
     RED.nodes.createNode(this, config);
     const node = this;
 
     // Solo para poder elegir el config desde el editor: el chat lo sirve /locoaudit/chat.
-    node.llmConfig = config.llmConfig ? RED.nodes.getNode(config.llmConfig) : null;
+    if (config.llmConfig) {
+      node.llmConfig = RED.nodes.getNode(config.llmConfig);
+    } else {
+      node.llmConfig = null;
+    }
 
     node.on("input", async function (msg, send, done) {
       node.status({ fill: "blue", shape: "dot", text: "Auditando..." });
@@ -73,55 +86,129 @@ module.exports = function (RED) {
         // Siempre: los fixes y el bloque de alcance necesitan el gestor real.
         let pkgManager = null;
         try {
-          pkgManager = await detectPackageManager(process.platform);
+          pkgManager = await detectarGestor(process.platform);
         } catch (_) { /* la detección no puede tumbar la auditoría */ }
 
-        // El commandExists de trivy-rootfs va en el despacho; trivy-fs tiene el suyo porque también lo usa audit-image.
-        const trivyPath = enableSysPkgs ? await commandExists("trivy") : null;
+        // El existeComando de trivy-rootfs va en el despacho; trivy-fs tiene el suyo porque también lo usa audit-image.
+        let trivyPath;
+        if (enableSysPkgs) {
+          trivyPath = await existeComando("trivy");
+        } else {
+          trivyPath = null;
+        }
 
+        let tareaCpu;
+        if (enableCpu) {
+          // En un then: si lanza, cuenta como rechazo del módulo y no tumba el nodo entero.
+          tareaCpu = Promise.resolve().then(() => ejecutarModuloSistema());
+        } else {
+          tareaCpu = Promise.resolve(null);
+        }
+        let tareaDisco;
+        if (enableDisk) {
+          tareaDisco = infoDisco();
+        } else {
+          tareaDisco = Promise.resolve(null);
+        }
+        let tareaSw;
+        if (enableSw) {
+          tareaSw = inventarioSoftware();
+        } else {
+          tareaSw = Promise.resolve(null);
+        }
+        let tareaLynis;
+        if (enableLynis) {
+          tareaLynis = ejecutarLynis();
+        } else {
+          // kind 'disabled' para que el dashboard no lo confunda con una comprobación caída.
+          tareaLynis = Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de hardening del sistema está desactivado en las opciones del nodo." });
+        }
+        let tareaTrivy;
+        if (enableTrivy) {
+          // Sin target se audita el HOME; los paquetes del sistema van en trivy-rootfs.
+          tareaTrivy = ejecutarTrivyFs({ target: config.trivyTarget, pkgManager });
+        } else {
+          tareaTrivy = Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de vulnerabilidades de tu carpeta personal está desactivado en las opciones del nodo." });
+        }
+        let tareaRootfs;
+        if (!enableSysPkgs) {
+          tareaRootfs = Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de los paquetes del sistema está desactivado en las opciones del nodo." });
+        } else if (!trivyPath) {
+          tareaRootfs = Promise.resolve({ skipped: true, kind: "not-installed", reason: "Trivy no está instalado, y es lo que lee la base de datos de paquetes del sistema." });
+        } else {
+          tareaRootfs = ejecutarTrivyRootfs();
+        }
+        let tareaEventos;
+        if (enableSecEvents) {
+          tareaEventos = ejecutarEventos(secWindow);
+        } else {
+          tareaEventos = Promise.resolve(null);
+        }
+        let tareaActualizaciones;
+        if (enableUpdates) {
+          tareaActualizaciones = actualizacionesPendientes({ pkgManager });
+        } else {
+          tareaActualizaciones = Promise.resolve(null);
+        }
+        let tareaSecretos;
+        if (enableSecrets) {
+          // Mismo ámbito que trivy-fs, en una pasada aparte.
+          tareaSecretos = ejecutarTrivySecretos({ target: config.trivyTarget });
+        } else {
+          tareaSecretos = Promise.resolve({ skipped: true, kind: "disabled", reason: "La búsqueda de secretos y configuraciones inseguras está desactivada en las opciones del nodo." });
+        }
         const [cpuResult, diskResult, swResult, lynisResult, trivyResult, rootfsResult, secResult, updResult, secretsResult] =
           await Promise.allSettled([
-            // En un then: si lanza, cuenta como rechazo del módulo y no tumba el nodo entero.
-            enableCpu ? Promise.resolve().then(() => runSystemModule()) : Promise.resolve(null),
-            enableDisk ? getDiskInfo() : Promise.resolve(null),
-            enableSw ? getSwInventory() : Promise.resolve(null),
-            enableLynis
-              ? runLynis()
-              // kind 'disabled' para que el dashboard no lo confunda con una comprobación caída.
-              : Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de hardening del sistema está desactivado en las opciones del nodo." }),
-            enableTrivy
-              // Sin target se audita el HOME; los paquetes del sistema van en trivy-rootfs.
-              ? runTrivyFs({ target: config.trivyTarget, pkgManager })
-              : Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de vulnerabilidades de tu carpeta personal está desactivado en las opciones del nodo." }),
-            !enableSysPkgs
-              ? Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de los paquetes del sistema está desactivado en las opciones del nodo." })
-              : !trivyPath
-              ? Promise.resolve({ skipped: true, kind: "not-installed", reason: "Trivy no está instalado, y es lo que lee la base de datos de paquetes del sistema." })
-              : runTrivyRootfs(),
-            enableSecEvents ? runSecurityEvents(secWindow) : Promise.resolve(null),
-            enableUpdates ? getPendingUpdates({ pkgManager }) : Promise.resolve(null),
-            // Mismo ámbito que trivy-fs, en una pasada aparte.
-            enableSecrets
-              ? runTrivySecrets({ target: config.trivyTarget })
-              : Promise.resolve({ skipped: true, kind: "disabled", reason: "La búsqueda de secretos y configuraciones inseguras está desactivada en las opciones del nodo." }),
+            tareaCpu,
+            tareaDisco,
+            tareaSw,
+            tareaLynis,
+            tareaTrivy,
+            tareaRootfs,
+            tareaEventos,
+            tareaActualizaciones,
+            tareaSecretos,
           ]);
 
-        const cpuMemory = resolveOrSkip(cpuResult, enableCpu, "La lectura de procesador y memoria");
-        const disk = resolveOrSkip(diskResult, enableDisk, "La lectura del almacenamiento");
-        const swInventory = swResult.status === "fulfilled" ? swResult.value : null;
-        const lynis = lynisResult.status === "fulfilled" ? lynisResult.value : null;
+        const cpuMemory = resolverUOmitir(cpuResult, enableCpu, "La lectura de procesador y memoria");
+        const disk = resolverUOmitir(diskResult, enableDisk, "La lectura del almacenamiento");
+        let swInventory;
+        if (swResult.status === "fulfilled") {
+          swInventory = swResult.value;
+        } else {
+          swInventory = null;
+        }
+        let lynis;
+        if (lynisResult.status === "fulfilled") {
+          lynis = lynisResult.value;
+        } else {
+          lynis = null;
+        }
         // Un throw de Trivy entra como 'error' y lo recoge la rama TRIVY_FATAL.
-        const trivy = resolveOrSkip(trivyResult, enableTrivy, "El análisis de vulnerabilidades del home");
-        const trivyRootfs = rootfsResult.status === "fulfilled" ? rootfsResult.value : null;
-        const securityEvents = resolveOrSkip(secResult, enableSecEvents, "La lectura de eventos de seguridad");
-        const pendingUpdates = updResult.status === "fulfilled" ? updResult.value : null;
+        const trivy = resolverUOmitir(trivyResult, enableTrivy, "El análisis de vulnerabilidades del home");
+        let trivyRootfs;
+        if (rootfsResult.status === "fulfilled") {
+          trivyRootfs = rootfsResult.value;
+        } else {
+          trivyRootfs = null;
+        }
+        const securityEvents = resolverUOmitir(secResult, enableSecEvents, "La lectura de eventos de seguridad");
+        let pendingUpdates;
+        if (updResult.status === "fulfilled") {
+          pendingUpdates = updResult.value;
+        } else {
+          pendingUpdates = null;
+        }
 
         // Un throw cuenta como skipped con kind 'error'.
-        const lynisResolved = lynis || (
-          lynisResult.status === "rejected" && enableLynis
-            ? { skipped: true, kind: "error", reason: String(lynisResult.reason) }
-            : null
-        );
+        let lynisResolved;
+        if (lynis) {
+          lynisResolved = lynis;
+        } else if (lynisResult.status === "rejected" && enableLynis) {
+          lynisResolved = { skipped: true, kind: "error", reason: String(lynisResult.reason) };
+        } else {
+          lynisResolved = null;
+        }
 
         if (enableLynis && lynisResolved && lynisResolved.skipped) {
           // Se decide por kind, nunca por el texto de reason, que cambia según la plataforma.
@@ -163,7 +250,7 @@ module.exports = function (RED) {
           avisarOmitido(node, "trivy-fs", trivy);
         }
 
-        const osInfo = getOsInfo();
+        const osInfo = infoSistema();
 
         if (cpuResult.status === "rejected") {
           node.warn(`[audit-host] cpu-memory falló: ${cpuResult.reason}`);
@@ -191,52 +278,71 @@ module.exports = function (RED) {
         }
 
         // Un fallo aquí no invalida el resto: sale como comprobación no realizada.
-        const secretsResolved = secretsResult.status === "fulfilled"
-          ? secretsResult.value
-          : { skipped: true, kind: "error", reason: `La búsqueda de secretos falló: ${String(secretsResult.reason)}.` };
+        let secretsResolved;
+        if (secretsResult.status === "fulfilled") {
+          secretsResolved = secretsResult.value;
+        } else {
+          secretsResolved = { skipped: true, kind: "error", reason: `La búsqueda de secretos falló: ${String(secretsResult.reason)}.` };
+        }
         const secretsSkipped = !!(secretsResolved && secretsResolved.skipped);
         if (enableSecrets && secretsSkipped) {
           avisarOmitido(node, "trivy-secrets", secretsResolved);
         }
 
         // Un throw cuenta como skipped 'error'; si no, el módulo saldría como ejecutado sin datos.
-        const swResolved = swInventory || (
-          swResult.status === "rejected" && enableSw
-            ? {
-                skipped: true,
-                kind: "error",
-                reason: `El inventario de software falló: ${String(swResult.reason)}`,
-              }
-            : null
-        );
+        let swResolved;
+        if (swInventory) {
+          swResolved = swInventory;
+        } else if (swResult.status === "rejected" && enableSw) {
+          swResolved = {
+            skipped: true,
+            kind: "error",
+            reason: `El inventario de software falló: ${String(swResult.reason)}`,
+          };
+        } else {
+          swResolved = null;
+        }
 
         // Un throw cuenta como skipped 'error', pero no aborta el nodo como Lynis.
-        const updResolved = pendingUpdates || (
-          updResult.status === "rejected" && enableUpdates
-            ? {
-                skipped: true,
-                kind: "error",
-                reason: `LoCoAudit no ha podido consultar las actualizaciones pendientes: ${String(updResult.reason)}.`,
-              }
-            : null
-        );
+        let updResolved;
+        if (pendingUpdates) {
+          updResolved = pendingUpdates;
+        } else if (updResult.status === "rejected" && enableUpdates) {
+          updResolved = {
+            skipped: true,
+            kind: "error",
+            reason: `LoCoAudit no ha podido consultar las actualizaciones pendientes: ${String(updResult.reason)}.`,
+          };
+        } else {
+          updResolved = null;
+        }
         // Un throw cuenta como skipped 'error', para que el bloque de alcance sepa el motivo.
-        const rootfsResolved = trivyRootfs || (
-          rootfsResult.status === "rejected"
-            ? {
-                skipped: true,
-                kind: "error",
-                reason: `El análisis de los paquetes del sistema falló: ${String(rootfsResult.reason)}.`,
-              }
-            : null
-        );
+        let rootfsResolved;
+        if (trivyRootfs) {
+          rootfsResolved = trivyRootfs;
+        } else if (rootfsResult.status === "rejected") {
+          rootfsResolved = {
+            skipped: true,
+            kind: "error",
+            reason: `El análisis de los paquetes del sistema falló: ${String(rootfsResult.reason)}.`,
+          };
+        } else {
+          rootfsResolved = null;
+        }
         const rootfsSkipped = !!(rootfsResolved && rootfsResolved.skipped);
         if (enableSysPkgs && rootfsSkipped) {
           avisarOmitido(node, "trivy-rootfs", rootfsResolved);
         }
 
         const updSkipped = !!(updResolved && updResolved.skipped);
-        const updStatus = !enableUpdates ? "disabled" : updSkipped ? "skip" : "ok";
+        let updStatus;
+        if (!enableUpdates) {
+          updStatus = "disabled";
+        } else if (updSkipped) {
+          updStatus = "skip";
+        } else {
+          updStatus = "ok";
+        }
         if (enableUpdates && updSkipped) {
           avisarOmitido(node, "pending-updates", updResolved);
         }
@@ -244,20 +350,135 @@ module.exports = function (RED) {
         // Se calcula una vez y lo leen modulesRun y scanMeta.
         const swSkipped = !!(swResolved && swResolved.skipped);
         const swPartial = !!(swResolved && swResolved.partial);
-        const swStatus = !enableSw
-          ? "disabled"
-          : swSkipped
-          ? "skip"
-          : swPartial
-          ? "partial"
-          : "ok";
+        let swStatus;
+        if (!enableSw) {
+          swStatus = "disabled";
+        } else if (swSkipped) {
+          swStatus = "skip";
+        } else if (swPartial) {
+          swStatus = "partial";
+        } else {
+          swStatus = "ok";
+        }
 
         // Un security-events omitido no es error del nodo: el normalizador lo saca como informativo.
         const raw = { cpuMemory, disk, swInventory: swResolved, lynis, trivy, trivyRootfs: rootfsResolved, securityEvents, pendingUpdates: updResolved, trivySecrets: secretsResolved };
 
-        const findings = normalizeHost(raw, { platform: process.platform, pkgManager });
-        const summary = summarize(findings);
+        const findings = normalizarHost(raw, { platform: process.platform, pkgManager });
+        const summary = resumir(findings);
         const durationMs = Date.now() - startTime;
+
+        let tipoRootfs;
+        if (rootfsSkipped) {
+          tipoRootfs = rootfsResolved.kind || null;
+        } else {
+          tipoRootfs = null;
+        }
+        let etiquetaGestor;
+        if (pkgManager) {
+          etiquetaGestor = nombreGestor(pkgManager);
+        } else {
+          etiquetaGestor = null;
+        }
+        let motivoRootfs;
+        if (rootfsSkipped) {
+          motivoRootfs = rootfsResolved.reason;
+        } else {
+          motivoRootfs = null;
+        }
+        let familiaSo;
+        let nombreSo;
+        let paquetesSo;
+        let versionTrivy;
+        let vulnsTotales;
+        let paquetesCorregibles;
+        let vulnsCorregibles;
+        let vulnsSinParche;
+        let sinParchePorSeveridad;
+        if (!rootfsSkipped && rootfsResolved) {
+          familiaSo = rootfsResolved.os.family;
+          nombreSo = rootfsResolved.os.name;
+          paquetesSo = rootfsResolved.pkgNum;
+          versionTrivy = rootfsResolved.trivyVersion;
+          vulnsTotales = rootfsResolved.total;
+          paquetesCorregibles = rootfsResolved.fixable.length;
+          vulnsCorregibles = rootfsResolved.fixableVulnCount;
+          vulnsSinParche = rootfsResolved.unfixed.total;
+          sinParchePorSeveridad = rootfsResolved.unfixed.bySeverity;
+        } else {
+          familiaSo = null;
+          nombreSo = null;
+          paquetesSo = null;
+          versionTrivy = null;
+          vulnsTotales = null;
+          paquetesCorregibles = null;
+          vulnsCorregibles = null;
+          vulnsSinParche = null;
+          sinParchePorSeveridad = null;
+        }
+        let motivoSw;
+        if (swSkipped) {
+          motivoSw = swResolved.reason;
+        } else if (swPartial) {
+          motivoSw = swResolved.partialReason;
+        } else {
+          motivoSw = null;
+        }
+        let tipoSw;
+        let paquetesSw;
+        let fuenteSw;
+        if (swSkipped) {
+          tipoSw = swResolved.kind || null;
+          paquetesSw = null;
+          fuenteSw = null;
+        } else {
+          tipoSw = null;
+          paquetesSw = numeroDePaquetes(swResolved);
+          fuenteSw = fuenteDePaquetes(swResolved);
+        }
+        let motivoActualizaciones;
+        let tipoActualizaciones;
+        if (updSkipped) {
+          motivoActualizaciones = updResolved.reason;
+          tipoActualizaciones = updResolved.kind || null;
+        } else {
+          motivoActualizaciones = null;
+          tipoActualizaciones = null;
+        }
+        let totalActualizaciones;
+        let recuentoSeguridad;
+        let deteccionSeguridad;
+        if (!updSkipped && updResolved) {
+          totalActualizaciones = updResolved.total;
+          recuentoSeguridad = updResolved.securityCount;
+          deteccionSeguridad = updResolved.securityDetection;
+        } else {
+          totalActualizaciones = null;
+          recuentoSeguridad = null;
+          deteccionSeguridad = null;
+        }
+        let estadoLynis;
+        if (enableLynis) {
+          if (lynisResolved && lynisResolved.skipped) {
+            estadoLynis = lynisResolved.kind || "skipped";
+          } else {
+            estadoLynis = "ok";
+          }
+        } else {
+          estadoLynis = "disabled";
+        }
+        let motivoLynis;
+        if (lynisResolved && lynisResolved.skipped) {
+          motivoLynis = lynisResolved.reason;
+        } else {
+          motivoLynis = null;
+        }
+        let indiceHardening;
+        if (lynis && lynis.hardeningIndex != null) {
+          indiceHardening = lynis.hardeningIndex;
+        } else {
+          indiceHardening = null;
+        }
 
         msg.payload = {
           findings,
@@ -275,7 +496,7 @@ module.exports = function (RED) {
           },
           scanMeta: {
             // Lo que no se comprobó, sacado de los findings `skipped`; el dashboard lo muestra junto al Alcance.
-            checksSkipped: buildSkippedChecksSummary(findings),
+            checksSkipped: resumenOmitidas(findings),
             // Estado de cada módulo: modulesRun no distingue uno apagado de uno caído.
             modules: [
               { id: "cpu-memory",      label: "Procesador y memoria",        requested: enableCpu,       ran: enableCpu && !cpuMemory?.skipped,                    kind: cpuMemory?.kind },
@@ -287,21 +508,27 @@ module.exports = function (RED) {
               { id: "security-events", label: "Eventos de seguridad",        requested: enableSecEvents, ran: enableSecEvents && !securityEvents?.skipped,         kind: securityEvents?.kind },
               { id: "pending-updates", label: "Actualizaciones pendientes",  requested: enableUpdates,   ran: enableUpdates && !updSkipped,                        kind: updResolved?.kind },
               { id: "trivy-secrets",   label: "Secretos y configuraciones",  requested: enableSecrets,   ran: enableSecrets && !secretsSkipped,                    kind: secretsResolved?.kind },
-            ].map((m) => ({
-              id: m.id,
-              label: m.label,
-              requested: !!m.requested,
-              ran: !!m.ran,
-              kind: m.kind || null,
-              // Solo 'failed' es un agujero real; 'not-requested' y 'not-applicable' no se pueden arreglar.
-              status: !m.requested
-                ? "not-requested"
-                : m.ran
-                ? "ok"
-                : esNoAplica(m.kind)
-                ? "not-applicable"
-                : "failed",
-            })),
+            ].map((m) => {
+              let estado;
+              if (!m.requested) {
+                estado = "not-requested";
+              } else if (m.ran) {
+                estado = "ok";
+              } else if (esNoAplica(m.kind)) {
+                estado = "not-applicable";
+              } else {
+                estado = "failed";
+              }
+              return {
+                id: m.id,
+                label: m.label,
+                requested: !!m.requested,
+                ran: !!m.ran,
+                kind: m.kind || null,
+                // Solo 'failed' es un agujero real; 'not-requested' y 'not-applicable' no se pueden arreglar.
+                status: estado,
+              };
+            }),
             modulesRun: [
               enableCpu && !cpuMemory?.skipped && "cpu-memory",
               enableDisk && !disk?.skipped && "disk-storage",
@@ -317,62 +544,56 @@ module.exports = function (RED) {
             durationMs,
             // Siempre presente: "no analizados" no es "limpios". El veredicto sale del informe de trivy-rootfs.
             systemPackages: {
-              status: systemPackagesSupport(process.platform, rootfsResolved, {
+              status: soportePaquetesSistema(process.platform, rootfsResolved, {
                 enabled: enableSysPkgs,
               }),
               requested: enableSysPkgs,
-              kind: rootfsSkipped ? (rootfsResolved.kind || null) : null,
+              kind: tipoRootfs,
               // Solo para redactar: no decide si se pudo analizar.
               manager: pkgManager,
-              managerLabel: pkgManager ? managerLabel(pkgManager) : null,
-              reason: rootfsSkipped ? rootfsResolved.reason : null,
+              managerLabel: etiquetaGestor,
+              reason: motivoRootfs,
               // También cuando se omitió: ayuda a diagnosticar.
               durationMs: (rootfsResolved && rootfsResolved.durationMs) || null,
               // Del informe de Trivy; null si se omitió, que no es lo mismo que cero.
-              osFamily: !rootfsSkipped && rootfsResolved ? rootfsResolved.os.family : null,
-              osName: !rootfsSkipped && rootfsResolved ? rootfsResolved.os.name : null,
-              packages: !rootfsSkipped && rootfsResolved ? rootfsResolved.pkgNum : null,
-              trivyVersion: !rootfsSkipped && rootfsResolved ? rootfsResolved.trivyVersion : null,
-              vulnTotal: !rootfsSkipped && rootfsResolved ? rootfsResolved.total : null,
-              fixablePackages: !rootfsSkipped && rootfsResolved ? rootfsResolved.fixable.length : null,
-              fixableVulns: !rootfsSkipped && rootfsResolved ? rootfsResolved.fixableVulnCount : null,
-              unfixedVulns: !rootfsSkipped && rootfsResolved ? rootfsResolved.unfixed.total : null,
-              unfixedBySeverity: !rootfsSkipped && rootfsResolved ? rootfsResolved.unfixed.bySeverity : null,
+              osFamily: familiaSo,
+              osName: nombreSo,
+              packages: paquetesSo,
+              trivyVersion: versionTrivy,
+              vulnTotal: vulnsTotales,
+              fixablePackages: paquetesCorregibles,
+              fixableVulns: vulnsCorregibles,
+              unfixedVulns: vulnsSinParche,
+              unfixedBySeverity: sinParchePorSeveridad,
             },
             // Estado del módulo, como scanMeta.lynis.
             swInventory: {
               status: swStatus,
-              reason: swSkipped
-                ? swResolved.reason
-                : swPartial
-                ? swResolved.partialReason
-                : null,
-              kind: swSkipped ? (swResolved.kind || null) : null,
+              reason: motivoSw,
+              kind: tipoSw,
               // La cifra va con su fuente: trivy-rootfs cuenta por otro camino y no se cuadran.
-              packages: swSkipped ? null : swPackageCount(swResolved),
-              source: swSkipped ? null : swPackageSource(swResolved),
+              packages: paquetesSw,
+              source: fuenteSw,
             },
             // Estado del módulo, como scanMeta.lynis.
             pendingUpdates: {
               status: updStatus,
-              reason: updSkipped ? updResolved.reason : null,
-              kind: updSkipped ? (updResolved.kind || null) : null,
-              total: !updSkipped && updResolved ? updResolved.total : null,
-              securityCount: !updSkipped && updResolved ? updResolved.securityCount : null,
-              securityDetection: !updSkipped && updResolved ? updResolved.securityDetection : null,
+              reason: motivoActualizaciones,
+              kind: tipoActualizaciones,
+              total: totalActualizaciones,
+              securityCount: recuentoSeguridad,
+              securityDetection: deteccionSeguridad,
             },
             // El índice de hardening es una métrica de cabecera, no un hallazgo; la escala va con él.
             lynis: {
-              status: enableLynis
-                ? (lynisResolved && lynisResolved.skipped ? (lynisResolved.kind || "skipped") : "ok")
-                : "disabled",
-              reason: (lynisResolved && lynisResolved.skipped) ? lynisResolved.reason : null,
-              hardeningIndex: (lynis && lynis.hardeningIndex != null) ? lynis.hardeningIndex : null,
+              status: estadoLynis,
+              reason: motivoLynis,
+              hardeningIndex: indiceHardening,
               version: (lynis && lynis.version) || null,
               testsDone: (lynis && lynis.testsDone) || null,
               scale: { deficiente: "<30", mejorable: "30-54", aceptable: ">=55" },
               // Cobertura de traducciones y fixes sobre los controles de este informe; algunos fixes son solo de Linux.
-              i18n: lynisCoverage(
+              i18n: coberturaLynis(
                 [...(lynis?.warnings || []), ...(lynis?.suggestions || [])].map((e) => e.id),
                 process.platform
               ),
@@ -380,9 +601,9 @@ module.exports = function (RED) {
           },
           raw: {
             ...raw,
-            trivy: withoutResults(raw.trivy),
-            trivyRootfs: withoutResults(raw.trivyRootfs),
-            trivySecrets: withoutResults(raw.trivySecrets),
+            trivy: sinResultados(raw.trivy),
+            trivyRootfs: sinResultados(raw.trivyRootfs),
+            trivySecrets: sinResultados(raw.trivySecrets),
             osInfo,
           },
           timestamp: new Date().toISOString(),
@@ -390,31 +611,58 @@ module.exports = function (RED) {
 
         // Lista plana para la tabla del grupo "Logs del sistema": ts desc, tope 200.
         if (enableSecEvents && securityEvents) {
-          msg.payload.securityEvents = buildEventList(securityEvents);
+          msg.payload.securityEvents = listaDeEventos(securityEvents);
         }
 
         const maxSev = summary.maxSeverity || "info";
         // Un módulo pedido que falló deja un hueco: el nodo no puede quedar en verde.
         const fallidos = msg.payload.scanMeta.modules.filter((m) => m.status === "failed").length;
-        const statusColor =
-          maxSev === "critical" || maxSev === "high"
-            ? "red"
-            : maxSev === "medium" || fallidos
-            ? "yellow"
-            : "green";
+        let statusColor;
+        if (maxSev === "critical" || maxSev === "high") {
+          statusColor = "red";
+        } else if (maxSev === "medium" || fallidos) {
+          statusColor = "yellow";
+        } else {
+          statusColor = "green";
+        }
 
         // Mismo recuento que la cabecera del dashboard: solo los accionables.
         const act = summary.actionable.total;
         const inf = summary.informative.total;
-        const textoFallos = fallidos
-          ? ` · ${fallidos} ${fallidos === 1 ? "módulo sin completar" : "módulos sin completar"}`
-          : "";
+        let textoFallos;
+        if (fallidos) {
+          let unidad;
+          if (fallidos === 1) {
+            unidad = "módulo sin completar";
+          } else {
+            unidad = "módulos sin completar";
+          }
+          textoFallos = ` · ${fallidos} ${unidad}`;
+        } else {
+          textoFallos = "";
+        }
+        let forma;
+        if (fallidos) {
+          forma = "ring";
+        } else {
+          forma = "dot";
+        }
+        let resumen;
+        if (act > 0) {
+          let sufijoInfo;
+          if (inf) {
+            sufijoInfo = ` · ${inf} info`;
+          } else {
+            sufijoInfo = "";
+          }
+          resumen = `${act} a revisar · riesgo: ${maxSev}${sufijoInfo}`;
+        } else {
+          resumen = `Nada que arreglar · ${inf} informativos`;
+        }
         node.status({
           fill: statusColor,
-          shape: fallidos ? "ring" : "dot",
-          text: (act > 0
-            ? `${act} a revisar · riesgo: ${maxSev}${inf ? ` · ${inf} info` : ""}`
-            : `Nada que arreglar · ${inf} informativos`) + textoFallos,
+          shape: forma,
+          text: resumen + textoFallos,
         });
 
         send(msg);
@@ -426,5 +674,5 @@ module.exports = function (RED) {
     });
   }
 
-  RED.nodes.registerType("audit-host", AuditHostNode);
+  RED.nodes.registerType("audit-host", NodoAuditoriaHost);
 };

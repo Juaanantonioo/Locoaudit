@@ -19,7 +19,7 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { fromTrivyJson } = require("../../lib/normalizer");
+const { desdeTrivy } = require("../../lib/normalizer");
 const { DEFAULT_SKIP_DIRS } = require("../../nodes/audit-host/modules/trivy-fs");
 
 const OUTPUT_FILE = "/tmp/trivy-coverage-report.txt";
@@ -52,12 +52,12 @@ function trivyFixture({ target, type, cls, pkgName, pkgPath, installed = "1.0.0"
 
 /** Normaliza un fixture a findings de host. */
 function findingsFor(fixture, pkgManager = null) {
-  return fromTrivyJson(fixture, "HOST-CVE", "vulnerability", "trivy", { platform: process.platform, pkgManager });
+  return desdeTrivy(fixture, "HOST-CVE", "vulnerability", "trivy", { platform: process.platform, pkgManager });
 }
 
-/** Ejercita las tres ramas de resolveUserHome() manipulando el entorno. */
+/** Ejercita las tres ramas de resolverHome() manipulando el entorno. */
 function runHomeResolutionCases(check) {
-  const { resolveUserHome, resolveScanTarget } = require("../../nodes/audit-host/modules/trivy-fs");
+  const { resolverHome, resolverObjetivo } = require("../../nodes/audit-host/modules/trivy-fs");
   const saved = { SUDO_USER: process.env.SUDO_USER, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   const restore = () => {
     for (const k of Object.keys(saved)) {
@@ -72,36 +72,36 @@ function runHomeResolutionCases(check) {
     const realHome = saved.HOME;
     process.env.SUDO_USER = realUser;
     process.env.HOME = os.tmpdir();
-    const r1 = resolveUserHome();
+    const r1 = resolverHome();
     check("H1 · SUDO_USER tiene prioridad sobre HOME",
       r1.resolvedFrom === "SUDO_USER" && r1.home === realHome, `${r1.resolvedFrom}/${r1.home}`);
 
     // Rama 2 · sin SUDO_USER → HOME del entorno.
     delete process.env.SUDO_USER;
     process.env.HOME = os.tmpdir();
-    const r2 = resolveUserHome();
+    const r2 = resolverHome();
     check("H2 · sin SUDO_USER → HOME del entorno",
       r2.resolvedFrom === "env" && r2.home === os.tmpdir(), `${r2.resolvedFrom}/${r2.home}`);
 
     // Rama 2b · un HOME que NO existe se descarta (no se audita una ruta fantasma).
     process.env.HOME = path.join(os.tmpdir(), "locoaudit-no-existe-" + Date.now());
-    const r2b = resolveUserHome();
+    const r2b = resolverHome();
     check("H2b · HOME inexistente se descarta → cae a os.homedir()",
       r2b.resolvedFrom === "os.homedir", `${r2b.resolvedFrom}/${r2b.home}`);
 
     // Rama 3 · sin SUDO_USER y sin HOME → os.homedir().
     delete process.env.HOME;
     delete process.env.USERPROFILE;
-    const r3 = resolveUserHome();
+    const r3 = resolverHome();
     check("H3 · sin SUDO_USER ni HOME → os.homedir()",
       r3.resolvedFrom === "os.homedir" && r3.home === os.homedir(), `${r3.resolvedFrom}/${r3.home}`);
 
     // Objetivo configurado: gana sobre todo y expande "~".
     process.env.HOME = realHome;
-    const c1 = resolveScanTarget("/ruta/elegida");
+    const c1 = resolverObjetivo("/ruta/elegida");
     check("H4 · target configurado → resolvedFrom 'config'",
       c1.resolvedFrom === "config" && c1.target === "/ruta/elegida", `${c1.resolvedFrom}/${c1.target}`);
-    const c2 = resolveScanTarget("~/proyectos");
+    const c2 = resolverObjetivo("~/proyectos");
     check("H5 · '~/proyectos' se expande contra el home resuelto",
       c2.target === path.join(realHome, "proyectos"), c2.target);
   } finally {

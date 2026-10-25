@@ -28,11 +28,11 @@ class LoCoAuditGUI:
             self.root.attributes("-zoomed", True)
         else:
             self.root.state("zoomed")
-        self._build(version, os_name, py_version)
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.root.after(100, self._poll)
+        self._construir(version, os_name, py_version)
+        self.root.protocol("WM_DELETE_WINDOW", self._al_cerrar)
+        self.root.after(100, self._sondear)
 
-    def _build(self, version, os_name, py_version):
+    def _construir(self, version, os_name, py_version):
         # CABECERA
         header = tk.Frame(self.root, bg="#181825", height=80)
         header.pack(fill="x")
@@ -146,15 +146,15 @@ class LoCoAuditGUI:
                                   font=("Courier", 11, "bold"), relief="flat",
                                   padx=20, pady=8,
                                   command=lambda: webbrowser.open("http://localhost:1880"))
-        # Un único botón para arrancar y parar; su aspecto lo fija _refresh_buttons().
+        # Un único botón para arrancar y parar; su aspecto lo fija _pintar_botones().
         self.toggle_btn = tk.Button(self.btn_row, text="■  Detener Node-RED",
                                     bg="#f38ba8", fg="#1e1e2e",
                                     font=("Courier", 11, "bold"), relief="flat",
                                     padx=20, pady=8,
-                                    command=self._toggle_clicked)
+                                    command=self._pulsar_alternar)
         # btn_row se muestra solo al terminar
 
-    def add_card(self, title, items):
+    def agregar_tarjeta(self, title, items):
         """items = lista de (icono, texto, color)"""
         card = tk.Frame(self.cards_frame, bg="#313244", pady=10, padx=12)
         card.pack(fill="x", padx=12, pady=6)
@@ -169,9 +169,9 @@ class LoCoAuditGUI:
                      fg=color, bg="#313244",
                      wraplength=680, justify="left").pack(side="left", padx=6)
 
-    def show_question(self, tool, desc, event, result, note="",
-                      yes_text="Sí, instalar", no_text="No, omitir",
-                      title=None):
+    def mostrar_pregunta(self, tool, desc, event, result, note="",
+                         yes_text="Sí, instalar", no_text="No, omitir",
+                         title=None):
         self.ask_label.config(text=title or f"⚠  ¿Instalar {tool}?")
         self.ask_desc.config(text=desc)
         if note:
@@ -180,17 +180,17 @@ class LoCoAuditGUI:
         else:
             self.ask_note.pack_forget()
         self.yes_btn.config(text=yes_text,
-                            command=lambda: self._answer(True, event, result))
+                            command=lambda: self._responder(True, event, result))
         self.no_btn.config(text=no_text,
-                           command=lambda: self._answer(False, event, result))
+                           command=lambda: self._responder(False, event, result))
         self.ask_frame.pack(fill="x", before=self.root.winfo_children()[-1])
 
-    def _answer(self, yes, event, result):
+    def _responder(self, yes, event, result):
         result.append(yes)
         event.set()
         self.ask_frame.pack_forget()
 
-    def _refresh_buttons(self, transicion=""):
+    def _pintar_botones(self, transicion=""):
         """Pinta los botones según is_running(); `transicion` fuerza el estado intermedio."""
         APAGADO = {"state": "disabled", "bg": "#45475a", "fg": "#6c7086"}
         if transicion:
@@ -207,19 +207,26 @@ class LoCoAuditGUI:
                                    bg="#a6e3a1", fg="#1e1e2e")
             self.open_btn.config(**APAGADO)
 
-    def _toggle_clicked(self):
+    def _pulsar_alternar(self):
         # Arrancar o parar puede tardar: se hace en otro hilo para no congelar la ventana.
         if self._busy:
             return
         self._busy = True
         arrancar = not self.is_running()
-        self._refresh_buttons("Arrancando..." if arrancar else "Deteniendo...")
-        threading.Thread(target=self._toggle_worker, args=(arrancar,),
+        if arrancar:
+            rotulo = "Arrancando..."
+        else:
+            rotulo = "Deteniendo..."
+        self._pintar_botones(rotulo)
+        threading.Thread(target=self._alternar_en_hilo, args=(arrancar,),
                          daemon=True).start()
 
-    def _toggle_worker(self, arrancar):
+    def _alternar_en_hilo(self, arrancar):
         try:
-            accion = self.on_start if arrancar else self.on_stop
+            if arrancar:
+                accion = self.on_start
+            else:
+                accion = self.on_stop
             if accion is not None:
                 accion()
         except Exception:
@@ -228,7 +235,7 @@ class LoCoAuditGUI:
             self._busy = False
             self.q.put({"type": "node_red_state"})
 
-    def _on_close(self):
+    def _al_cerrar(self):
         if self.on_stop is not None:
             try:
                 self.on_stop()
@@ -236,13 +243,16 @@ class LoCoAuditGUI:
                 pass
         self.root.destroy()
 
-    def update_step(self, idx, icon, color, sub=""):
+    def actualizar_paso(self, idx, icon, color, sub=""):
         icons = {"ok": ("✓", "#a6e3a1"), "err": ("✗", "#f38ba8"),
                  "active": ("⟳", "#89b4fa"), "pending": ("○", "#6c7086")}
         ic, col = icons.get(icon, (icon, color))
         self.step_icons[idx].config(text=ic, fg=col)
         self.step_subs[idx].config(text=sub)
-        bg = "#313244" if icon == "active" else "#181825"
+        if icon == "active":
+            bg = "#313244"
+        else:
+            bg = "#181825"
         self.step_frames[idx].config(bg=bg)
         for w in self.step_frames[idx].winfo_children():
             w.config(bg=bg)
@@ -252,7 +262,7 @@ class LoCoAuditGUI:
                 except Exception:
                     pass
 
-    def _poll(self):
+    def _sondear(self):
         try:
             while True:
                 msg = self.q.get_nowait()
@@ -262,44 +272,44 @@ class LoCoAuditGUI:
                     self.progress["value"] = n
                     self.footer_label.config(text=msg.get("label", ""))
                     if n > 0:
-                        self.update_step(n - 1, "active", "")
+                        self.actualizar_paso(n - 1, "active", "")
                     if n > 1:
-                        self.update_step(n - 2, "ok", "", msg.get("prev_sub", ""))
+                        self.actualizar_paso(n - 2, "ok", "", msg.get("prev_sub", ""))
                 elif t == "card":
-                    self.add_card(msg["title"], msg["items"])
+                    self.agregar_tarjeta(msg["title"], msg["items"])
                 elif t == "ask":
-                    self.show_question(msg["tool"], msg["desc"],
-                                       msg["event"], msg["result"],
-                                       note=msg.get("note", ""),
-                                       yes_text=msg.get("yes_text", "Sí, instalar"),
-                                       no_text=msg.get("no_text", "No, omitir"),
-                                       title=msg.get("title"))
+                    self.mostrar_pregunta(msg["tool"], msg["desc"],
+                                          msg["event"], msg["result"],
+                                          note=msg.get("note", ""),
+                                          yes_text=msg.get("yes_text", "Sí, instalar"),
+                                          no_text=msg.get("no_text", "No, omitir"),
+                                          title=msg.get("title"))
                 elif t == "status":
                     # Instalaciones largas: sin esto la ventana parece colgada.
                     self.footer_label.config(text=msg.get("text", ""))
                 elif t == "step_status":
-                    self.update_step(msg["step"], msg["icon"],
-                                     msg.get("color", ""), msg.get("sub", ""))
+                    self.actualizar_paso(msg["step"], msg["icon"],
+                                         msg.get("color", ""), msg.get("sub", ""))
                 elif t == "node_red_state":
-                    self._refresh_buttons()
+                    self._pintar_botones()
                 elif t == "done":
                     self.progress["value"] = 6
-                    self.update_step(5, "ok", "")
+                    self.actualizar_paso(5, "ok", "")
                     self.footer_label.pack_forget()
                     self.progress.pack_forget()
                     self.open_btn.pack(side="left", padx=8)
                     # Siempre visible, para reintentar si el primer arranque falló.
                     self.toggle_btn.pack(side="left", padx=8)
                     self.btn_row.pack(pady=14, anchor="center")
-                    self._refresh_buttons()
+                    self._pintar_botones()
         except Exception:
             pass
         # Node-RED puede caerse solo: se reconsulta su estado para no dejar el botón desfasado.
         if not self._busy and self.btn_row.winfo_ismapped():
             estado = self.is_running()
             if estado != self._last_state:
-                self._refresh_buttons()
-        self.root.after(100, self._poll)
+                self._pintar_botones()
+        self.root.after(100, self._sondear)
 
-    def run(self):
+    def ejecutar(self):
         self.root.mainloop()

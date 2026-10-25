@@ -70,7 +70,7 @@ function bloqueTests() {
   reg("", `suite completa (${tests.length} tests)`, malos.length === 0, malos.length ? "fallan: " + malos.join(", ") : "");
 }
 
-// Emoji, fallbacks escondidos y hex sueltos (fuera queda _buildHtmlReportFallback, con su propio CSS).
+// Emoji, fallbacks escondidos y hex sueltos (fuera queda construirInformeSencillo, con su propio CSS).
 const RE_EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{2705}\u{2713}\u{2714}\u{25B2}\u{25BC}\u{25B8}\u{25BE}\u{25A0}\u{2715}]/u;
 
 /** Sustituye los comentarios por espacios (conserva posiciones) para no contar citas como infracciones. */
@@ -84,8 +84,8 @@ function sinComentarios(txt) {
 
 function trozos(src) {
   const iStyle = src.indexOf("\n<style>\n");
-  const iFall = src.indexOf("_buildHtmlReportFallback() {");
-  const iFallEnd = iFall >= 0 ? src.indexOf("\n    parseFixSteps(", iFall) : -1;
+  const iFall = src.indexOf("construirInformeSencillo() {");
+  const iFallEnd = iFall >= 0 ? src.indexOf("\n    pasosDeSolucion(", iFall) : -1;
   const antesStyle = src.slice(0, iStyle);
   const css = src.slice(iStyle);
   return {

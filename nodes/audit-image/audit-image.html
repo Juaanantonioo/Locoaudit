@@ -20,7 +20,7 @@
                 typeField: $("#node-input-imageRefType")
             });
 
-            function toggleImageRefRow() {
+            function mostrarFilaImagen() {
                 if ($("#node-input-scanMode").val() === "specific") {
                     $("#imageRef-row").show();
                 } else {
@@ -28,8 +28,8 @@
                 }
             }
 
-            $("#node-input-scanMode").on("change", toggleImageRefRow);
-            toggleImageRefRow();
+            $("#node-input-scanMode").on("change", mostrarFilaImagen);
+            mostrarFilaImagen();
         }
     });
 </script>

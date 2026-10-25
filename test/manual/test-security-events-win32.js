@@ -12,17 +12,17 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const {
-  parseWinEventsJson,
-  parseSshdLines,
-  parseQueryUserLines,
-  parseQwinstaLines,
-  buildWinEventsScript,
-  buildEventList,
+  leerEventosWindows,
+  leerSshd,
+  leerQueryUser,
+  leerQwinsta,
+  scriptEventosWindows,
+  listaDeEventos,
 } = require("../../nodes/audit-host/modules/security-events");
-const { fromSecurityEvents } = require("../../lib/normalizer");
-const { withTempFile } = require("../../lib/utils");
-const { summarize } = require("../../lib/severity-map");
-const { execCommand } = require("../../lib/executor");
+const { desdeEventos } = require("../../lib/normalizer");
+const { conFicheroTemporal } = require("../../lib/utils");
+const { resumir } = require("../../lib/severity-map");
+const { ejecutar } = require("../../lib/executor");
 const { SECURITY_EVENT_RULES } = require("../../lib/severity-map");
 
 let passed = 0;
@@ -33,11 +33,11 @@ function check(name, fn) {
 }
 const byId = (findings, prefix) => findings.filter((f) => f.id.startsWith(prefix));
 
-// ── 1. parseWinEventsJson ───────────────────────────────────────────────────
-console.log("parseWinEventsJson:");
+// ── 1. leerEventosWindows ───────────────────────────────────────────────────
+console.log("leerEventosWindows:");
 
 check("varios eventos (arrays)", () => {
-  const w = parseWinEventsJson(JSON.stringify({
+  const w = leerEventosWindows(JSON.stringify({
     denied: false,
     logons: [
       { t: "2026-07-07 09:00:00", user: "bob", type: 10, ip: "192.168.1.50" },
@@ -56,7 +56,7 @@ check("varios eventos (arrays)", () => {
 });
 
 check("1 evento → objeto (colapso de ConvertTo-Json) normalizado a array", () => {
-  const w = parseWinEventsJson(JSON.stringify({
+  const w = leerEventosWindows(JSON.stringify({
     denied: false,
     logons: { t: "2026-07-07 09:00:00", user: "bob", type: 10, ip: "192.168.1.50" },
     localLogonCount: 0,
@@ -70,14 +70,14 @@ check("1 evento → objeto (colapso de ConvertTo-Json) normalizado a array", () 
 });
 
 check("acceso denegado", () => {
-  const w = parseWinEventsJson(JSON.stringify({
+  const w = leerEventosWindows(JSON.stringify({
     denied: true, logons: [], localLogonCount: 0, failed: [], privileged: [],
   }));
   assert.strictEqual(w.securityLogDenied, true);
 });
 
-// ── 2. parseQueryUserLines / parseQwinstaLines ──────────────────────────────
-console.log("parseQueryUserLines:");
+// ── 2. leerQueryUser / leerQwinsta ──────────────────────────────
+console.log("leerQueryUser:");
 
 check("consola + RDP + desconectada", () => {
   const out = [
@@ -86,7 +86,7 @@ check("consola + RDP + desconectada", () => {
     " bob                   rdp-tcp#55          2  Active          .  07/07/2026 8:30",
     " carol                                     3  Disc      1+02:15  06/07/2026 22:00",
   ].join("\n");
-  const s = parseQueryUserLines(out);
+  const s = leerQueryUser(out);
   assert.strictEqual(s.length, 3);
   assert.deepStrictEqual(
     s.map((x) => [x.user, x.origin]),
@@ -105,7 +105,7 @@ check("qwinsta: solo filas con usuario", () => {
     " rdp-tcp#55        bob                       2  Active",
     " rdp-tcp                                 65536  Listen",
   ].join("\n");
-  const s = parseQwinstaLines(out);
+  const s = leerQwinsta(out);
   assert.strictEqual(s.length, 2);
   assert.deepStrictEqual(
     s.map((x) => [x.user, x.origin]),
@@ -114,7 +114,7 @@ check("qwinsta: solo filas con usuario", () => {
 });
 
 // ── 3. Normalizador: rama win32 ─────────────────────────────────────────────
-console.log("fromSecurityEvents (win32):");
+console.log("desdeEventos (win32):");
 
 const baseRaw = () => ({
   windowHours: 24,
@@ -138,7 +138,7 @@ check("logins remotos → info individual; locales agregados solo si hay remotos
     { user: "bob", ip: "192.168.1.50", logonType: 10, timestamp: "2026-07-07 09:00:00" },
   ];
   raw.windows.logons.localCount = 5;
-  const f = fromSecurityEvents(raw);
+  const f = desdeEventos(raw);
   const rdp = byId(f, "HOST-SEC-WIN-RDP");
   assert.strictEqual(rdp.length, 1);
   assert.strictEqual(rdp[0].severity, SECURITY_EVENT_RULES.SSH_ACCEPTED);
@@ -148,7 +148,7 @@ check("logins remotos → info individual; locales agregados solo si hay remotos
 check("locales omitidos si 0 remotos (filtrado de ruido)", () => {
   const raw = baseRaw();
   raw.windows.logons.localCount = 5;
-  const f = fromSecurityEvents(raw);
+  const f = desdeEventos(raw);
   assert.strictEqual(byId(f, "HOST-SEC-WIN-LOC").length, 0);
   assert.strictEqual(byId(f, "HOST-EVT-INF").length, 1); // sin eventos relevantes
 });
@@ -158,7 +158,7 @@ check("fallidos < umbral → low agregado", () => {
   raw.windows.failed = [1, 2, 3].map((i) => ({
     user: "admin", ip: `10.0.0.${i}`, logonType: 10, timestamp: null,
   }));
-  const f = fromSecurityEvents(raw);
+  const f = desdeEventos(raw);
   const wf = byId(f, "HOST-SEC-WINF");
   assert.strictEqual(wf.length, 1);
   assert.strictEqual(wf[0].severity, SECURITY_EVENT_RULES.SSH_FAILED_FEW);
@@ -170,7 +170,7 @@ check("fallidos >= SSH_BRUTE_FORCE_THRESHOLD → high fuerza bruta (mismo umbral
   raw.windows.failed = Array.from({ length: n }, (_, i) => ({
     user: "admin", ip: "10.0.0.9", logonType: 3, timestamp: null,
   }));
-  const f = fromSecurityEvents(raw);
+  const f = desdeEventos(raw);
   const wf = byId(f, "HOST-SEC-WINF");
   assert.strictEqual(wf[0].severity, SECURITY_EVENT_RULES.SSH_FAILED_MANY);
   assert.ok(/fuerza bruta/i.test(wf[0].title));
@@ -183,7 +183,7 @@ check("4672 remoto → high individual; local → info agregado", () => {
     { user: "juanan", remote: false, ip: null, timestamp: "2026-07-07 08:00:00" },
     { user: "juanan", remote: false, ip: null, timestamp: "2026-07-07 10:00:00" },
   ];
-  const f = fromSecurityEvents(raw);
+  const f = desdeEventos(raw);
   const pr = byId(f, "HOST-SEC-WIN-PRIV").filter((x) => x.id !== "HOST-SEC-WIN-PRIVL");
   assert.strictEqual(pr.length, 1);
   assert.strictEqual(pr[0].severity, SECURITY_EVENT_RULES.SSH_ACCEPTED_ROOT);
@@ -198,7 +198,7 @@ check("sesión RDP activa → info individual; locales → agregado", () => {
     { user: "juanan", tty: "console", since: "07/07/2026 9:00", origin: null },
     { user: "bob", tty: "rdp-tcp#55", since: "07/07/2026 8:30", origin: "RDP" },
   ];
-  const f = fromSecurityEvents(raw);
+  const f = desdeEventos(raw);
   assert.strictEqual(byId(f, "HOST-SEC-SES-0").length, 1);
   assert.strictEqual(byId(f, "HOST-SEC-SES-LOC").length, 1);
 });
@@ -206,7 +206,7 @@ check("sesión RDP activa → info individual; locales → agregado", () => {
 check("acceso denegado → HOST-SEC-WIN-PERM info, sin 'sin eventos'", () => {
   const raw = baseRaw();
   raw.windows.securityLogDenied = true;
-  const f = fromSecurityEvents(raw);
+  const f = desdeEventos(raw);
   const perm = byId(f, "HOST-SEC-WIN-PERM");
   assert.strictEqual(perm.length, 1);
   assert.strictEqual(perm[0].severity, "info");
@@ -224,13 +224,13 @@ check("acceso denegado → HOST-SEC-WIN-PERM info, sin 'sin eventos'", () => {
 
 check("no se emite el aviso UAC/4688: no se comprobaba nada real", () => {
   // No se emite: el módulo nunca lee el 4688, así que su fix (auditpol) no aplica.
-  const f = fromSecurityEvents(baseRaw());
+  const f = desdeEventos(baseRaw());
   assert.strictEqual(byId(f, "HOST-SEC-WIN-UAC").length, 0);
   assert.ok(!f.some((x) => /auditpol/.test(x.fix || "")));
 });
 
 check("skipped (sin PowerShell) → HOST-EVT-SKIP", () => {
-  const f = fromSecurityEvents({
+  const f = desdeEventos({
     skipped: true,
     reason: "ni powershell ni pwsh disponibles",
     windowHours: 24,
@@ -243,10 +243,10 @@ check("skipped (sin PowerShell) → HOST-EVT-SKIP", () => {
 });
 
 // ── 4. Script PowerShell ────────────────────────────────────────────────────
-console.log("buildWinEventsScript:");
+console.log("scriptEventosWindows:");
 
 check("usa FilterHashtable + AddHours (sin fechas en texto, locale-safe)", () => {
-  const s = buildWinEventsScript(48);
+  const s = scriptEventosWindows(48);
   assert.ok(s.includes("Get-WinEvent -FilterHashtable"));
   assert.ok(s.includes("AddHours(-48)"));
   assert.ok(s.includes("4624, 4625, 4672"));
@@ -255,13 +255,13 @@ check("usa FilterHashtable + AddHours (sin fechas en texto, locale-safe)", () =>
 });
 
 check("emite logonId de 4624 y 4672 (clave de correlación, antes se tiraba)", () => {
-  const s = buildWinEventsScript(24);
+  const s = scriptEventosWindows(24);
   assert.ok(s.includes("logonId = (V $p 7)"));   // TargetLogonId del 4624
   assert.ok(s.includes("logonId = $logonId"));   // SubjectLogonId del 4672
 });
 
 check("filtro de cuentas de servicio: un solo sitio y sshd_<PID> por patrón", () => {
-  const s = buildWinEventsScript(24);
+  const s = scriptEventosWindows(24);
   // El PID varía por conexión: tiene que ser patrón, no entrada literal.
   assert.ok(s.includes("$u -match '^sshd_\\d+$'"));
   assert.ok(!/\$svc = @\([^)]*sshd/.test(s));
@@ -269,8 +269,8 @@ check("filtro de cuentas de servicio: un solo sitio y sshd_<PID> por patrón", (
   assert.strictEqual((s.match(/if \(Svc \$/g) || []).length, 3);
 });
 
-// ── 5. buildEventList (payload.securityEvents del dashboard) ────────────────
-console.log("buildEventList:");
+// ── 5. listaDeEventos (payload.securityEvents del dashboard) ────────────────
+console.log("listaDeEventos:");
 
 check("aplana, ordena desc y forma {windowHours, events, truncated}", () => {
   const raw = baseRaw();
@@ -281,7 +281,7 @@ check("aplana, ordena desc y forma {windowHours, events, truncated}", () => {
     { user: "admin", ip: "10.0.0.9", logonType: 3, timestamp: "2026-07-07 11:00:00" },
   ];
   raw.sessions = [{ user: "bob", tty: "rdp-tcp#55", since: "2026-07-07 08:30:00", origin: "RDP" }];
-  const out = buildEventList(raw);
+  const out = listaDeEventos(raw);
   assert.strictEqual(out.windowHours, 24);
   assert.strictEqual(out.truncated, false);
   assert.deepStrictEqual(out.events.map((e) => e.type), ["logon-failed", "logon-remote", "session"]);
@@ -289,7 +289,7 @@ check("aplana, ordena desc y forma {windowHours, events, truncated}", () => {
 });
 
 check("unix: ssh/sudo → tipos ssh-accepted/ssh-failed/sudo/sudo-failed", () => {
-  const out = buildEventList({
+  const out = listaDeEventos({
     windowHours: 24, platform: "darwin", sources: ["log"], partial: [],
     ssh: {
       accepted: [{ user: "juanan", ip: "192.168.1.2", method: "publickey", timestamp: "2026-07-07 10:00:00" }],
@@ -313,19 +313,19 @@ check("tope 200 + truncated: true", () => {
   raw.windows.failed = Array.from({ length: 250 }, (_, i) => ({
     user: "admin", ip: "10.0.0.9", logonType: 3, timestamp: `2026-07-07 10:${String(i % 60).padStart(2, "0")}:00`,
   }));
-  const out = buildEventList(raw);
+  const out = listaDeEventos(raw);
   assert.strictEqual(out.events.length, 200);
   assert.strictEqual(out.truncated, true);
 });
 
 check("skipped → events: [] y sessionsChecked: false", () => {
-  const out = buildEventList({ skipped: true, reason: "x", windowHours: 12, platform: "win32" });
+  const out = listaDeEventos({ skipped: true, reason: "x", windowHours: 12, platform: "win32" });
   // sessionsChecked=false: sin recolección no se puede decir "Sin sesiones remotas activas".
   assert.deepStrictEqual(out, { windowHours: 12, events: [], truncated: false, sessionsChecked: false });
 });
 
 check("sessionsChecked viaja al dashboard cuando sí se consultó", () => {
-  const out = buildEventList({
+  const out = listaDeEventos({
     windowHours: 5, platform: "win32", sessionsChecked: true,
     sessions: [{ user: "ines", tty: "rdp-tcp#1", since: "2026-08-22 12:00", origin: "192.168.0.25" }],
     ssh: { accepted: [], failed: [] }, sudo: { ok: [], failed: [] },
@@ -338,7 +338,7 @@ check("sessionsChecked viaja al dashboard cuando sí se consultó", () => {
 // Con Node-RED elevado se leen los dos canales y un login SSH debe dar una sola fila.
 console.log("correlación SSH ↔ Security (evidencia real):");
 
-// JSON del script PowerShell; el 4672 de sshd_13048 prueba el filtro de parseWinEventsJson.
+// JSON del script PowerShell; el 4672 de sshd_13048 prueba el filtro de leerEventosWindows.
 const EVIDENCIA_PS = JSON.stringify({
   denied: false,
   logons: [{ t: "2026-08-22 18:51:02", user: "inesg", type: 3, ip: "-", logonId: "0x1A2B3C" }],
@@ -352,15 +352,15 @@ const EVIDENCIA_PS = JSON.stringify({
   sshLog: "",
 });
 
-/** Monta el `raw` de runSecurityEvents a partir del JSON del script. */
+/** Monta el `raw` de ejecutarEventos a partir del JSON del script. */
 function rawDesdePs(jsonText) {
-  const parsed = parseWinEventsJson(jsonText);
+  const parsed = leerEventosWindows(jsonText);
   return {
     windowHours: 24,
     platform: "win32",
     sources: ["Get-WinEvent(OpenSSH)", "Get-WinEvent(Security)"],
     partial: [],
-    ssh: parseSshdLines(parsed.sshLines.join("\n")),
+    ssh: leerSshd(parsed.sshLines.join("\n")),
     sudo: { ok: [], failed: [] },
     sessions: [],
     sessionsChecked: true,
@@ -374,25 +374,25 @@ function rawDesdePs(jsonText) {
 }
 
 check("sshd_<PID> no es un usuario: fuera también en el parser", () => {
-  const w = parseWinEventsJson(EVIDENCIA_PS);
+  const w = leerEventosWindows(EVIDENCIA_PS);
   assert.strictEqual(w.privileged.length, 1);
   assert.strictEqual(w.privileged[0].user, "inesg");
 });
 
 check('IpAddress "-" de Windows → null (la columna ORIGEN pintaba "-")', () => {
-  const w = parseWinEventsJson(EVIDENCIA_PS);
+  const w = leerEventosWindows(EVIDENCIA_PS);
   assert.strictEqual(w.logons.remote[0].ip, null);
   assert.strictEqual(w.privileged[0].ip, null);
 });
 
 check("logonId llega hasta JS (4624 y 4672 comparten el de la sesión)", () => {
-  const w = parseWinEventsJson(EVIDENCIA_PS);
+  const w = leerEventosWindows(EVIDENCIA_PS);
   assert.strictEqual(w.logons.remote[0].logonId, "0x1A2B3C");
   assert.strictEqual(w.privileged[0].logonId, "0x1A2B3C");
 });
 
 check("evidencia real: 4 filas → 1, con la IP real y el método", () => {
-  const out = buildEventList(rawDesdePs(EVIDENCIA_PS));
+  const out = listaDeEventos(rawDesdePs(EVIDENCIA_PS));
   assert.strictEqual(out.events.length, 1);
   const ev = out.events[0];
   assert.strictEqual(ev.type, "ssh-accepted");        // sobrevive la de SSH
@@ -402,7 +402,7 @@ check("evidencia real: 4 filas → 1, con la IP real y el método", () => {
 });
 
 check("evidencia real: el privilegio no se pierde, se anota en la fila que queda", () => {
-  const ev = buildEventList(rawDesdePs(EVIDENCIA_PS)).events[0];
+  const ev = listaDeEventos(rawDesdePs(EVIDENCIA_PS)).events[0];
   assert.strictEqual(ev.privileged, true);
   assert.ok(/privilegios de administrador \(4672\)/.test(ev.detail));
   // El 4672 describe la cuenta (administradora), no que la sesión se elevara.
@@ -411,7 +411,7 @@ check("evidencia real: el privilegio no se pierde, se anota en la fila que queda
 });
 
 check("evidencia real: 3 findings → 1, y el 4672 consta en su evidencia", () => {
-  const f = fromSecurityEvents(rawDesdePs(EVIDENCIA_PS));
+  const f = desdeEventos(rawDesdePs(EVIDENCIA_PS));
   assert.strictEqual(f.length, 1);
   // Una cuenta administradora entrando por red pesa igual por SSH que por RDP.
   assert.strictEqual(f[0].id, "HOST-SEC-SSH-R-001");
@@ -426,7 +426,7 @@ check("evidencia real: 3 findings → 1, y el 4672 consta en su evidencia", () =
 check("SSH Windows SIN 4672 sigue en info: no todo acceso es privilegiado", () => {
   const raw = rawDesdePs(EVIDENCIA_PS);
   raw.windows.privileged = [];          // misma sesión, cuenta sin privilegios
-  const f = fromSecurityEvents(raw);
+  const f = desdeEventos(raw);
   const ssh = f.filter((x) => /^HOST-SEC-SSH-/.test(x.id));
   assert.strictEqual(ssh.length, 1);
   assert.strictEqual(ssh[0].id, "HOST-SEC-SSH-001");
@@ -435,7 +435,7 @@ check("SSH Windows SIN 4672 sigue en info: no todo acceso es privilegiado", () =
 });
 
 check("el predicado es uno: root en Unix sigue dando exactamente lo de siempre", () => {
-  const f = fromSecurityEvents({
+  const f = desdeEventos({
     windowHours: 24, platform: "linux", sources: ["journalctl"], partial: [],
     ssh: { accepted: [{ user: "root", ip: "192.168.1.9", method: "password", timestamp: "2026-08-22 10:00:00" }], failed: [] },
     sudo: { ok: [], failed: [] }, sessions: [],
@@ -463,16 +463,16 @@ const rawIntruso = () => ({
 
 check("mismo hecho, mismo riesgo: SSH y RDP con cuenta admin coinciden", () => {
   // La incoherencia que esto corrige: el protocolo de acceso decidía el nivel.
-  const porSsh = fromSecurityEvents(rawDesdePs(EVIDENCIA_PS));
-  const porRdp = fromSecurityEvents(rawIntruso());
+  const porSsh = desdeEventos(rawDesdePs(EVIDENCIA_PS));
+  const porRdp = desdeEventos(rawIntruso());
   const altoSsh = porSsh.filter((x) => x.severity === "high");
   const altoRdp = porRdp.filter((x) => x.severity === "high");
   assert.strictEqual(altoSsh.length, 1);
   assert.strictEqual(altoRdp.length, 1);
   assert.strictEqual(altoSsh[0].severity, altoRdp[0].severity);
-  // Y los dos elevan el riesgo global igual (isActionable: info no eleva).
-  const sSsh = summarize(porSsh.map((x) => Object.assign({ scope: "host" }, x)));
-  const sRdp = summarize(porRdp.map((x) => Object.assign({ scope: "host" }, x)));
+  // Y los dos elevan el riesgo global igual (esAccionable: info no eleva).
+  const sSsh = resumir(porSsh.map((x) => Object.assign({ scope: "host" }, x)));
+  const sRdp = resumir(porRdp.map((x) => Object.assign({ scope: "host" }, x)));
   assert.strictEqual(sSsh.maxSeverity, "high");
   assert.strictEqual(sRdp.maxSeverity, "high");
   assert.ok(sSsh.actionable.total >= 1 && sRdp.actionable.total >= 1);
@@ -481,9 +481,9 @@ check("mismo hecho, mismo riesgo: SSH y RDP con cuenta admin coinciden", () => {
 check("ningún texto del 4672 dice que la sesión estuviera elevada", () => {
   const raw = rawIntruso();
   const textos = [
-    ...fromSecurityEvents(raw).flatMap((f) => [f.title, f.evidence, f.fix || ""]),
-    ...buildEventList(raw).events.map((e) => e.detail || ""),
-    ...fromSecurityEvents(rawDesdePs(EVIDENCIA_PS)).map((f) => f.evidence),
+    ...desdeEventos(raw).flatMap((f) => [f.title, f.evidence, f.fix || ""]),
+    ...listaDeEventos(raw).events.map((e) => e.detail || ""),
+    ...desdeEventos(rawDesdePs(EVIDENCIA_PS)).map((f) => f.evidence),
   ];
   const sospechoso = textos.filter((t) => /sesión (con privilegios|obtuvo|elevada|administrativa)/i.test(t));
   assert.deepStrictEqual(sospechoso, []);
@@ -494,25 +494,25 @@ check("ningún texto del 4672 dice que la sesión estuviera elevada", () => {
 });
 
 check("4672 remoto SIN acceso SSH → sigue saliendo, y con severidad alta", () => {
-  const f = fromSecurityEvents(rawIntruso());
+  const f = desdeEventos(rawIntruso());
   const priv = f.filter((x) => x.id === "HOST-SEC-WIN-PRIV-001");
   assert.strictEqual(priv.length, 1);
   assert.strictEqual(priv[0].severity, SECURITY_EVENT_RULES.SSH_ACCEPTED_ROOT);
   assert.strictEqual(priv[0].severity, "high");
   assert.strictEqual(byId(f, "HOST-SEC-WIN-RDP").length, 1);
-  const tipos = buildEventList(rawIntruso()).events.map((e) => e.type);
+  const tipos = listaDeEventos(rawIntruso()).events.map((e) => e.type);
   assert.deepStrictEqual(tipos, ["logon-remote", "logon-privileged"]);
 });
 
 check("ventana de 10 s: 8 s colapsa, 25 s no (son dos accesos distintos)", () => {
   const cerca = rawIntruso();
   cerca.ssh.accepted = [{ user: "mallory", ip: "10.0.0.66", method: "password", timestamp: "2026-08-22 03:14:08" }];
-  assert.deepStrictEqual(buildEventList(cerca).events.map((e) => e.type), ["ssh-accepted"]);
+  assert.deepStrictEqual(listaDeEventos(cerca).events.map((e) => e.type), ["ssh-accepted"]);
 
   const lejos = rawIntruso();
   lejos.ssh.accepted = [{ user: "mallory", ip: "10.0.0.66", method: "password", timestamp: "2026-08-22 03:14:25" }];
   assert.deepStrictEqual(
-    buildEventList(lejos).events.map((e) => e.type).sort(),
+    listaDeEventos(lejos).events.map((e) => e.type).sort(),
     ["logon-privileged", "logon-remote", "ssh-accepted"]
   );
 });
@@ -520,13 +520,13 @@ check("ventana de 10 s: 8 s colapsa, 25 s no (son dos accesos distintos)", () =>
 check("IP distinta → no se colapsa aunque coincidan usuario y hora", () => {
   const raw = rawIntruso();
   raw.ssh.accepted = [{ user: "mallory", ip: "172.16.0.5", method: "password", timestamp: "2026-08-22 03:14:03" }];
-  assert.strictEqual(buildEventList(raw).events.length, 3);
+  assert.strictEqual(listaDeEventos(raw).events.length, 3);
 });
 
 check("otro usuario → no se colapsa", () => {
   const raw = rawIntruso();
   raw.ssh.accepted = [{ user: "bob", ip: "10.0.0.66", method: "password", timestamp: "2026-08-22 03:14:03" }];
-  assert.strictEqual(buildEventList(raw).events.length, 3);
+  assert.strictEqual(listaDeEventos(raw).events.length, 3);
 });
 
 check("fallidos: 4625 y el intento SSH del mismo hecho cuentan una vez", () => {
@@ -538,9 +538,9 @@ check("fallidos: 4625 y el intento SSH del mismo hecho cuentan una vez", () => {
     { user: "mallory", ip: "10.0.0.66", logonType: 3, timestamp: "2026-08-22 03:20:30" },
   ];
   raw.ssh.failed = [{ user: "mallory", ip: "10.0.0.66", timestamp: "2026-08-22 03:20:04" }];
-  const tipos = buildEventList(raw).events.map((e) => e.type).sort();
+  const tipos = listaDeEventos(raw).events.map((e) => e.type).sort();
   assert.deepStrictEqual(tipos, ["logon-failed", "ssh-failed"]);   // 3 eventos → 2
-  const f = fromSecurityEvents(raw);
+  const f = desdeEventos(raw);
   // El 4625 emparejado no vuelve a contar en el agregado de fuerza bruta.
   assert.ok(/^1 inicio\(s\)/.test(byId(f, "HOST-SEC-WINF")[0].title));
   assert.ok(/^1 intento\(s\)/.test(byId(f, "HOST-SEC-SSHF")[0].title));
@@ -549,7 +549,7 @@ check("fallidos: 4625 y el intento SSH del mismo hecho cuentan una vez", () => {
 check("IPv4 mapeada en IPv6 (::ffff:) se reconoce como la misma IP", () => {
   const raw = rawIntruso();
   raw.ssh.accepted = [{ user: "mallory", ip: "::ffff:10.0.0.66", method: "password", timestamp: "2026-08-22 03:14:03" }];
-  assert.deepStrictEqual(buildEventList(raw).events.map((e) => e.type), ["ssh-accepted"]);
+  assert.deepStrictEqual(listaDeEventos(raw).events.map((e) => e.type), ["ssh-accepted"]);
 });
 
 check("sin hora usable no se colapsa por usuario a secas (ante la duda, fila de más)", () => {
@@ -557,11 +557,11 @@ check("sin hora usable no se colapsa por usuario a secas (ante la duda, fila de 
   raw.windows.logons.remote[0].timestamp = null;
   raw.windows.logons.remote[0].ip = null;
   raw.ssh.accepted = [{ user: "mallory", ip: "10.0.0.66", method: "password", timestamp: "2026-08-22 03:14:03" }];
-  assert.strictEqual(buildEventList(raw).events.filter((e) => e.type === "logon-remote").length, 1);
+  assert.strictEqual(listaDeEventos(raw).events.filter((e) => e.type === "logon-remote").length, 1);
 });
 
 check("Linux/macOS: sin canal Security la correlación no toca nada", () => {
-  const out = buildEventList({
+  const out = listaDeEventos({
     windowHours: 24, platform: "linux", sources: ["journalctl"], partial: [],
     ssh: {
       accepted: [{ user: "juanan", ip: "192.168.1.2", method: "publickey", timestamp: "2026-07-07 10:00:00" }],
@@ -583,7 +583,7 @@ const WIN_CMDLINE_LIMIT = 8191;
 const SRC_SECURITY_EVENTS = path.join(__dirname, "..", "..", "nodes", "audit-host", "modules", "security-events.js");
 
 check("el script NO cabría en una línea de comandos, y por eso va por -File", () => {
-  const script = buildWinEventsScript(24);
+  const script = scriptEventosWindows(24);
   const b64 = Buffer.from(script, "utf16le").toString("base64");
   const margen = WIN_CMDLINE_LIMIT - b64.length;
   console.log(
@@ -613,13 +613,13 @@ check("el script NO cabría en una línea de comandos, y por eso va por -File", 
 });
 
 check("el script sigue siendo ASCII puro (si deja de serlo, el BOM es lo que salva)", () => {
-  const script = buildWinEventsScript(24);
+  const script = scriptEventosWindows(24);
   const noAscii = [...script].filter((c) => c.charCodeAt(0) > 127);
   assert.deepStrictEqual(noAscii, []);
 });
 
 // ── 8. Fichero temporal: se borra SIEMPRE ───────────────────────────────────
-console.log("withTempFile (lib/utils.js):");
+console.log("conFicheroTemporal (lib/utils.js):");
 
 const asyncChecks = [];
 function checkAsync(name, fn) {
@@ -628,7 +628,7 @@ function checkAsync(name, fn) {
 
 checkAsync("camino feliz: existe durante, borrado después", async () => {
   let visto = null;
-  const devuelto = await withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
+  const devuelto = await conFicheroTemporal("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
     visto = f;
     assert.ok(fs.existsSync(f));
     return "resultado";
@@ -640,7 +640,7 @@ checkAsync("camino feliz: existe durante, borrado después", async () => {
 checkAsync("la función lanza: el error sube Y el temporal se borra", async () => {
   let visto = null;
   await assert.rejects(
-    () => withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
+    () => conFicheroTemporal("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
       visto = f;
       throw new Error("boom");
     }),
@@ -654,9 +654,9 @@ checkAsync("timeout real del proceso hijo: el temporal se borra igual", async ()
   // Aunque el proceso muera por timeout, el .ps1 temporal se borra.
   let visto = null;
   await assert.rejects(
-    () => withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
+    () => conFicheroTemporal("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
       visto = f;
-      return execCommand(`"${process.execPath}" -e "setTimeout(function(){}, 5000)"`, 300);
+      return ejecutar(`"${process.execPath}" -e "setTimeout(function(){}, 5000)"`, 300);
     })
   );
   assert.ok(visto);
@@ -666,7 +666,7 @@ checkAsync("timeout real del proceso hijo: el temporal se borra igual", async ()
 checkAsync("nombre aleatorio y no reutilizado", async () => {
   const nombres = [];
   for (let i = 0; i < 5; i++) {
-    await withTempFile("x", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
+    await conFicheroTemporal("x", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
       nombres.push(path.basename(f));
       assert.strictEqual(path.dirname(f), os.tmpdir());
     });
@@ -676,13 +676,13 @@ checkAsync("nombre aleatorio y no reutilizado", async () => {
 });
 
 checkAsync("BOM de UTF-8 al principio cuando se pide", async () => {
-  await withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1", bom: true }, async (f) => {
+  await conFicheroTemporal("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1", bom: true }, async (f) => {
     const buf = fs.readFileSync(f);
     assert.deepStrictEqual([...buf.slice(0, 3)], [0xef, 0xbb, 0xbf]);
     assert.strictEqual(fs.readFileSync(f, "utf8").replace(/^﻿/, ""), "$x = 1");
   });
   // Sin bom: ni un byte de más.
-  await withTempFile("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
+  await conFicheroTemporal("$x = 1", { prefix: "lcaudit-test-", ext: ".ps1" }, async (f) => {
     assert.strictEqual(fs.readFileSync(f, "utf8"), "$x = 1");
   });
 });

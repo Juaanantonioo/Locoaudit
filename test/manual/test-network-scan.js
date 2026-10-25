@@ -1,8 +1,8 @@
 "use strict";
 
-const { runNmap }          = require("../../nodes/audit-network/modules/nmap-wrapper");
-const { enrichPorts }      = require("../../nodes/audit-network/modules/service-detect");
-const { normalizeNetwork } = require("../../lib/normalizer");
+const { ejecutarNmap }          = require("../../nodes/audit-network/modules/nmap-wrapper");
+const { completarPuertos }      = require("../../nodes/audit-network/modules/service-detect");
+const { normalizarRed } = require("../../lib/normalizer");
 
 const SEP = "─".repeat(72);
 
@@ -65,10 +65,10 @@ async function runPass(label, openPorts, normSource) {
   console.log(`${"═".repeat(72)}`);
   console.log(`Puertos abiertos encontrados: ${openPorts.length}\n`);
 
-  const enriched = await enrichPorts(openPorts);
+  const enriched = await completarPuertos(openPorts);
   printPortTable(enriched);
 
-  const findings = normalizeNetwork(enriched, normSource);
+  const findings = normalizarRed(enriched, normSource);
   console.log();
   printFindings(findings);
   printCounts(findings);
@@ -81,7 +81,7 @@ async function runPass(label, openPorts, normSource) {
 
 async function main() {
   // Nmap es el único escáner del nodo.
-  const nmapResult = await runNmap({ target: "127.0.0.1", timeout: 240000 });
+  const nmapResult = await ejecutarNmap({ target: "127.0.0.1", timeout: 240000 });
 
   if (nmapResult.skipped && !nmapResult.inconclusive) {
     console.log("═".repeat(72));

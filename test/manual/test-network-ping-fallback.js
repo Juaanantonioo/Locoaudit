@@ -5,8 +5,8 @@
  * nmap y ping son falsos, en un PATH propio, con salidas reales de macOS y de Windows en español.
  *
  * Bloques:
- *   1. systemPing(): qué cuenta como respuesta y qué orden se lanza en cada sistema.
- *   2. checkHostReachable(): cuándo se consulta el ping y qué cambia en el resultado.
+ *   1. pingSistema(): qué cuenta como respuesta y qué orden se lanza en cada sistema.
+ *   2. comprobarAlcance(): cuándo se consulta el ping y qué cambia en el resultado.
  *
  * Uso: node test/manual/test-network-ping-fallback.js
  */
@@ -93,15 +93,15 @@ function setPing(out, exit) {
 }
 function setNmap(xml) { fs.writeFileSync(xmlFile, xml); }
 
-const { systemPing, checkHostReachable, deriveTargetState } =
+const { pingSistema, comprobarAlcance, deducirEstadoObjetivo } =
   require("../../nodes/audit-network/modules/host-discovery");
 
 async function main() {
   // Puede haber un ping real en /bin o /usr/bin: se comprueba antes de los casos "sin ping".
   const realPing = ["/bin/ping", "/usr/bin/ping", "/sbin/ping", "/usr/sbin/ping"].some((p) => fs.existsSync(p));
 
-  // ── 1 · systemPing ───────────────────────────────────────────────────────────────────────
-  console.log("\n── 1 · systemPing(): qué cuenta como respuesta ───────────────────\n");
+  // ── 1 · pingSistema ───────────────────────────────────────────────────────────────────────
+  console.log("\n── 1 · pingSistema(): qué cuenta como respuesta ───────────────────\n");
   usePath(binBoth);
 
   const CASOS = [
@@ -113,38 +113,38 @@ async function main() {
   ];
   for (const [que, out, exit, esperado] of CASOS) {
     setPing(out, exit);
-    const r = await systemPing("10.10.10.10", "darwin");
+    const r = await pingSistema("10.10.10.10", "darwin");
     ok(r.ran === true && r.replied === esperado, `${que} → ${esperado ? "responde" : "no responde"}`, JSON.stringify(r));
   }
 
   setPing("", 1);
-  const vacio = await systemPing("10.10.10.10", "darwin");
+  const vacio = await pingSistema("10.10.10.10", "darwin");
   ok(vacio.ran === false && vacio.replied === false,
      "ping que no deja ninguna salida → no se pudo hacer (ran=false), no un 'no responde'", JSON.stringify(vacio));
 
   // La orden de cada sistema: los -W no significan lo mismo en macOS y en Linux.
   setPing(OUT.macReply, 0);
-  const mac = await systemPing("10.10.10.10", "darwin");
+  const mac = await pingSistema("10.10.10.10", "darwin");
   ok(/ -n -c 2 -W 1000 10\.10\.10\.10$/.test(mac.cmd), "macOS: -c 2 -W 1000 (milisegundos)", mac.cmd);
-  const lin = await systemPing("10.10.10.10", "linux");
+  const lin = await pingSistema("10.10.10.10", "linux");
   ok(/ -n -c 2 -W 1 10\.10\.10\.10$/.test(lin.cmd), "Linux: -c 2 -W 1 (segundos)", lin.cmd);
-  const win = await systemPing("10.10.10.10", "win32");
+  const win = await pingSistema("10.10.10.10", "win32");
   ok(/ -n 2 -w 1000 10\.10\.10\.10$/.test(win.cmd), "Windows: -n 2 -w 1000", win.cmd);
 
   if (!realPing) {
     usePath(binNmap);
-    const sin = await systemPing("10.10.10.10", "darwin");
+    const sin = await pingSistema("10.10.10.10", "darwin");
     ok(sin.ran === false && sin.cmd === null, "sin ping instalado → ran=false y sin orden", JSON.stringify(sin));
   }
 
-  // ── 2 · checkHostReachable ───────────────────────────────────────────────────────────────
-  console.log("\n── 2 · checkHostReachable(): cuándo manda el ping ────────────────\n");
+  // ── 2 · comprobarAlcance ───────────────────────────────────────────────────────────────
+  console.log("\n── 2 · comprobarAlcance(): cuándo manda el ping ────────────────\n");
   const opts = { target: "10.10.10.10", isLocal: false, platform: "darwin" };
 
   // El caso real.
   usePath(binBoth); setNmap(NMAP_DOWN_XML); setPing(OUT.macReply, 0);
-  let d = await checkHostReachable(opts);
-  ok(d.reachable === true && deriveTargetState(d) === "reachable",
+  let d = await comprobarAlcance(opts);
+  ok(d.reachable === true && deducirEstadoObjetivo(d) === "reachable",
      "Nmap 'caído' + ping responde → accesible, y se escanea", JSON.stringify(d));
   ok(d.confirmedBy === "ping" && d.reason === "echo-reply", "consta que lo confirmó el ping del sistema");
   ok(d.method === "nmap-sn", "method sigue siendo nmap-sn (modulesRun no cambia)");
@@ -152,20 +152,20 @@ async function main() {
 
   // Equipo caído de verdad: el resultado de antes, con una frase más.
   setPing(OUT.macTimeout, 2);
-  d = await checkHostReachable(opts);
-  ok(d.reachable === false && deriveTargetState(d) === "unreachable",
+  d = await comprobarAlcance(opts);
+  ok(d.reachable === false && deducirEstadoObjetivo(d) === "unreachable",
      "Nmap 'caído' + ping sin respuesta → sigue 'no accesible'", JSON.stringify(d));
   ok(/Tampoco respondió al ping del sistema\.$/.test(d.detail), "el detalle dice que también se probó el ping", d.detail);
 
   // El router de Windows no cuela como respuesta.
   setPing(OUT.winRouterUnreachEs, 0);
-  d = await checkHostReachable({ ...opts, platform: "win32" });
+  d = await comprobarAlcance({ ...opts, platform: "win32" });
   ok(d.reachable === false, "Windows: 'Host de destino inaccesible' con exit 0 → no accesible", JSON.stringify(d));
 
   // Sin ping: no se afirma una comprobación que no se hizo.
   if (!realPing) {
     usePath(binNmap); setNmap(NMAP_DOWN_XML);
-    d = await checkHostReachable(opts);
+    d = await comprobarAlcance(opts);
     ok(d.reachable === false && !/ping/i.test(d.detail),
        "sin ping instalado → 'no accesible' como antes y sin mencionar el ping", d.detail);
   }
@@ -173,17 +173,17 @@ async function main() {
   // Cuando Nmap ya ha decidido, el ping no se lanza.
   usePath(binBoth);
   setNmap(NMAP_UP_XML); setPing(OUT.macReply, 0);
-  d = await checkHostReachable(opts);
+  d = await comprobarAlcance(opts);
   ok(d.reachable === true && !d.confirmedBy && !fs.existsSync(pingWitness),
      "Nmap 'activo' → no se consulta el ping", JSON.stringify(d));
 
   setNmap(NMAP_ERROR_XML); setPing(OUT.macReply, 0);
-  d = await checkHostReachable(opts);
+  d = await comprobarAlcance(opts);
   ok(d.reachable === null && !fs.existsSync(pingWitness),
      "Nmap con error (ambiguo) → no se consulta el ping: ese caso ya se escanea", JSON.stringify(d));
 
   // Objetivo local: ni Nmap ni ping.
-  d = await checkHostReachable({ target: "127.0.0.1", isLocal: true });
+  d = await comprobarAlcance({ target: "127.0.0.1", isLocal: true });
   ok(d.method === "local" && !fs.existsSync(pingWitness), "objetivo local → ni descubrimiento ni ping");
 
   process.env.PATH = ORIGINAL_PATH;

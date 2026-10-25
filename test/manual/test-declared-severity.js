@@ -7,8 +7,8 @@
  */
 
 const path = require("path");
-const { summarize, isActionable } = require("../../lib/severity-map");
-const { normalizeHost, normalizeImage } = require("../../lib/normalizer");
+const { resumir, esAccionable } = require("../../lib/severity-map");
+const { normalizarHost, normalizarImagen } = require("../../lib/normalizer");
 
 let failed = 0;
 let passed = 0;
@@ -106,7 +106,7 @@ const casos = [
 ];
 
 for (const c of casos) {
-  const s = summarize(c.findings);
+  const s = resumir(c.findings);
   ok(
     s.maxSeverity === c.maxSeverity &&
       s.actionable.total === c.actionable &&
@@ -126,8 +126,8 @@ const mismoCve = {
   location: "plugins/discord/bun.lock",
 };
 
-const enHost   = summarize([Object.assign({}, mismoCve, { scope: "host" })]);
-const enImagen = summarize([Object.assign({}, mismoCve, { scope: "image" })]);
+const enHost   = resumir([Object.assign({}, mismoCve, { scope: "host" })]);
+const enImagen = resumir([Object.assign({}, mismoCve, { scope: "image" })]);
 
 console.log("  hallazgo idéntico (declared · critical · CVSS 9.8), solo cambia scope:");
 console.log(`    scope=host   → maxSeverity ${enHost.maxSeverity.padEnd(8)} ` +
@@ -138,10 +138,10 @@ console.log("");
 
 ok(enHost.maxSeverity === "info",       "en host   el riesgo global NO sube");
 ok(enImagen.maxSeverity === "critical", "en imagen el riesgo global SÍ sube");
-ok(isActionable(Object.assign({}, mismoCve, { scope: "image" })) === true,
-   "isActionable() coincide con summarize() en imagen");
-ok(isActionable(Object.assign({}, mismoCve, { scope: "host" })) === false,
-   "isActionable() coincide con summarize() en host");
+ok(esAccionable(Object.assign({}, mismoCve, { scope: "image" })) === true,
+   "esAccionable() coincide con summarize() en imagen");
+ok(esAccionable(Object.assign({}, mismoCve, { scope: "host" })) === false,
+   "esAccionable() coincide con summarize() en host");
 
 console.log("\n── 3 · counts NO cambia: los 96 se siguen contando ───────────────\n");
 
@@ -149,7 +149,7 @@ console.log("\n── 3 · counts NO cambia: los 96 se siguen contando ───
 const noventaYSeis = Array.from({ length: 96 }, (_, i) =>
   f({ id: `HOST-CVE-${i}`, scope: "host", origin: "declared", severity: i < 9 ? "critical" : "high" })
 );
-const s96 = summarize(noventaYSeis);
+const s96 = resumir(noventaYSeis);
 const total = Object.values(s96.counts).reduce((a, b) => a + b, 0);
 
 ok(total === 96, "counts sigue sumando 96", `obtenido ${total}`);
@@ -161,7 +161,7 @@ ok(s96.actionable.total + s96.informative.total === 96,
 
 console.log("\n── 4 · Clasificación por Class: os-pkgs vs lang-pkgs ─────────────\n");
 
-// Trivy no rellena PkgPath en paquetes del SO; aun así deben salir 'installed' (ver originOf()).
+// Trivy no rellena PkgPath en paquetes del SO; aun así deben salir 'installed' (ver origenDe()).
 function trivyResult({ cls, type, pkg, pkgPath = null, sev = "CRITICAL", target = "/ (debian 12.5)" }) {
   return {
     Results: [{
@@ -174,19 +174,19 @@ function trivyResult({ cls, type, pkg, pkgPath = null, sev = "CRITICAL", target 
   };
 }
 
-const osPkgHost = normalizeHost(
+const osPkgHost = normalizarHost(
   { trivy: trivyResult({ cls: "os-pkgs", type: "debian", pkg: "openssl" }) },
   { platform: "linux", pkgManager: "apt" }
 );
-const langPkgHost = normalizeHost(
+const langPkgHost = normalizarHost(
   { trivy: trivyResult({ cls: "lang-pkgs", type: "npm", pkg: "lodash", target: "proyecto/yarn.lock" }) },
   { platform: "linux", pkgManager: "apt" }
 );
-const osPkgImage = normalizeImage(trivyResult({ cls: "os-pkgs", type: "debian", pkg: "openssl" }), "trivy");
+const osPkgImage = normalizarImagen(trivyResult({ cls: "os-pkgs", type: "debian", pkg: "openssl" }), "trivy");
 
-const sOsHost = summarize(osPkgHost);
-const sLangHost = summarize(langPkgHost);
-const sOsImage = summarize(osPkgImage);
+const sOsHost = resumir(osPkgHost);
+const sLangHost = resumir(langPkgHost);
+const sOsImage = resumir(osPkgImage);
 
 console.log("  misma ausencia de PkgPath, distinto Class:");
 console.log(`    host  · os-pkgs   → origin ${String(osPkgHost[0].origin).padEnd(9)} maxSeverity ${sOsHost.maxSeverity.padEnd(8)} actionable ${sOsHost.actionable.total}`);
@@ -203,7 +203,7 @@ ok(osPkgImage[0].origin === "installed", "image · os-pkgs → origin 'installed
 ok(sOsImage.maxSeverity === "critical", "image · os-pkgs sigue elevando", sOsImage.maxSeverity);
 
 // PkgPath sigue mandando para los paquetes de lenguaje instalados en disco.
-const langInstalled = normalizeHost(
+const langInstalled = normalizarHost(
   { trivy: trivyResult({ cls: "lang-pkgs", type: "node-pkg", pkg: "minimist",
                          pkgPath: "/home/u/proyecto/node_modules/minimist/index.js" }) },
   { platform: "linux", pkgManager: "apt" }
@@ -214,8 +214,8 @@ console.log("\n── 5 · Salida REAL de trivy rootfs (fixture medido) ──�
 
 // Fixture: recorte real de `trivy rootfs` sobre Debian 12.
 const rootfsRaw = require(path.join(__dirname, "../fixtures/trivy/rootfs-debian.json"));
-const rootfsFindings = normalizeHost({ trivy: rootfsRaw }, { platform: "linux", pkgManager: "apt" });
-const sRootfs = summarize(rootfsFindings);
+const rootfsFindings = normalizarHost({ trivy: rootfsRaw }, { platform: "linux", pkgManager: "apt" });
+const sRootfs = resumir(rootfsFindings);
 const conPkgPath = rootfsRaw.Results[0].Vulnerabilities.filter((v) => v.PkgPath).length;
 
 console.log(`  vulnerabilidades en el fixture: ${rootfsRaw.Results[0].Vulnerabilities.length} · con PkgPath: ${conPkgPath}`);
@@ -265,7 +265,7 @@ const declaradoRaw = {
   scan: { mode: "fs", target: "/home/ana" },
 };
 
-const colapsado = normalizeHost({ trivy: declaradoRaw }, { platform: "linux", pkgManager: "apt" });
+const colapsado = normalizarHost({ trivy: declaradoRaw }, { platform: "linux", pkgManager: "apt" });
 const agg = colapsado.filter((f) => f.id === "HOST-CVE-DECLARED");
 
 console.log(`  7 declaradas en 3 ficheros → ${colapsado.length} finding(s): ${JSON.stringify(colapsado.map((f) => f.id))}`);
@@ -283,7 +283,7 @@ ok(/4 de ellas tienen una versión corregida/.test(agg[0].evidence),
 ok(agg[0].evidence.includes("exportación JSON"),
    "cierra remitiendo al JSON, donde el detalle SÍ está completo");
 
-const sColapsado = summarize(colapsado);
+const sColapsado = resumir(colapsado);
 ok(sColapsado.actionable.total === 0, "ninguna cuenta como accionable", String(sColapsado.actionable.total));
 ok(sColapsado.maxSeverity === "info", "y no elevan el riesgo global", sColapsado.maxSeverity);
 
@@ -294,9 +294,9 @@ ok(!colapsado.some((f) => /^HOST-CVE-(\d|MED|LOW)/.test(f.id)),
 
 console.log("\n── 7 · La IMAGEN conserva su detalle intacto ─────────────────────\n");
 
-// En audit-image no se colapsa: normalizeImage no pasa collapseDeclared.
-const declaradasEnImagen = normalizeImage(declaradoRaw, "trivy");
-console.log(`  mismo JSON por normalizeImage → ${declaradasEnImagen.length} findings: ${JSON.stringify(declaradasEnImagen.map((f) => f.id))}`);
+// En audit-image no se colapsa: normalizarImagen no pasa collapseDeclared.
+const declaradasEnImagen = normalizarImagen(declaradoRaw, "trivy");
+console.log(`  mismo JSON por normalizarImagen → ${declaradasEnImagen.length} findings: ${JSON.stringify(declaradasEnImagen.map((f) => f.id))}`);
 
 ok(declaradasEnImagen.length > 1, "la imagen sigue enumerando", String(declaradasEnImagen.length));
 ok(!declaradasEnImagen.some((f) => f.aggregate), "y no aparece ningún agregado");
@@ -311,13 +311,13 @@ const mixtoRaw = {
   ],
   scan: { mode: "fs", target: "/home/ana" },
 };
-const mixto = normalizeHost({ trivy: mixtoRaw }, { platform: "linux", pkgManager: "apt" });
+const mixto = normalizarHost({ trivy: mixtoRaw }, { platform: "linux", pkgManager: "apt" });
 console.log(`  mezcla instalada+declarada → ${JSON.stringify(mixto.map((f) => f.id))}`);
 ok(mixto.some((f) => f.id === "HOST-CVE-DECLARED"), "la declarada se colapsa");
 ok(mixto.some((f) => f.origin === "installed" && !f.aggregate),
    "y la INSTALADA sigue enumerada, con su comando");
-ok(summarize(mixto).actionable.total === 1,
-   "solo la instalada cuenta como accionable", String(summarize(mixto).actionable.total));
+ok(resumir(mixto).actionable.total === 1,
+   "solo la instalada cuenta como accionable", String(resumir(mixto).actionable.total));
 
 console.log(`\n${passed} pasados · ${failed} fallidos\n`);
 process.exit(failed > 0 ? 1 : 0);

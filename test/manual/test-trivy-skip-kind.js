@@ -8,8 +8,8 @@
  *   node test/manual/test-trivy-skip-kind.js
  */
 
-const { normalizeHost, normalizeImage } = require("../../lib/normalizer");
-const { systemPackagesSupport } = require("../../lib/trivy-rootfs");
+const { normalizarHost, normalizarImagen } = require("../../lib/normalizer");
+const { soportePaquetesSistema } = require("../../lib/trivy-rootfs");
 
 let failed = 0;
 let passed = 0;
@@ -59,11 +59,11 @@ console.log("\n── 3 · Un skipped no rompe el normalizador y queda declarado
 for (const forma of FORMAS) {
   const res = Object.assign({ skipped: true }, forma);
   let findings, error = null;
-  try { findings = normalizeHost({ trivy: res }, { platform: "linux", pkgManager: "pacman" }); }
+  try { findings = normalizarHost({ trivy: res }, { platform: "linux", pkgManager: "pacman" }); }
   catch (e) { error = e; }
 
   ok(!error && Array.isArray(findings) && findings.length === 1,
-     `normalizeHost({trivy: ${forma.kind}}) → 1 finding informativo, sin lanzar`,
+     `normalizarHost({trivy: ${forma.kind}}) → 1 finding informativo, sin lanzar`,
      error ? `lanzó: ${error.message}` : `devolvió ${JSON.stringify(findings)}`);
   ok(!error && findings[0].id === "HOST-CVE-SKIP" && findings[0].severity === "info",
      `${forma.kind} → HOST-CVE-SKIP con severidad info`,
@@ -75,7 +75,7 @@ for (const forma of FORMAS) {
 console.log("\n── 3b · En imagen, el aviso general no duplica los errores por imagen ─\n");
 
 // El aviso general solo aparece si el fallo no trae ya su IMG-SCAN-ERR-nnn.
-const conFallos = normalizeImage(
+const conFallos = normalizarImagen(
   { skipped: true, reason: "all image scans failed", failed: [{ ref: "nginx:latest", error: "TIMEOUT" }] },
   "trivy"
 );
@@ -83,7 +83,7 @@ ok(conFallos.length === 0,
    "IMG-CVE con failed[] → sin aviso general (ya hay uno por imagen)",
    `devolvió ${JSON.stringify(conFallos.map((f) => f.id))}`);
 
-const sinFallos = normalizeImage({ skipped: true, kind: "not-installed", reason: "trivy not installed" }, "trivy");
+const sinFallos = normalizarImagen({ skipped: true, kind: "not-installed", reason: "trivy not installed" }, "trivy");
 ok(sinFallos.length === 1 && sinFallos[0].id === "IMG-CVE-SKIP",
    "IMG-CVE sin failed[] → IMG-CVE-SKIP",
    `devolvió ${JSON.stringify(sinFallos.map((f) => f.id))}`);
@@ -97,7 +97,7 @@ const rootfsArch = {
   skipped: true, kind: "os-unsupported",
   reason: "Trivy no ha detectado la familia del sistema operativo",
 };
-const estado = systemPackagesSupport("linux", rootfsArch, { enabled: true });
+const estado = soportePaquetesSistema("linux", rootfsArch, { enabled: true });
 ok(estado === "unsupported-manager",
    `linux + informe sin OS.Family + interruptor activo → "${estado}"`,
    "esperado 'unsupported-manager'");

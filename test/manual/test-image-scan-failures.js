@@ -22,8 +22,8 @@ const executor = require(path.join(ROOT, "lib/executor"));
 let informes = {};
 let contenedores = "";
 let inspectOut = {};
-executor.commandExists = async (cmd) => cmd === "docker" || cmd === "trivy";
-executor.execCommand = async (cmd) => {
+executor.existeComando = async (cmd) => cmd === "docker" || cmd === "trivy";
+executor.ejecutar = async (cmd) => {
   if (cmd.startsWith("docker info")) return "27.0.0";
   if (cmd.startsWith("docker images")) return "id1|nginx|1.21|10MB|2024\nid2|scratch-app|1|2MB|2024";
   if (cmd.startsWith("docker ps")) return contenedores;

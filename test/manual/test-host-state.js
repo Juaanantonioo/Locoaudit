@@ -15,12 +15,12 @@ const fs   = require("fs");
 const path = require("path");
 
 const {
-  parseDiscoveryXml,
-  deriveTargetState,
-  buildDiscoveryCmd,
-  checkHostReachable,
+  leerXmlDescubrimiento,
+  deducirEstadoObjetivo,
+  comandoDescubrimiento,
+  comprobarAlcance,
 } = require("../../nodes/audit-network/modules/host-discovery");
-const { parseNmapXml } = require("../../nodes/audit-network/modules/nmap-wrapper");
+const { leerXmlNmap } = require("../../nodes/audit-network/modules/nmap-wrapper");
 
 const FIXTURES = path.join(__dirname, "..", "fixtures", "nmap");
 const SEP = "─".repeat(72);
@@ -59,42 +59,42 @@ function skip(name, why) {
 
 function testDiscovery() {
   console.log(SEP);
-  console.log("1 · parseDiscoveryXml() — interpretación de nmap -sn");
+  console.log("1 · leerXmlDescubrimiento() — interpretación de nmap -sn");
   console.log(SEP);
 
   const up = fixture("sn-up.xml");
-  const r1 = parseDiscoveryXml(up);
+  const r1 = leerXmlDescubrimiento(up);
   eq("host vivo → reachable true", r1.reachable, true);
-  eq("host vivo → targetState 'reachable'", deriveTargetState({ reachable: r1.reachable }), "reachable");
+  eq("host vivo → targetState 'reachable'", deducirEstadoObjetivo({ reachable: r1.reachable }), "reachable");
 
   const down = fixture("sn-down.xml");
-  const r2 = parseDiscoveryXml(down);
+  const r2 = leerXmlDescubrimiento(down);
   eq("host inexistente (hosts up=0 down=1) → reachable false", r2.reachable, false);
-  eq("host inexistente → targetState 'unreachable'", deriveTargetState({ reachable: r2.reachable }), "unreachable");
+  eq("host inexistente → targetState 'unreachable'", deducirEstadoObjetivo({ reachable: r2.reachable }), "unreachable");
 
   const trunc = fixture("sn-truncated.xml");
-  const r3 = parseDiscoveryXml(trunc);
+  const r3 = leerXmlDescubrimiento(trunc);
   eq("salida truncada sin <runstats> → reachable null (ambiguo)", r3.reachable, null);
-  eq("ambiguo → targetState 'unknown'", deriveTargetState({ reachable: r3.reachable }), "unknown");
+  eq("ambiguo → targetState 'unknown'", deducirEstadoObjetivo({ reachable: r3.reachable }), "unknown");
 
   // nmap abortado (hosts total="0"): es un fallo de la herramienta, no un host caído.
   const errXml = '<?xml version="1.0"?><nmaprun><runstats><finished time="1" ' +
     'timestr="x" elapsed="0.05" summary="s" exit="error" errormsg="I cannot ' +
     'figure out what source address to use for device Wi-Fi, does it even ' +
     'exist?"/><hosts up="0" down="0" total="0"/></runstats></nmaprun>';
-  const r5 = parseDiscoveryXml(errXml);
+  const r5 = leerXmlDescubrimiento(errXml);
   eq("nmap abortado (exit=error) → reachable null, NUNCA false", r5.reachable, null);
-  eq("nmap abortado → targetState 'unknown'", deriveTargetState({ reachable: r5.reachable }), "unknown");
+  eq("nmap abortado → targetState 'unknown'", deducirEstadoObjetivo({ reachable: r5.reachable }), "unknown");
   ok("nmap abortado → se guarda el errormsg para diagnóstico",
      typeof r5.error === "string" && r5.error.includes("Wi-Fi"), String(r5.error));
 
-  eq("XML vacío → ambiguo, nunca false", parseDiscoveryXml("").reachable, null);
-  eq("basura → ambiguo, nunca false", parseDiscoveryXml("<nope/>").reachable, null);
+  eq("XML vacío → ambiguo, nunca false", leerXmlDescubrimiento("").reachable, null);
+  eq("basura → ambiguo, nunca false", leerXmlDescubrimiento("<nope/>").reachable, null);
 
   // Ambiguo no cancela: skipScan = (targetState === 'unreachable' && !forceScan)
   ok(
     "ambiguo NO cancela el escaneo (solo 'unreachable' lo hace)",
-    deriveTargetState({ reachable: null }) !== "unreachable"
+    deducirEstadoObjetivo({ reachable: null }) !== "unreachable"
   );
 
   // El motivo es informativo, nunca decide.
@@ -102,38 +102,38 @@ function testDiscovery() {
   if (hu === null) {
     skip("reason 'host-unreach' (sin ruta)", "fixture pendiente de capturar en CachyOS");
   } else {
-    const r4 = parseDiscoveryXml(hu);
+    const r4 = leerXmlDescubrimiento(hu);
     eq("sin ruta → reachable false", r4.reachable, false);
     eq("sin ruta → reason host-unreach", r4.reason, "host-unreach");
   }
 
-  const cmd = buildDiscoveryCmd("10.0.0.5");
+  const cmd = comandoDescubrimiento("10.0.0.5");
   ok("el comando de descubrimiento es -sn", cmd.includes("nmap -sn"), cmd);
   ok("el descubrimiento NO lleva -Pn (lo anularía)", !cmd.includes("-Pn"), cmd);
   ok("amplía las sondas TCP más allá de 80/443", cmd.includes("-PS22,80,443,8080"), cmd);
 
   // En Windows el comando sale sin -e: nmap no entiende el nombre amigable del adaptador.
-  const { findInterfaceForTarget } = require("../../nodes/audit-network/modules/nmap-wrapper");
-  eq("Windows → sin interfaz para -e", findInterfaceForTarget("192.168.0.30", "win32"), null);
+  const { interfazParaObjetivo } = require("../../nodes/audit-network/modules/nmap-wrapper");
+  eq("Windows → sin interfaz para -e", interfazParaObjetivo("192.168.0.30", "win32"), null);
   ok("macOS/Linux → se sigue eligiendo interfaz cuando la hay",
-     findInterfaceForTarget("127.0.0.1", "darwin") === null, "localhost nunca lleva -e");
+     interfazParaObjetivo("127.0.0.1", "darwin") === null, "localhost nunca lleva -e");
 }
 
 // ── 2. Escaneo de puertos ─────────────────────────────────────────────────────
 
 function testPortScan() {
   console.log(SEP);
-  console.log("2 · parseNmapXml() — los tres estados");
+  console.log("2 · leerXmlNmap() — los tres estados");
   console.log(SEP);
 
-  const open = parseNmapXml(fixture("scan-ports-open.xml"));
+  const open = leerXmlNmap(fixture("scan-ports-open.xml"));
   ok("host vivo con puertos → al menos 1 puerto abierto", open.length > 0, `obtenidos ${open.length}`);
   ok("todos los puertos devueltos están 'open'", open.every((p) => p.state === "open"));
 
-  const none = parseNmapXml(fixture("scan-no-ports.xml"));
+  const none = leerXmlNmap(fixture("scan-no-ports.xml"));
   eq("host vivo sin puertos abiertos → 0 puertos", none.length, 0);
 
-  const dead = parseNmapXml(fixture("scan-unreachable.xml"));
+  const dead = leerXmlNmap(fixture("scan-unreachable.xml"));
   eq("host inexistente → 0 puertos", dead.length, 0);
 
   // Sin --open el escaneo conserva el recuento de filtrados y su motivo.
@@ -166,20 +166,20 @@ function testNeverGreenWhenDead() {
   );
 
   // La señal NUEVA (descubrimiento) acierta.
-  const state = deriveTargetState(parseDiscoveryXml(deadDisc));
+  const state = deducirEstadoObjetivo(leerXmlDescubrimiento(deadDisc));
   eq("targetState derivado del descubrimiento → 'unreachable'", state, "unreachable");
   ok("targetState NUNCA es 'reachable' para el fixture inalcanzable", state !== "reachable");
 
   // 0 puertos + unreachable = "no auditado", no "sin riesgo".
-  const ports = parseNmapXml(deadScan);
+  const ports = leerXmlNmap(deadScan);
   ok(
     "0 puertos + unreachable ⇒ estado neutro, no verde",
     ports.length === 0 && state === "unreachable"
   );
 
   // Contraste: 0 puertos + reachable SÍ es el verde legítimo.
-  const aliveState = deriveTargetState(parseDiscoveryXml(fixture("sn-up.xml")));
-  const alivePorts = parseNmapXml(fixture("scan-no-ports.xml"));
+  const aliveState = deducirEstadoObjetivo(leerXmlDescubrimiento(fixture("sn-up.xml")));
+  const alivePorts = leerXmlNmap(fixture("scan-no-ports.xml"));
   ok(
     "0 puertos + reachable ⇒ verde legítimo (el estado 2 se conserva)",
     alivePorts.length === 0 && aliveState === "reachable"
@@ -226,18 +226,18 @@ function testDashboard() {
     discovery: { method: "nmap-sn", reason: null, detail: "10.0.0.5 no respondió al descubrimiento de red." },
   }, []);
 
-  eq("unreachable → notAudited", dead.notAudited, true);
-  ok("badge NUNCA dice 'Sin Riesgo'", dead.riskLabel !== "Sin Riesgo", dead.riskLabel);
-  eq("badge dice 'No auditado'", dead.riskLabel, "No auditado");
-  eq("badge en gris neutro, no en la clase de severidad", dead.riskClass, "not-audited");
-  eq("el contador no muestra un 0 (se leería como resultado)", dead.portCountLabel, "—");
-  ok("sale el banner de aviso", !!dead.scanWarn, "no hay banner");
-  ok("el banner es neutro, no una alerta de riesgo", dead.scanWarn.neutral === true);
-  ok("el aviso nombra el objetivo", dead.scanWarn.title.indexOf("10.0.0.5") >= 0, dead.scanWarn.title);
+  eq("unreachable → notAudited", dead.noAuditado, true);
+  ok("badge NUNCA dice 'Sin Riesgo'", dead.etiquetaRiesgo !== "Sin Riesgo", dead.etiquetaRiesgo);
+  eq("badge dice 'No auditado'", dead.etiquetaRiesgo, "No auditado");
+  eq("badge en gris neutro, no en la clase de severidad", dead.claseRiesgo, "not-audited");
+  eq("el contador no muestra un 0 (se leería como resultado)", dead.etiquetaNumPuertos, "—");
+  ok("sale el banner de aviso", !!dead.avisoEscaneo, "no hay banner");
+  ok("el banner es neutro, no una alerta de riesgo", dead.avisoEscaneo.neutral === true);
+  ok("el aviso nombra el objetivo", dead.avisoEscaneo.title.indexOf("10.0.0.5") >= 0, dead.avisoEscaneo.title);
   ok("explica las causas posibles en lenguaje llano",
-    /apagado/.test(dead.scanWarn.desc) && /IP/.test(dead.scanWarn.desc) && /VPN/.test(dead.scanWarn.desc));
-  ok("dice explícitamente que 0 hallazgos ≠ seguro", /NO significa/.test(dead.scanWarn.desc));
-  ok("propone comprobarlo: ping", /ping 10\.0\.0\.5/.test(dead.scanWarn.desc), dead.scanWarn.desc);
+    /apagado/.test(dead.avisoEscaneo.desc) && /IP/.test(dead.avisoEscaneo.desc) && /VPN/.test(dead.avisoEscaneo.desc));
+  ok("dice explícitamente que 0 hallazgos ≠ seguro", /NO significa/.test(dead.avisoEscaneo.desc));
+  ok("propone comprobarlo: ping", /ping 10\.0\.0\.5/.test(dead.avisoEscaneo.desc), dead.avisoEscaneo.desc);
 
   // Sin ruta: el motivo solo afina el texto, la decisión ya está tomada.
   const noRoute = loadDashboardVm({
@@ -245,8 +245,8 @@ function testDashboard() {
     discovery: { method: "nmap-sn", reason: "host-unreach", detail: "" },
   }, []);
   ok("reason host-unreach → habla de ruta, no de que no conteste",
-    /ruta de red/.test(noRoute.scanWarn.desc), noRoute.scanWarn.desc);
-  eq("y el estado sigue siendo el mismo", noRoute.riskLabel, "No auditado");
+    /ruta de red/.test(noRoute.avisoEscaneo.desc), noRoute.avisoEscaneo.desc);
+  eq("y el estado sigue siendo el mismo", noRoute.etiquetaRiesgo, "No auditado");
 
   // Estado 2: alcanzable sin puertos abiertos. El verde legítimo se conserva.
   const clean = loadDashboardVm({
@@ -254,15 +254,15 @@ function testDashboard() {
     portSource: "nmap", portsOpen: 0, forceScan: false,
     discovery: { method: "local", reason: "localhost", detail: "" },
   }, []);
-  eq("reachable + 0 puertos → NO es 'no auditado'", clean.notAudited, false);
-  eq("mantiene 'Sin Riesgo'", clean.riskLabel, "Sin Riesgo");
-  eq("y muestra el 0", clean.portCountLabel, 0);
-  eq("sin banner de aviso", clean.scanWarn, null);
+  eq("reachable + 0 puertos → NO es 'no auditado'", clean.noAuditado, false);
+  eq("mantiene 'Sin Riesgo'", clean.etiquetaRiesgo, "Sin Riesgo");
+  eq("y muestra el 0", clean.etiquetaNumPuertos, 0);
+  eq("sin banner de aviso", clean.avisoEscaneo, null);
 
   // Payload viejo (sin targetState): no debe romperse ni volverse neutro.
   const legacy = loadDashboardVm({ target: "127.0.0.1", scanStatus: "ok", portsOpen: 0 }, []);
-  eq("payload sin targetState → se asume 'reachable' (compatibilidad)", legacy.targetState, "reachable");
-  eq("y sigue pintando el verde de siempre", legacy.riskLabel, "Sin Riesgo");
+  eq("payload sin targetState → se asume 'reachable' (compatibilidad)", legacy.estadoObjetivo, "reachable");
+  eq("y sigue pintando el verde de siempre", legacy.etiquetaRiesgo, "Sin Riesgo");
 }
 
 // ── 5. Descubrimiento real (--live) ───────────────────────────────────────────
@@ -279,8 +279,8 @@ async function testLive() {
   ];
 
   for (const t of targets) {
-    const d = await checkHostReachable({ target: t.target, isLocal: t.isLocal });
-    const state = deriveTargetState(d);
+    const d = await comprobarAlcance({ target: t.target, isLocal: t.isLocal });
+    const state = deducirEstadoObjetivo(d);
     console.log(
       `  ${t.target.padEnd(12)} local=${String(t.isLocal).padEnd(5)} → ` +
       `${state.padEnd(12)} ${String(d.durationMs + " ms").padEnd(9)} ` +

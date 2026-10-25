@@ -12,32 +12,32 @@ const fs   = require("fs");
 const path = require("path");
 
 const {
-  decodeXmlEntities, parseScripts, findScript, tablesByKey, elemValue, elemList,
+  decodificarEntidades, leerScripts, buscarScript, tablasPorClave, valorElemento, listaElementos,
 } = require("../../nodes/audit-network/modules/nmap-xml");
 
 const {
-  parseScriptHelp, parseRejectedName, scriptStates,
+  leerAyudaScript, leerNombreRechazado, estadoScripts,
 } = require("../../nodes/audit-network/modules/nse-scripts");
 
 const {
-  runCanary, inferFromScan, canaryIsOk, CANARY_DETAIL,
+  ejecutarCanario, deducirDelEscaneo, canarioCorrecto, CANARY_DETAIL,
 } = require("../../nodes/audit-network/modules/vulners-canary");
 
 const {
-  buildScanCommand, parseNmapXml,
+  comandoEscaneo, leerXmlNmap,
 } = require("../../nodes/audit-network/modules/nmap-wrapper");
 
 const {
-  appliesTo, hasVersion, sshAlgoSeverity, sourceKind,
+  aplicaA, tieneVersion, severidadAlgoritmoSsh, tipoFuente,
   TLS_GRADE_SEVERITY, SSH_WEAK_ALGOS, NSE_SCRIPT_IDS, OFFERED_NOT_NEGOTIATED,
 } = require("../../nodes/audit-network/modules/nse-catalog");
 
 const {
-  summarizePort,
+  resumirPuerto,
 } = require("../../nodes/audit-network/modules/nse-extract");
 
 const {
-  fromNse, fromNseVulns, fromNseTls, fromNseSvc, fromNseOmissions, normalizeNetwork,
+  desdeNse, desdeNseVulns, desdeNseTls, desdeNseServicio, desdeNseOmisiones, normalizarRed,
 } = require("../../lib/normalizer");
 
 let failed = 0;
@@ -52,41 +52,41 @@ function fixture(name) {
   return fs.readFileSync(path.join(__dirname, "..", "fixtures", "nmap", name), "utf8");
 }
 
-/** El primer bloque <port>…</port>, que es lo que recibe parseScripts(). */
+/** El primer bloque <port>…</port>, que es lo que recibe leerScripts(). */
 function portBlock(xml) {
   const m = xml.match(/<port\s[^>]*>[\s\S]*?<\/port>/);
   return m ? m[0] : "";
 }
 
 // ── 1. Entidades, incluidas las numéricas ────────────────────────────────────
-console.log("\n1. decodeXmlEntities");
+console.log("\n1. decodificarEntidades");
 
-ok(decodeXmlEntities("a&#xa;b") === "a\nb", "&#xa; hexadecimal → salto de línea");
-ok(decodeXmlEntities("a&#x9;b") === "a\tb", "&#x9; hexadecimal → tabulador");
-ok(decodeXmlEntities("a&#10;b") === "a\nb", "&#10; decimal → salto de línea");
-ok(decodeXmlEntities("&lt;a&gt; &quot;b&quot; &apos;c&apos; &amp;") === "<a> \"b\" 'c' &",
+ok(decodificarEntidades("a&#xa;b") === "a\nb", "&#xa; hexadecimal → salto de línea");
+ok(decodificarEntidades("a&#x9;b") === "a\tb", "&#x9; hexadecimal → tabulador");
+ok(decodificarEntidades("a&#10;b") === "a\nb", "&#10; decimal → salto de línea");
+ok(decodificarEntidades("&lt;a&gt; &quot;b&quot; &apos;c&apos; &amp;") === "<a> \"b\" 'c' &",
    "las cinco predefinidas");
 
 // Una sola pasada: encadenar decodificaría dos veces y el literal "&lt;" acabaría en "<".
-ok(decodeXmlEntities("&amp;lt;") === "&lt;", "no se decodifica dos veces");
-ok(decodeXmlEntities("&#x110000;") === "&#x110000;", "código fuera de rango se deja tal cual");
-ok(decodeXmlEntities(null) === "" && decodeXmlEntities(undefined) === "", "null/undefined → \"\"");
+ok(decodificarEntidades("&amp;lt;") === "&lt;", "no se decodifica dos veces");
+ok(decodificarEntidades("&#x110000;") === "&#x110000;", "código fuera de rango se deja tal cual");
+ok(decodificarEntidades(null) === "" && decodificarEntidades(undefined) === "", "null/undefined → \"\"");
 
 // ── 2. El subárbol de vulners, sobre captura real ───────────────────────────
 console.log("\n2. vulners (captura real, puerto 22)");
 
 const sshBlock   = portBlock(fixture("scan-nse-ssh.xml"));
-const sshScripts = parseScripts(sshBlock);
+const sshScripts = leerScripts(sshBlock);
 
 ok(sshScripts.map((s) => s.id).join(",") === "vulners,ssh2-enum-algos,banner",
    "salen los tres scripts que produjeron algo",
    sshScripts.map((s) => s.id).join(","));
 
 // ssl-cert no está en el XML porque su portrule no casó con SSH: no se lee como "limpio".
-ok(findScript(sshScripts, "ssl-cert") === null,
+ok(buscarScript(sshScripts, "ssl-cert") === null,
    "ssl-cert no aparece: el portrule no casó, no es un hallazgo vacío");
 
-const vulners = findScript(sshScripts, "vulners");
+const vulners = buscarScript(sshScripts, "vulners");
 const cpeTable = vulners.children.filter((c) => c.type === "table")[0];
 
 ok(cpeTable.key === "cpe:/a:openbsd:openssh:10.3",
@@ -94,13 +94,13 @@ ok(cpeTable.key === "cpe:/a:openbsd:openssh:10.3",
 ok(cpeTable.children.length === 11, "11 CVE", String(cpeTable.children.length));
 
 const first = cpeTable.children[0];
-ok(elemValue(first, "id")   === "CVE-2026-60002", "id del primero");
-ok(elemValue(first, "cvss") === "9.4",            "cvss del primero");
-ok(elemValue(first, "type") === "cve",            "type del primero");
-ok(elemValue(first, "is_exploit") === "false",    "is_exploit del primero");
+ok(valorElemento(first, "id")   === "CVE-2026-60002", "id del primero");
+ok(valorElemento(first, "cvss") === "9.4",            "cvss del primero");
+ok(valorElemento(first, "type") === "cve",            "type del primero");
+ok(valorElemento(first, "is_exploit") === "false",    "is_exploit del primero");
 
 // El 9.4 es el que convierte un puerto en crítico.
-const cvsss = cpeTable.children.map((t) => parseFloat(elemValue(t, "cvss")));
+const cvsss = cpeTable.children.map((t) => parseFloat(valorElemento(t, "cvss")));
 ok(Math.max(...cvsss) === 9.4, "el CVSS máximo del grupo es 9.4", String(Math.max(...cvsss)));
 ok(cvsss.every((n) => Number.isFinite(n)), "los 11 traen CVSS numérico");
 
@@ -112,7 +112,7 @@ ok(vulners.output.includes("CVE-2026-60002"), "el output conserva el texto origi
 // ── 3. Script autocerrado ────────────────────────────────────────────────────
 console.log("\n3. <script/> sin subárbol");
 
-const banner = findScript(sshScripts, "banner");
+const banner = buscarScript(sshScripts, "banner");
 ok(banner !== null, "un <script … /> autocerrado se reconoce igual");
 ok(banner.children.length === 0, "y no arrastra hijos del script siguiente");
 ok(banner.output === "SSH-2.0-OpenSSH_10.3", "su output se lee", banner.output);
@@ -120,42 +120,42 @@ ok(banner.output === "SSH-2.0-OpenSSH_10.3", "su output se lee", banner.output);
 // ── 4. Listas sin key: ssh2-enum-algos ───────────────────────────────────────
 console.log("\n4. ssh2-enum-algos");
 
-const ssh2 = findScript(sshScripts, "ssh2-enum-algos");
+const ssh2 = buscarScript(sshScripts, "ssh2-enum-algos");
 const grupos = ssh2.children.filter((c) => c.type === "table").map((c) => c.key);
 ok(grupos.join(",") === "kex_algorithms,server_host_key_algorithms,encryption_algorithms,mac_algorithms,compression_algorithms",
    "los cinco grupos, en orden", grupos.join(","));
 
-const kex = elemList(tablesByKey(ssh2, "kex_algorithms")[0]);
+const kex = listaElementos(tablasPorClave(ssh2, "kex_algorithms")[0]);
 ok(kex.length === 10, "10 algoritmos de intercambio", String(kex.length));
 ok(kex.includes("curve25519-sha256"), "un valor concreto de la lista");
-ok(elemList(tablesByKey(ssh2, "mac_algorithms")[0]).length > 0, "la lista de MAC no viene vacía");
+ok(listaElementos(tablasPorClave(ssh2, "mac_algorithms")[0]).length > 0, "la lista de MAC no viene vacía");
 
 // Lista y diccionario se distinguen porque los hijos de estas tablas no llevan key.
-ok(tablesByKey(ssh2, "kex_algorithms")[0].children.every((c) => c.key === null),
+ok(tablasPorClave(ssh2, "kex_algorithms")[0].children.every((c) => c.key === null),
    "los elementos de una lista no llevan key");
 
 // ── 5. TLS, sobre captura real ───────────────────────────────────────────────
 console.log("\n5. ssl-enum-ciphers y ssl-cert (captura real, s_server local)");
 
-const tlsScripts = parseScripts(portBlock(fixture("scan-nse-tls.xml")));
-const enumC = findScript(tlsScripts, "ssl-enum-ciphers");
+const tlsScripts = leerScripts(portBlock(fixture("scan-nse-tls.xml")));
+const enumC = buscarScript(tlsScripts, "ssl-enum-ciphers");
 
 ok(enumC !== null, "ssl-enum-ciphers aparece en un puerto TLS de verdad");
-ok(elemValue(enumC, "least strength") === "A",
+ok(valorElemento(enumC, "least strength") === "A",
    "la nota agregada va en <elem key=\"least strength\"> a nivel de script",
-   JSON.stringify(elemValue(enumC, "least strength")));
+   JSON.stringify(valorElemento(enumC, "least strength")));
 ok(enumC.children.filter((c) => c.type === "table").map((c) => c.key).join(",") === "TLSv1.2,TLSv1.3",
    "y por debajo, una tabla por protocolo");
 
-const cert = findScript(tlsScripts, "ssl-cert");
-ok(cert !== null && elemValue(cert, "sig_algo") !== "", "ssl-cert trae su algoritmo de firma");
-ok(tablesByKey(cert, "validity").length === 1, "y su tabla de vigencia");
+const cert = buscarScript(tlsScripts, "ssl-cert");
+ok(cert !== null && valorElemento(cert, "sig_algo") !== "", "ssl-cert trae su algoritmo de firma");
+ok(tablasPorClave(cert, "validity").length === 1, "y su tabla de vigencia");
 
 // sslv2 no salió (el servidor no lo soporta): "aplicaba y no hubo respuesta" no es limpio.
-ok(findScript(tlsScripts, "sslv2") === null, "sslv2 no produjo nada contra un servidor moderno");
+ok(buscarScript(tlsScripts, "sslv2") === null, "sslv2 no produjo nada contra un servidor moderno");
 
 // -sV añade sus propios scripts al XML; no se confunden con los nuestros.
-ok(findScript(tlsScripts, "fingerprint-strings") !== null,
+ok(buscarScript(tlsScripts, "fingerprint-strings") !== null,
    "fingerprint-strings, que lo emite -sV y no está en nuestra lista, se parsea sin romper");
 ok(!NSE_SCRIPT_IDS.includes("fingerprint-strings"),
    "y no está en la lista nominal, así que nadie lo interpretará");
@@ -163,54 +163,54 @@ ok(!NSE_SCRIPT_IDS.includes("fingerprint-strings"),
 // ── 6. Puerto sin scripts ────────────────────────────────────────────────────
 console.log("\n6. bordes");
 
-ok(parseScripts("<port protocol=\"tcp\" portid=\"80\"><state state=\"open\"/></port>").length === 0,
+ok(leerScripts("<port protocol=\"tcp\" portid=\"80\"><state state=\"open\"/></port>").length === 0,
    "un puerto sin <script> devuelve lista vacía");
-ok(parseScripts("").length === 0 && parseScripts(null).length === 0, "vacío y null no rompen");
+ok(leerScripts("").length === 0 && leerScripts(null).length === 0, "vacío y null no rompen");
 
 // ── 7. Aplicabilidad ─────────────────────────────────────────────────────────
-console.log("\n7. appliesTo");
+console.log("\n7. aplicaA");
 
-ok(appliesTo("vulners", { port: 22, service: "ssh", version: "OpenSSH 10.3" }).applies,
+ok(aplicaA("vulners", { port: 22, service: "ssh", version: "OpenSSH 10.3" }).applies,
    "vulners aplica con versión");
-ok(appliesTo("vulners", { port: 22, service: "ssh", cpe: "cpe:/a:openbsd:openssh:10.3" }).applies,
+ok(aplicaA("vulners", { port: 22, service: "ssh", cpe: "cpe:/a:openbsd:openssh:10.3" }).applies,
    "vulners aplica solo con CPE");
 
-const sinVer = appliesTo("vulners", { port: 9999, service: "unknown" });
+const sinVer = aplicaA("vulners", { port: 9999, service: "unknown" });
 ok(!sinVer.applies, "vulners no aplica sin versión ni CPE");
 ok(/versión/.test(sinVer.reason), "y explica por qué", sinVer.reason);
 
-ok(appliesTo("ssl-enum-ciphers", { port: 14443, service: "ssl", tunnel: "ssl" }).applies,
+ok(aplicaA("ssl-enum-ciphers", { port: 14443, service: "ssl", tunnel: "ssl" }).applies,
    "TLS por tunnel=\"ssl\"");
-ok(appliesTo("ssl-cert", { port: 443, service: "http" }).applies, "TLS por número de puerto");
-ok(appliesTo("sslv2", { port: 8888, service: "imaps" }).applies, "TLS por nombre de servicio");
-ok(!appliesTo("ssl-cert", { port: 22, service: "ssh" }).applies, "TLS no aplica a SSH");
+ok(aplicaA("ssl-cert", { port: 443, service: "http" }).applies, "TLS por número de puerto");
+ok(aplicaA("sslv2", { port: 8888, service: "imaps" }).applies, "TLS por nombre de servicio");
+ok(!aplicaA("ssl-cert", { port: 22, service: "ssh" }).applies, "TLS no aplica a SSH");
 
-ok(appliesTo("ssh2-enum-algos", { port: 22, service: "ssh" }).applies, "SSH por servicio y puerto");
-ok(appliesTo("ssh2-enum-algos", { port: 2222, service: "ssh" }).applies, "SSH en puerto no estándar");
-ok(!appliesTo("ssh2-enum-algos", { port: 443, service: "https" }).applies, "SSH no aplica a HTTPS");
+ok(aplicaA("ssh2-enum-algos", { port: 22, service: "ssh" }).applies, "SSH por servicio y puerto");
+ok(aplicaA("ssh2-enum-algos", { port: 2222, service: "ssh" }).applies, "SSH en puerto no estándar");
+ok(!aplicaA("ssh2-enum-algos", { port: 443, service: "https" }).applies, "SSH no aplica a HTTPS");
 
 // Un script desconocido no se interpreta a ciegas.
-const desconocido = appliesTo("http-title", { port: 80, service: "http" });
+const desconocido = aplicaA("http-title", { port: 80, service: "http" });
 ok(!desconocido.applies && /No hay condición/.test(desconocido.reason),
    "un script sin condición declarada lo dice en vez de suponer");
 
-ok(hasVersion({ version: "OpenSSH 10.3" }) && !hasVersion({}) && !hasVersion(null),
+ok(tieneVersion({ version: "OpenSSH 10.3" }) && !tieneVersion({}) && !tieneVersion(null),
    "hasVersion cubre sus tres casos");
-ok(sourceKind("vulners") === "remote-api" && sourceKind("ssl-cert") === "target",
+ok(tipoFuente("vulners") === "remote-api" && tipoFuente("ssl-cert") === "target",
    "vulners es fuente remota; el resto habla con el objetivo");
 
 // ── 8. Las dos tablas de severidad ───────────────────────────────────────────
 console.log("\n8. severidad de algoritmos");
 
-ok(sshAlgoSeverity("ssh-dss") === "medium", "ssh-dss → medium (techo de la tabla SSH)");
-ok(sshAlgoSeverity("diffie-hellman-group1-sha1") === "medium", "DH grupo 1 → medium");
-ok(sshAlgoSeverity("hmac-md5-96") === "medium", "hmac-md5-96 → medium");
-ok(sshAlgoSeverity("3des-cbc") === "low", "3des-cbc → low");
-ok(sshAlgoSeverity("hmac-sha1") === "low", "hmac-sha1 → low");
-ok(sshAlgoSeverity("aes128-cbc") === "low", "un *-cbc no listado cae a low por el sufijo");
-ok(sshAlgoSeverity("AES256-CBC") === "low", "y sin depender de las mayúsculas");
-ok(sshAlgoSeverity("curve25519-sha256") === "info", "lo actual es inventario, no hallazgo");
-ok(sshAlgoSeverity("") === "info" && sshAlgoSeverity(null) === "info", "vacío no rompe");
+ok(severidadAlgoritmoSsh("ssh-dss") === "medium", "ssh-dss → medium (techo de la tabla SSH)");
+ok(severidadAlgoritmoSsh("diffie-hellman-group1-sha1") === "medium", "DH grupo 1 → medium");
+ok(severidadAlgoritmoSsh("hmac-md5-96") === "medium", "hmac-md5-96 → medium");
+ok(severidadAlgoritmoSsh("3des-cbc") === "low", "3des-cbc → low");
+ok(severidadAlgoritmoSsh("hmac-sha1") === "low", "hmac-sha1 → low");
+ok(severidadAlgoritmoSsh("aes128-cbc") === "low", "un *-cbc no listado cae a low por el sufijo");
+ok(severidadAlgoritmoSsh("AES256-CBC") === "low", "y sin depender de las mayúsculas");
+ok(severidadAlgoritmoSsh("curve25519-sha256") === "info", "lo actual es inventario, no hallazgo");
+ok(severidadAlgoritmoSsh("") === "info" && severidadAlgoritmoSsh(null) === "info", "vacío no rompe");
 
 // En SSH ningún algoritmo llega a 'high': hace falta un cliente que lo elija.
 ok(Object.values(SSH_WEAK_ALGOS).every((s) => s === "medium" || s === "low"),
@@ -225,7 +225,7 @@ ok(TLS_GRADE_SEVERITY.A === "info" && TLS_GRADE_SEVERITY.B === "low" &&
 ok(!("unknown" in TLS_GRADE_SEVERITY), "'unknown' no tiene severidad asignada");
 
 // La nota que sale del XML real tiene que existir en la tabla.
-ok(TLS_GRADE_SEVERITY[elemValue(enumC, "least strength")] === "info",
+ok(TLS_GRADE_SEVERITY[valorElemento(enumC, "least strength")] === "info",
    "la nota A de la captura real se traduce a info");
 
 ok(/OFRECE/.test(OFFERED_NOT_NEGOTIATED) && /cliente antiguo/.test(OFFERED_NOT_NEGOTIATED),
@@ -247,7 +247,7 @@ const HELP_OK = [
   "Retrieves a server's SSL certificate.",
 ].join("\n");
 
-const encontrados = parseScriptHelp(HELP_OK);
+const encontrados = leerAyudaScript(HELP_OK);
 ok(encontrados.has("ssh2-enum-algos") && encontrados.has("ssl-cert"),
    "reconoce los scripts listados");
 ok(encontrados.size === 2, "y solo esos", [...encontrados].join(","));
@@ -258,9 +258,9 @@ const HELP_CITA = [
   "Categories: default safe discovery",
   "Complementa a ssl-enum-ciphers y a vulners, que no están instalados.",
 ].join("\n");
-ok(!parseScriptHelp(HELP_CITA).has("vulners"),
+ok(!leerAyudaScript(HELP_CITA).has("vulners"),
    "un nombre citado en una descripción NO cuenta como instalado");
-ok(!parseScriptHelp(HELP_CITA).has("ssl-enum-ciphers"), "ni aunque aparezca dos veces");
+ok(!leerAyudaScript(HELP_CITA).has("ssl-enum-ciphers"), "ni aunque aparezca dos veces");
 
 // stderr real de nmap 7.99 con un nombre que no existe.
 const HELP_KO = [
@@ -269,11 +269,11 @@ const HELP_KO = [
   "stack traceback:",
   "QUITTING!",
 ].join("\n");
-ok(parseRejectedName(HELP_KO) === "noexiste", "se extrae el nombre que nmap rechaza");
-ok(parseRejectedName("todo bien") === null, "y no se inventa uno cuando no lo hay");
+ok(leerNombreRechazado(HELP_KO) === "noexiste", "se extrae el nombre que nmap rechaza");
+ok(leerNombreRechazado("todo bien") === null, "y no se inventa uno cuando no lo hay");
 
 // ── 10. Estado por script y puerto ───────────────────────────────────────────
-console.log("\n10. scriptStates");
+console.log("\n10. estadoScripts");
 
 const TODOS = { checked: true, available: new Set(NSE_SCRIPT_IDS), missing: [] };
 
@@ -282,7 +282,7 @@ const p22 = {
   port: 22, service: "ssh", version: "OpenSSH 10.3",
   cpe: "cpe:/a:openbsd:openssh:10.3", nse: sshScripts,
 };
-const e22 = scriptStates(p22, TODOS);
+const e22 = estadoScripts(p22, TODOS);
 
 ok(e22.vulners.state === "found", "vulners: found");
 ok(e22["ssh2-enum-algos"].state === "found", "ssh2-enum-algos: found");
@@ -293,7 +293,7 @@ ok(e22["ssl-cert"].kind === "not-applicable", "con su kind, para no comparar tex
 
 // El caso que separa un hueco de un límite: aplicaba y no salió.
 const p14443 = { port: 14443, service: "unknown", tunnel: "ssl", nse: tlsScripts };
-const e14443 = scriptStates(p14443, TODOS);
+const e14443 = estadoScripts(p14443, TODOS);
 ok(e14443["ssl-enum-ciphers"].state === "found", "ssl-enum-ciphers en el puerto TLS: found");
 ok(e14443.sslv2.state === "not-run" && e14443.sslv2.kind === "no-output",
    "sslv2 aplicaba y no salió: not-run, no 'limpio'");
@@ -302,7 +302,7 @@ ok(/no completó el diálogo/.test(e14443.sslv2.reason),
 
 // Un puerto sin versión: vulners no tiene con qué preguntar. Eso es alcance, no hueco.
 const pSinVer = { port: 9999, service: "unknown", nse: [] };
-ok(scriptStates(pSinVer, TODOS).vulners.state === "not-applicable",
+ok(estadoScripts(pSinVer, TODOS).vulners.state === "not-applicable",
    "sin versión, vulners es not-applicable");
 
 // Script ausente del sistema: hueco, con su nombre.
@@ -311,13 +311,13 @@ const SIN_VULNERS = {
   available: new Set(NSE_SCRIPT_IDS.filter((i) => i !== "vulners")),
   missing: ["vulners"],
 };
-const eSin = scriptStates({ port: 22, service: "ssh", version: "OpenSSH 10.3", nse: [] }, SIN_VULNERS);
+const eSin = estadoScripts({ port: 22, service: "ssh", version: "OpenSSH 10.3", nse: [] }, SIN_VULNERS);
 ok(eSin.vulners.state === "not-run" && eSin.vulners.kind === "script-missing",
    "un script no instalado es un hueco, no un 'no aplica'");
 
 // No se pudo averiguar qué hay instalado: TODO queda en no comprobado. Nada cae a limpio.
 const NO_SE_SABE = { checked: false, available: new Set(), missing: [], reason: "nmap no respondió" };
-const eNada = scriptStates({ port: 22, service: "ssh", version: "OpenSSH 10.3", nse: [] }, NO_SE_SABE);
+const eNada = estadoScripts({ port: 22, service: "ssh", version: "OpenSSH 10.3", nse: [] }, NO_SE_SABE);
 ok(NSE_SCRIPT_IDS.every((id) => eNada[id].state === "not-run" && eNada[id].kind === "nse-unavailable"),
    "sin saber qué hay instalado, los cinco quedan en not-run");
 ok(eNada.vulners.reason === "nmap no respondió", "arrastrando el motivo real");
@@ -336,23 +336,23 @@ const PORTS_CON_VER = [{ port: 22, version: "OpenSSH 10.3", nse: [] }];
 const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
 
 (async () => {
-  ok(inferFromScan(PORTS_CON_CVE), "un <script id=\"vulners\"> prueba que la fuente respondió");
-  ok(!inferFromScan(PORTS_CON_VER), "y sin él no se infiere nada");
+  ok(deducirDelEscaneo(PORTS_CON_CVE), "un <script id=\"vulners\"> prueba que la fuente respondió");
+  ok(!deducirDelEscaneo(PORTS_CON_VER), "y sin él no se infiere nada");
 
-  const r1 = runCanary(PORTS_CON_CVE, { hasVersion });
+  const r1 = ejecutarCanario(PORTS_CON_CVE, { hasVersion: tieneVersion });
   ok(r1.state === "ok-inferred" && r1.probed === false,
      "un solo puerto con CVE certifica la fuente para todo el escaneo, sin pedir nada a nadie");
 
-  const rNo = runCanary(PORTS_SIN_VER, { hasVersion });
+  const rNo = ejecutarCanario(PORTS_SIN_VER, { hasVersion: tieneVersion });
   ok(rNo.state === "not-needed", "sin ningún puerto con versión no hay nada que comprobar", rNo.state);
 
-  const rAmb = runCanary(PORTS_CON_VER, { hasVersion });
+  const rAmb = ejecutarCanario(PORTS_CON_VER, { hasVersion: tieneVersion });
   ok(rAmb.state === "unconfirmed",
      "con versión y sin datos de vulners, el caso ambiguo se nombra: no se sabe", rAmb.state);
-  ok(!canaryIsOk(rAmb.state), "y 'unconfirmed' NO es un visto bueno");
+  ok(!canarioCorrecto(rAmb.state), "y 'unconfirmed' NO es un visto bueno");
   ok(rAmb.probed === false, "nunca se sale a la red: `probed` vale false en todos los caminos");
 
-  const rApagado = runCanary(PORTS_CON_VER, { hasVersion, nseEnabled: false });
+  const rApagado = ejecutarCanario(PORTS_CON_VER, { hasVersion: tieneVersion, nseEnabled: false });
   ok(rApagado.state === "not-run", "con NSE apagado el canario ni se plantea la pregunta");
 
   // Sin sonda, un equipo al día sale "sin comprobar" y el informe explica por qué.
@@ -364,8 +364,8 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
 
   // La regla que sostiene todo lo demás: un solo estado autoriza a decir limpio.
   const todos = Object.keys(CANARY_DETAIL);
-  ok(todos.filter(canaryIsOk).join(",") === "ok-inferred",
-     "solo UNO de los estados es visto bueno", todos.filter(canaryIsOk).join(","));
+  ok(todos.filter(canarioCorrecto).join(",") === "ok-inferred",
+     "solo UNO de los estados es visto bueno", todos.filter(canarioCorrecto).join(","));
   ok(todos.length === 4, "y solo hay cuatro estados: los de la sonda se fueron con ella", String(todos.length));
   ok(todos.every((e) => CANARY_DETAIL[e] && CANARY_DETAIL[e].length > 40),
      "los " + todos.length + " tienen texto propio para el informe");
@@ -380,21 +380,21 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
      "ni una cabecera User-Agent: suplantar al plugin de nmap para pasar su filtro no es una opción");
 
   // ── 12. El comando ─────────────────────────────────────────────────────────
-  console.log("\n12. buildScanCommand");
+  console.log("\n12. comandoEscaneo");
 
   // Línea exacta escrita a mano: derivarla de la función bajo prueba aprobaría cualquier cambio.
   const ANTES_SIN_IFACE = "nmap -sV -T4 -Pn --max-retries 2  -p 1-3000 -oX - 127.0.0.1";
   const ANTES_CON_IFACE = "nmap -sV -T4 -Pn --max-retries 2 -e en0 -p 1-1024 -oX - 192.168.0.30";
 
-  ok(buildScanCommand({ target: "127.0.0.1", portSpec: "1-3000" }) === ANTES_SIN_IFACE,
+  ok(comandoEscaneo({ target: "127.0.0.1", portSpec: "1-3000" }) === ANTES_SIN_IFACE,
      "sin NSE, el comando es byte a byte el de siempre (incluido el doble espacio)",
-     buildScanCommand({ target: "127.0.0.1", portSpec: "1-3000" }));
-  ok(buildScanCommand({ target: "192.168.0.30", portSpec: "1-1024", ifaceFlag: "-e en0" }) === ANTES_CON_IFACE,
+     comandoEscaneo({ target: "127.0.0.1", portSpec: "1-3000" }));
+  ok(comandoEscaneo({ target: "192.168.0.30", portSpec: "1-1024", ifaceFlag: "-e en0" }) === ANTES_CON_IFACE,
      "y también con -e");
-  ok(buildScanCommand({ target: "127.0.0.1", portSpec: "22", nseScripts: [] }) === "nmap -sV -T4 -Pn --max-retries 2  -p 22 -oX - 127.0.0.1",
+  ok(comandoEscaneo({ target: "127.0.0.1", portSpec: "22", nseScripts: [] }) === "nmap -sV -T4 -Pn --max-retries 2  -p 22 -oX - 127.0.0.1",
      "una lista vacía no añade --script");
 
-  const conNse = buildScanCommand({ target: "127.0.0.1", portSpec: "22", nseScripts: NSE_SCRIPT_IDS });
+  const conNse = comandoEscaneo({ target: "127.0.0.1", portSpec: "22", nseScripts: NSE_SCRIPT_IDS });
   ok(conNse.includes(`--script ${NSE_SCRIPT_IDS.join(",")}`), "con lista, --script va con los nombres separados por coma", conNse);
   ok(!/--script[= ](vuln|safe|default|intrusive|all)\b/.test(conNse),
      "y NUNCA una categoría: una categoría arrastra scripts que nadie ha revisado");
@@ -403,17 +403,17 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   ok(!/--script-timeout/.test(conNse),
      "sin --script-timeout: un script matado por timeout se vuelve indistinguible de uno sin hallazgos");
 
-  // El parser del wrapper trae lo que appliesTo necesita (sobre captura real).
-  const puertosTls = parseNmapXml(fixture("scan-nse-tls.xml"));
+  // El parser del wrapper trae lo que aplicaA necesita (sobre captura real).
+  const puertosTls = leerXmlNmap(fixture("scan-nse-tls.xml"));
   ok(puertosTls[0].tunnel === "ssl",
      "el wrapper extrae tunnel=\"ssl\" pese al servicefp lleno de barras", JSON.stringify(puertosTls[0].tunnel));
-  ok(appliesTo("ssl-enum-ciphers", puertosTls[0]).applies,
+  ok(aplicaA("ssl-enum-ciphers", puertosTls[0]).applies,
      "y con eso un puerto TLS fuera de toda lista se reconoce igual");
 
-  const puertosSsh = parseNmapXml(fixture("scan-nse-ssh.xml"));
+  const puertosSsh = leerXmlNmap(fixture("scan-nse-ssh.xml"));
   ok(puertosSsh[0].cpe === "cpe:/a:openbsd:openssh:10.3", "y el <cpe> del servicio", puertosSsh[0].cpe);
   ok(puertosSsh[0].nse.length === 3, "y el subárbol NSE del puerto");
-  ok(parseNmapXml(fixture("scan-ports-open.xml"))[0].nse.length === 0,
+  ok(leerXmlNmap(fixture("scan-ports-open.xml"))[0].nse.length === 0,
      "un escaneo sin --script deja el subárbol vacío, no ausente");
 
   // ── 13. Los findings ───────────────────────────────────────────────────────
@@ -421,8 +421,8 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
 
   // Cadena completa sobre el XML real: parser, extractor y normalizador.
   const conResumen = (xml, canaryOk) => {
-    const puertos = parseNmapXml(fixture(xml));
-    for (const p of puertos) p.nseSummary = summarizePort(p, { canaryOk });
+    const puertos = leerXmlNmap(fixture(xml));
+    for (const p of puertos) p.nseSummary = resumirPuerto(p, { canaryOk });
     return puertos;
   };
 
@@ -430,7 +430,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
 
   // --- NET-VULN: el crítico llega entero, con los 11 CVE y con la procedencia ---
   const pSsh  = conResumen("scan-nse-ssh.xml", true);
-  const vulns = fromNseVulns(pSsh, OPTS);
+  const vulns = desdeNseVulns(pSsh, OPTS);
 
   ok(vulns.length === 1, "11 CVE del mismo servicio son UN finding, no once", String(vulns.length));
   ok(vulns[0].severity === "critical",
@@ -473,7 +473,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
      "la procedencia viaja separada de la evidencia legible");
 
   // --- NET-SVC: el techo de SSH ---
-  const svc = fromNseSvc(pSsh, OPTS);
+  const svc = desdeNseServicio(pSsh, OPTS);
   ok(svc.length === 1 && svc[0].id === "NET-SVC-001", "un finding de algoritmos por puerto SSH");
   ok(svc[0].severity === "low", "hmac-sha1 es débil, no roto: low", svc[0].severity);
   ok(/hmac-sha1 \[integridad \(MAC\)\]/.test(svc[0].evidence),
@@ -484,7 +484,7 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
 
   // --- NET-TLS: la nota A y el certificado ---
   const pTls = conResumen("scan-nse-tls.xml", true);
-  const tls  = fromNseTls(pTls, OPTS);
+  const tls  = desdeNseTls(pTls, OPTS);
   ok(tls.length === 1 && tls[0].severity === "info", "nota A es informativa, no un problema", tls[0] && tls[0].severity);
   ok(/TLSv1\.2/.test(tls[0].evidence) && /TLSv1\.3/.test(tls[0].evidence), "los protocolos aceptados constan");
   ok(/sha256WithRSAEncryption/.test(tls[0].evidence), "y la firma del certificado");
@@ -495,13 +495,13 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
      "TLS puede llegar a high y SSH no: en TLS el riesgo no depende de que el cliente colabore");
 
   // --- Las omisiones: lo que NO se comprobó también es un finding ---
-  const apagado = fromNseOmissions(pSsh, { nse: { enabled: false } });
+  const apagado = desdeNseOmisiones(pSsh, { nse: { enabled: false } });
   ok(apagado.length === 1 && apagado[0].skipped === true && apagado[0].kind === "nse-disabled",
      "con NSE apagado sale UN aviso, marcado como omisión");
   ok(/no que no las haya/.test(apagado[0].evidence),
      "y dice explícitamente que la ausencia de CVE significa que no se buscaron");
 
-  const sinCanario = fromNseOmissions(conResumen("scan-nse-ssh.xml", false).map((p) => {
+  const sinCanario = desdeNseOmisiones(conResumen("scan-nse-ssh.xml", false).map((p) => {
     p.nseSummary.vulns = [];                      // sin CVE y sin fuente: el falso verde clásico
     p.nseSummary.vulnState = "source-unavailable";
     return p;
@@ -513,25 +513,25 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   ok(hueco && /22\/tcp/.test(hueco.evidence) && /no respondió/.test(hueco.evidence),
      "con el puerto afectado y el motivo real, no un texto genérico");
 
-  const faltan = fromNseOmissions([], {
+  const faltan = desdeNseOmisiones([], {
     nse: { enabled: true, availability: { checked: true, missing: ["vulners"] } },
   });
   ok(faltan.length === 1 && faltan[0].kind === "script-missing" && /vulners/.test(faltan[0].title),
      "un script no instalado se nombra en vez de desaparecer del informe");
 
-  const sinLista = fromNseOmissions([], {
+  const sinLista = desdeNseOmisiones([], {
     nse: { enabled: true, availability: { checked: false, reason: "nmap salió con código 2" } },
   });
   ok(sinLista.length === 1 && sinLista[0].kind === "nse-unavailable" && /código 2/.test(sinLista[0].evidence),
      "y no poder comprobar qué hay instalado guarda el motivo real como evidencia");
 
-  // --- El enganche en normalizeNetwork ---
-  const puertosRaw = parseNmapXml(fixture("scan-nse-ssh.xml"));
-  const sinNse = normalizeNetwork(puertosRaw, "nmap", { target: "127.0.0.1", targetIsLocal: true });
+  // --- El enganche en normalizarRed ---
+  const puertosRaw = leerXmlNmap(fixture("scan-nse-ssh.xml"));
+  const sinNse = normalizarRed(puertosRaw, "nmap", { target: "127.0.0.1", targetIsLocal: true });
   ok(sinNse.every((f) => f.id.startsWith("NET-PORT")),
-     "sin opts.nse, normalizeNetwork devuelve exactamente lo de siempre");
+     "sin opts.nse, normalizarRed devuelve exactamente lo de siempre");
 
-  const conNseF = normalizeNetwork(conResumen("scan-nse-ssh.xml", true), "nmap", OPTS);
+  const conNseF = normalizarRed(conResumen("scan-nse-ssh.xml", true), "nmap", OPTS);
   const ids = conNseF.map((f) => f.id.replace(/-\d+$/, ""));
   ok(ids[0] === "NET-PORT", "los puertos siguen yendo primero: es lo primero que se busca", ids.join(" "));
   ok(ids.includes("NET-VULN") && ids.includes("NET-SVC"), "y detrás va lo de NSE", ids.join(" "));
@@ -570,16 +570,16 @@ const PORTS_SIN_VER = [{ port: 80, service: "http", nse: [] }];
   ok(/config\.nseEnabled === true \|\| config\.nseEnabled === "true"/.test(fuenteNodo),
      "y el nodo la lee con el mismo patrón estricto que forceScan, sin colar un string vacío");
 
-  // El presupuesto se suma a scanTimeoutMs(), no lo sustituye.
-  ok(/scanTimeoutMs\(scanMode,[^)]*\)\s*\+\s*\(nseEnabled \? nseTimeout : 0\)/.test(fuenteNodo),
+  // El presupuesto se suma a tiempoMaximoEscaneo(), no lo sustituye.
+  ok(/tiempoMaximoEscaneo\(scanMode,[^)]*\)\s*\+\s*extraNse/.test(fuenteNodo) && /extraNse = nseTimeout;[\s\S]{0,80}extraNse = 0;/.test(fuenteNodo),
      "el tiempo de los scripts se SUMA al del modo, no lo sustituye");
 
   // El orden que evita que dos puertos de la misma ejecución reciban veredictos distintos.
-  ok(fuenteNodo.indexOf("runCanary(") < fuenteNodo.indexOf("summarizePort("),
+  ok(fuenteNodo.indexOf("ejecutarCanario(") < fuenteNodo.indexOf("resumirPuerto("),
      "el canario se resuelve antes que el resumen de cada puerto: es propiedad del escaneo entero");
 
   // Un nmap recortado no puede costar el escaneo: se pregunta antes qué scripts existen.
-  ok(fuenteNodo.indexOf("scriptExists(") < fuenteNodo.indexOf("runNmap("),
+  ok(fuenteNodo.indexOf("existeScript(") < fuenteNodo.indexOf("ejecutarNmap("),
      "se comprueba qué scripts hay instalados ANTES de lanzar el escaneo");
   ok(/nseScripts = \[\.\.\.nseAvailability\.available\]/.test(fuenteNodo),
      "y solo se le pide a nmap lo que ese nmap tiene: un nombre inexistente aborta el escaneo entero");

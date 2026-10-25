@@ -10,7 +10,7 @@
  *   node test/manual/test-checks-aggregate.js
  */
 
-const { normalizeHost, buildSkippedChecksSummary, esNoAplica, SKIP_KINDS_NO_APLICA } =
+const { normalizarHost, resumenOmitidas, esNoAplica, SKIP_KINDS_NO_APLICA } =
   require("../../lib/normalizer");
 
 let failed = 0;
@@ -58,30 +58,30 @@ const CASOS = [
 ];
 
 for (const c of CASOS) {
-  const f = normalizeHost(c.raw, { platform: c.plat })[0];
+  const f = normalizarHost(c.raw, { platform: c.plat })[0];
   ok(c.espera.test(f.title), `[${c.nombre}] ${f.title}`, f.title);
 }
 
 // El flag, no el texto: es lo que lee el dashboard.
-const macos = normalizeHost(
+const macos = normalizarHost(
   { trivyRootfs: { skipped: true, kind: "os-unsupported", reason: "x" } }, { platform: "darwin" })[0];
 ok(macos.notApplicable === true, "y viaja como `notApplicable: true` en el finding");
 ok(macos.skipped === true, "sin dejar de ser `skipped`: tampoco se comprobó");
 
-const caido = normalizeHost(
+const caido = normalizarHost(
   { lynis: { skipped: true, kind: "error", reason: "x" } }, { platform: "linux" })[0];
 ok(!caido.notApplicable, "un fallo real NO lleva el flag", String(caido.notApplicable));
 
 console.log("\n── 3 · El agregado sale de esos mismos findings ──────────────────\n");
 
-const mezcla = normalizeHost({
+const mezcla = normalizarHost({
   lynis:        { skipped: true, kind: "disabled",       reason: "desactivado en el nodo" },
   trivy:        { skipped: true, kind: "disabled",       reason: "desactivado en el nodo" },
   trivyRootfs:  { skipped: true, kind: "os-unsupported", reason: "Trivy no reconoce este sistema" },
   pendingUpdates: { skipped: true, kind: "error",        reason: "Windows Update devolvió 0x8024402C" },
 }, { platform: "win32" });
 
-const resumen = buildSkippedChecksSummary(mezcla);
+const resumen = resumenOmitidas(mezcla);
 const omitidos = mezcla.filter((f) => f.skipped);
 
 console.log(`  ${resumen.title}`);
@@ -113,7 +113,7 @@ ok(/se intentó y no pudo completarse/.test(resumen.evidence),
 ok(/dejan un hueco en el informe/.test(resumen.evidence),
    "y avisa de que ahí falta cobertura");
 
-const sinFallos = buildSkippedChecksSummary(normalizeHost({
+const sinFallos = resumenOmitidas(normalizarHost({
   lynis:       { skipped: true, kind: "disabled",       reason: "desactivado" },
   trivyRootfs: { skipped: true, kind: "os-unsupported", reason: "no reconoce el sistema" },
 }, { platform: "darwin" }));
@@ -127,8 +127,8 @@ ok(!/dejan un hueco/.test(sinFallos.evidence),
 
 console.log("\n── 5 · Sin comprobaciones omitidas no hay bloque ─────────────────\n");
 
-ok(buildSkippedChecksSummary([]) === null, "lista vacía → null");
-ok(buildSkippedChecksSummary(normalizeHost(
+ok(resumenOmitidas([]) === null, "lista vacía → null");
+ok(resumenOmitidas(normalizarHost(
      { cpuMemory: { cpu: { loadPercent: 10, cores: 8 }, memory: { totalBytes: 8e9, usedBytes: 4e9, usedPercent: 50 } } },
      { platform: "linux" })) === null,
    "un informe sin ninguna omitida → null, y el bloque no se renderiza");

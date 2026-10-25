@@ -3,16 +3,16 @@
 // Resume el subárbol NSE de un puerto con su severidad ya resuelta.
 // Vive aquí porque lib/ no importa de nodes/; el normalizador solo pone ids y textos.
 
-const { fromCvss, max } = require("../../../lib/severity-map");
-const { findScript, tablesByKey, elemValue, elemList } = require("./nmap-xml");
+const { severidadCvss, severidadMaxima } = require("../../../lib/severity-map");
+const { buscarScript, tablasPorClave, valorElemento, listaElementos } = require("./nmap-xml");
 const {
-  TLS_GRADE_SEVERITY, sshAlgoSeverity, hasVersion, OFFERED_NOT_NEGOTIATED,
+  TLS_GRADE_SEVERITY, severidadAlgoritmoSsh, tieneVersion, OFFERED_NOT_NEGOTIATED,
 } = require("./nse-catalog");
 
 // CVE de vulners por CPE. El grupo toma la severidad del peor CVE, no la media.
 // Los exploits no generan hallazgo propio, pero se cuentan porque cambian la urgencia.
-function extractVulns(scripts) {
-  const node = findScript(scripts, "vulners");
+function extraerVulns(scripts) {
+  const node = buscarScript(scripts, "vulners");
   if (!node) return [];
 
   const outputUrls = new Map();
@@ -29,20 +29,26 @@ function extractVulns(scripts) {
     let exploits = 0;
 
     for (const fila of tabla.children.filter((c) => c.type === "table")) {
-      const tipo = String(elemValue(fila, "type") || "").toLowerCase();
-      const id   = elemValue(fila, "id");
-      const esExploit = String(elemValue(fila, "is_exploit")).toLowerCase() === "true";
+      const tipo = String(valorElemento(fila, "type") || "").toLowerCase();
+      const id   = valorElemento(fila, "id");
+      const esExploit = String(valorElemento(fila, "is_exploit")).toLowerCase() === "true";
       if (esExploit) exploits++;
       if (!id) continue;
       if (tipo !== "cve") continue;
 
-      const cvssTxt = elemValue(fila, "cvss");
+      const cvssTxt = valorElemento(fila, "cvss");
       const cvss    = parseFloat(cvssTxt);
+      let puntuacion;
+      if (Number.isFinite(cvss)) {
+        puntuacion = cvss;
+      } else {
+        puntuacion = null;
+      }
       cves.push({
         id,
-        cvss: Number.isFinite(cvss) ? cvss : null,
-        // Sin cvss o con 0, fromCvss da 'medium' para no rebajarlo.
-        severity: fromCvss(cvssTxt),
+        cvss: puntuacion,
+        // Sin cvss o con 0, severidadCvss da 'medium' para no rebajarlo.
+        severity: severidadCvss(cvssTxt),
         isExploit: esExploit,
         sourceUrl: outputUrls.get(String(id).toUpperCase()) || null,
       });
@@ -55,18 +61,18 @@ function extractVulns(scripts) {
       cves,
       exploits,
       maxCvss: cves[0].cvss,
-      severity: max(...cves.map((c) => c.severity)),
+      severity: severidadMaxima(...cves.map((c) => c.severity)),
     });
   }
   return grupos;
 }
 
 // Nota TLS de ssl-enum-ciphers (least strength). Fuera de la tabla, severity null = no comprobado.
-function extractTls(scripts) {
-  const node = findScript(scripts, "ssl-enum-ciphers");
+function extraerTls(scripts) {
+  const node = buscarScript(scripts, "ssl-enum-ciphers");
   if (!node) return null;
 
-  const grade = String(elemValue(node, "least strength") || "").trim().toUpperCase();
+  const grade = String(valorElemento(node, "least strength") || "").trim().toUpperCase();
   const protocolos = node.children
     .filter((c) => c.type === "table" && c.key)
     .map((c) => c.key);
@@ -74,32 +80,53 @@ function extractTls(scripts) {
   // Suites flojas, para que el hallazgo diga qué quitar y no solo la nota.
   const flojas = [];
   for (const proto of node.children.filter((c) => c.type === "table" && c.key)) {
-    for (const tablaCiphers of tablesByKey(proto, "ciphers")) {
+    for (const tablaCiphers of tablasPorClave(proto, "ciphers")) {
       for (const suite of tablaCiphers.children.filter((c) => c.type === "table")) {
-        const nombre = elemValue(suite, "name");
-        const nota   = String(elemValue(suite, "strength") || "").toUpperCase();
+        const nombre = valorElemento(suite, "name");
+        const nota   = String(valorElemento(suite, "strength") || "").toUpperCase();
         if (nombre && nota && nota !== "A") flojas.push({ name: nombre, grade: nota, protocol: proto.key });
       }
     }
   }
   flojas.sort((a, b) => b.grade.localeCompare(a.grade));
 
-  const cert = findScript(scripts, "ssl-cert");
-  const validez = cert ? tablesByKey(cert, "validity")[0] : null;
+  const cert = buscarScript(scripts, "ssl-cert");
+  let validez;
+  if (cert) {
+    validez = tablasPorClave(cert, "validity")[0];
+  } else {
+    validez = null;
+  }
 
+  let certificado;
+  if (cert) {
+    let caducidad;
+    if (validez) {
+      caducidad = valorElemento(validez, "notAfter") || null;
+    } else {
+      caducidad = null;
+    }
+    certificado = {
+      sigAlgo: valorElemento(cert, "sig_algo") || null,
+      notAfter: caducidad,
+      issuer: (() => {
+        const t = tablasPorClave(cert, "issuer")[0];
+        if (t) {
+          return valorElemento(t, "commonName") || null;
+        } else {
+          return null;
+        }
+      })(),
+    };
+  } else {
+    certificado = null;
+  }
   return {
     grade: grade || null,
     severity: TLS_GRADE_SEVERITY[grade] || null,
     protocols: protocolos,
     weak: flojas,
-    cert: cert ? {
-      sigAlgo: elemValue(cert, "sig_algo") || null,
-      notAfter: validez ? elemValue(validez, "notAfter") || null : null,
-      issuer: (() => {
-        const t = tablesByKey(cert, "issuer")[0];
-        return t ? elemValue(t, "commonName") || null : null;
-      })(),
-    } : null,
+    cert: certificado,
   };
 }
 
@@ -112,8 +139,8 @@ const SSH_GRUPOS = [
 ];
 
 // Algoritmos SSH ofrecidos; sin débiles queda en 'info' como inventario.
-function extractSsh(scripts) {
-  const node = findScript(scripts, "ssh2-enum-algos");
+function extraerSsh(scripts) {
+  const node = buscarScript(scripts, "ssh2-enum-algos");
   if (!node) return null;
 
   const debiles = [];
@@ -121,53 +148,63 @@ function extractSsh(scripts) {
   let total = 0;
 
   for (const [clave, etiqueta] of SSH_GRUPOS) {
-    const tabla = tablesByKey(node, clave)[0];
+    const tabla = tablasPorClave(node, clave)[0];
     if (!tabla) continue;
-    const algos = elemList(tabla);
+    const algos = listaElementos(tabla);
     total += algos.length;
     grupos.push({ key: clave, label: etiqueta, count: algos.length });
     for (const nombre of algos) {
-      const sev = sshAlgoSeverity(nombre);
+      const sev = severidadAlgoritmoSsh(nombre);
       if (sev !== "info") debiles.push({ name: nombre, severity: sev, group: etiqueta });
     }
   }
 
+  let severidad;
+  if (debiles.length) {
+    severidad = severidadMaxima(...debiles.map((d) => d.severity));
+  } else {
+    severidad = "info";
+  }
   return {
     groups: grupos,
     weak: debiles,
     total,
-    severity: debiles.length ? max(...debiles.map((d) => d.severity)) : "info",
+    severity: severidad,
   };
 }
 
 // found, no-version, clean o source-unavailable. Solo clean (versión y canario ok) permite decir "sin vulnerabilidades".
-function portVulnState(p, vulns, canaryOk) {
+function estadoVulnPuerto(p, vulns, canaryOk) {
   if (vulns && vulns.length) return "found";
-  if (!hasVersion(p)) return "no-version";
-  return canaryOk ? "clean" : "source-unavailable";
+  if (!tieneVersion(p)) return "no-version";
+  if (canaryOk) {
+    return "clean";
+  } else {
+    return "source-unavailable";
+  }
 }
 
 // Resumen listo para el normalizador, sin volver a tocar el XML.
-function summarizePort(p, opts = {}) {
+function resumirPuerto(p, opts = {}) {
   const scripts  = (p && p.nse) || [];
   const canaryOk = Boolean(opts.canaryOk);
-  const vulns    = extractVulns(scripts);
+  const vulns    = extraerVulns(scripts);
 
   return {
-    vulnState: portVulnState(p, vulns, canaryOk),
+    vulnState: estadoVulnPuerto(p, vulns, canaryOk),
     vulns,
-    tls: extractTls(scripts),
-    ssh: extractSsh(scripts),
+    tls: extraerTls(scripts),
+    ssh: extraerSsh(scripts),
     states: opts.states || null,
     offeredText: OFFERED_NOT_NEGOTIATED,
   };
 }
 
 module.exports = {
-  extractVulns,
-  extractTls,
-  extractSsh,
-  portVulnState,
-  summarizePort,
+  extraerVulns,
+  extraerTls,
+  extraerSsh,
+  estadoVulnPuerto,
+  resumirPuerto,
   SSH_GRUPOS,
 };

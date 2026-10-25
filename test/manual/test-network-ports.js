@@ -5,8 +5,8 @@
  * A nmap le llega la lista normalizada, nunca el texto del campo; el tiempo máximo escala con los puertos.
  *
  * Bloques:
- *   1. validatePortSpec(): qué se acepta, qué se rechaza y cómo se normaliza.
- *   2. scanTimeoutMs(): los límites medidos se conservan y los nuevos escalan con los puertos.
+ *   1. validarPuertos(): qué se acepta, qué se rechaza y cómo se normaliza.
+ *   2. tiempoMaximoEscaneo(): los límites medidos se conservan y los nuevos escalan con los puertos.
  *   3. La orden que llega a nmap en cada modo (un nmap falso guarda sus argumentos).
  *   4. El nodo con una lista no válida: NET-CFG-ERR y nmap sin ejecutar.
  *
@@ -38,10 +38,10 @@ if (!isWin) {
   process.env.PATH = `${tmp}${path.delimiter}${process.env.PATH}`;
 }
 
-const { validatePortSpec, scanTimeoutMs } = require("../../nodes/audit-network/modules/network-utils");
+const { validarPuertos, tiempoMaximoEscaneo } = require("../../nodes/audit-network/modules/network-utils");
 
-// ── 1 · validatePortSpec ──────────────────────────────────────────────────────────────────
-console.log("\n── 1 · validatePortSpec(): qué es una lista de puertos ───────────\n");
+// ── 1 · validarPuertos ──────────────────────────────────────────────────────────────────
+console.log("\n── 1 · validarPuertos(): qué es una lista de puertos ───────────\n");
 
 const VALIDAS = [
   ["22",                    "22",                  1],
@@ -54,7 +54,7 @@ const VALIDAS = [
   ["65535",                 "65535",               1],
 ];
 for (const [entrada, spec, count] of VALIDAS) {
-  const r = validatePortSpec(entrada);
+  const r = validarPuertos(entrada);
   ok(r.ok && r.spec === spec && r.count === count,
      `acepta ${JSON.stringify(entrada)} → ${spec} (${count} puertos)`, JSON.stringify(r));
 }
@@ -80,21 +80,21 @@ const INVALIDAS = [
   ["`id`",                     "comillas invertidas",           false],
 ];
 for (const [entrada, que, vacia] of INVALIDAS) {
-  const r = validatePortSpec(entrada);
+  const r = validarPuertos(entrada);
   ok(!r.ok && r.empty === vacia && typeof r.reason === "string",
      `rechaza ${que}: ${JSON.stringify(entrada)}`, JSON.stringify(r));
 }
 
-// ── 2 · scanTimeoutMs ─────────────────────────────────────────────────────────────────────
-console.log("\n── 2 · scanTimeoutMs(): el tiempo máximo de cada modo ────────────\n");
+// ── 2 · tiempoMaximoEscaneo ─────────────────────────────────────────────────────────────────────
+console.log("\n── 2 · tiempoMaximoEscaneo(): el tiempo máximo de cada modo ────────────\n");
 
-ok(scanTimeoutMs("rapido") === 90000,   "rápido conserva sus 90 s medidos");
-ok(scanTimeoutMs("standard") === 240000, "estándar conserva sus 240 s medidos");
-ok(scanTimeoutMs("full") === 65535 * 62, `completo: 65535 puertos × 62 ms = ${(65535 * 62 / 60000).toFixed(1)} min`);
-ok(scanTimeoutMs("custom", 10000) === 620000,
+ok(tiempoMaximoEscaneo("rapido") === 90000,   "rápido conserva sus 90 s medidos");
+ok(tiempoMaximoEscaneo("standard") === 240000, "estándar conserva sus 240 s medidos");
+ok(tiempoMaximoEscaneo("full") === 65535 * 62, `completo: 65535 puertos × 62 ms = ${(65535 * 62 / 60000).toFixed(1)} min`);
+ok(tiempoMaximoEscaneo("custom", 10000) === 620000,
    "personalizado con 10.000 puertos = 620 s, el límite que tenía antes el modo completo");
-ok(scanTimeoutMs("custom", 3) === 90000, "personalizado con pocos puertos: nunca menos de 90 s");
-ok(scanTimeoutMs("custom", 65535) === scanTimeoutMs("full"), "1-65535 a mano tarda lo mismo que el modo completo");
+ok(tiempoMaximoEscaneo("custom", 3) === 90000, "personalizado con pocos puertos: nunca menos de 90 s");
+ok(tiempoMaximoEscaneo("custom", 65535) === tiempoMaximoEscaneo("full"), "1-65535 a mano tarda lo mismo que el modo completo");
 
 async function main() {
   if (isWin) {
@@ -102,20 +102,20 @@ async function main() {
   } else {
     // ── 3 · La orden que llega a nmap ─────────────────────────────────────────────────────
     console.log("\n── 3 · La orden que llega a nmap en cada modo ────────────────────\n");
-    const { runNmap } = require("../../nodes/audit-network/modules/nmap-wrapper");
+    const { ejecutarNmap } = require("../../nodes/audit-network/modules/nmap-wrapper");
     const lastP = () => {
       const lines = fs.readFileSync(argsLog, "utf8").trim().split("\n");
       const m = lines[lines.length - 1].match(/-p (\S+)/);
       return m ? m[1] : null;
     };
 
-    await runNmap({ target: "127.0.0.1", scanMode: "full", timeout: 5000 });
+    await ejecutarNmap({ target: "127.0.0.1", scanMode: "full", timeout: 5000 });
     ok(lastP() === "1-65535", "completo → -p 1-65535 (antes 1-10000,27017)", lastP());
 
-    await runNmap({ target: "127.0.0.1", scanMode: "standard", timeout: 5000 });
+    await ejecutarNmap({ target: "127.0.0.1", scanMode: "standard", timeout: 5000 });
     ok(/^1-3000,.*27017$/.test(lastP()), "estándar sin cambios: 1-3000 más el catálogo", lastP());
 
-    await runNmap({ target: "127.0.0.1", scanMode: "rapido", timeout: 5000 });
+    await ejecutarNmap({ target: "127.0.0.1", scanMode: "rapido", timeout: 5000 });
     ok(/^1-1024,.*27017$/.test(lastP()), "rápido sin cambios: 1-1024 más el catálogo", lastP());
 
     // ── 4 · El nodo con una lista no válida ───────────────────────────────────────────────

@@ -12,7 +12,7 @@
 
 const fs   = require("fs");
 const path = require("path");
-const { parsePtrHostname } = require("../../nodes/audit-network/modules/nmap-wrapper");
+const { leerNombrePtr } = require("../../nodes/audit-network/modules/nmap-wrapper");
 
 const ROOT = path.join(__dirname, "..", "..");
 const FIX  = path.join(ROOT, "test", "fixtures", "nmap");
@@ -26,28 +26,28 @@ function ok(cond, label, detail) {
 
 console.log("\n── 1 · Las tres formas del bloque <hostnames> ────────────────────\n");
 
-ok(parsePtrHostname(leer("scan-ports-open.xml")) === "localhost",
+ok(leerNombrePtr(leer("scan-ports-open.xml")) === "localhost",
    "XML con PTR → devuelve el nombre",
-   `devolvió ${JSON.stringify(parsePtrHostname(leer("scan-ports-open.xml")))}`);
+   `devolvió ${JSON.stringify(leerNombrePtr(leer("scan-ports-open.xml")))}`);
 
-ok(parsePtrHostname(leer("scan-no-ports.xml")) === "localhost",
+ok(leerNombrePtr(leer("scan-no-ports.xml")) === "localhost",
    "el PTR no depende de que haya puertos abiertos");
 
-ok(parsePtrHostname(leer("scan-unreachable.xml")) === null,
+ok(leerNombrePtr(leer("scan-unreachable.xml")) === null,
    "<hostnames></hostnames> vacío → null",
-   `devolvió ${JSON.stringify(parsePtrHostname(leer("scan-unreachable.xml")))}`);
+   `devolvió ${JSON.stringify(leerNombrePtr(leer("scan-unreachable.xml")))}`);
 
 // type="user" es lo que escribió el usuario, no un descubrimiento.
 const SOLO_USER = '<hostnames>\n<hostname name="example.com" type="user"/>\n</hostnames>';
-ok(parsePtrHostname(SOLO_USER) === null, 'solo type="user" → null (no es dato nuevo)');
+ok(leerNombrePtr(SOLO_USER) === null, 'solo type="user" → null (no es dato nuevo)');
 
 const USER_Y_PTR = '<hostnames>\n<hostname name="mi-nas" type="user"/>\n<hostname name="nas.local" type="PTR"/>\n</hostnames>';
-ok(parsePtrHostname(USER_Y_PTR) === "nas.local", 'con "user" y "PTR" mezclados, se coge el PTR');
+ok(leerNombrePtr(USER_Y_PTR) === "nas.local", 'con "user" y "PTR" mezclados, se coge el PTR');
 
-ok(parsePtrHostname("") === null && parsePtrHostname(null) === null,
+ok(leerNombrePtr("") === null && leerNombrePtr(null) === null,
    "XML vacío o nulo → null, sin lanzar");
 
-console.log("\n── 2 · runNmap propaga el hostname con la misma forma ────────────\n");
+console.log("\n── 2 · ejecutarNmap propaga el hostname con la misma forma ────────────\n");
 
 // Contrato del objeto `scan`, sin ejecutar nmap.
 const wrapperSrc = fs.readFileSync(path.join(ROOT, "nodes", "audit-network", "modules", "nmap-wrapper.js"), "utf8");
@@ -60,18 +60,18 @@ ok(scanLines.every((l) => /hostname/.test(l)),
 ok(/scan: \{[^}]*hostname: null[^}]*\}/.test(wrapperSrc), "la rama no concluyente lo deja explícitamente en null");
 
 const nodeSrc = fs.readFileSync(path.join(ROOT, "nodes", "audit-network", "audit-network.js"), "utf8");
-ok(/hostname:\s+nmapScan \? nmapScan\.hostname : null/.test(nodeSrc),
+ok(/hostname:\s+nombreHost/.test(nodeSrc) && /nombreHost = nmapScan\.hostname;[\s\S]{0,200}nombreHost = null;/.test(nodeSrc),
    "audit-network.js copia el hostname a scanMeta (null si no hubo escaneo)");
 
 console.log("\n── 3 · Regla de pintado, con el código REAL del dashboard ────────\n");
 
 const tpl = fs.readFileSync(path.join(ROOT, "examples", "dashboard-network-template.html"), "utf8");
-const m = tpl.match(/hostnameLabel\(\) \{[\s\S]*?\n    \},/);
+const m = tpl.match(/etiquetaNombreHost\(\) \{[\s\S]*?\n    \},/);
 ok(!!m, "hostnameLabel() existe en el ui_template");
 // eslint-disable-next-line no-eval
 const hostnameLabel = eval("(function " + m[0].replace(/,$/, "") + ")");
 const pill = (target, hostname) =>
-  hostnameLabel.call({ auditData: { scanMeta: { target, hostname } }, targetLabel: target });
+  hostnameLabel.call({ auditData: { scanMeta: { target, hostname } }, etiquetaObjetivo: target });
 
 ok(pill("127.0.0.1", "localhost") === "localhost",
    "PTR distinto del target → se pinta la píldora");
@@ -82,8 +82,8 @@ ok(pill("localhost", "localhost") === null,
 ok(pill("192.168.0.40", "") === null && pill("192.168.0.40", undefined) === null,
    "cadena vacía o undefined se tratan como 'sin dato'");
 
-// "Nombre" cuelga de un v-if="hostnameLabel"; el hueco de 200 caracteres cubre el <span> intermedio.
-ok(/v-if="hostnameLabel"[\s\S]{0,200}?>\s*Nombre\s*</.test(tpl),
+// "Nombre" cuelga de un v-if="etiquetaNombreHost"; el hueco de 200 caracteres cubre el <span> intermedio.
+ok(/v-if="etiquetaNombreHost"[\s\S]{0,200}?>\s*Nombre\s*</.test(tpl),
    "el campo Nombre del dashboard va con v-if, igual que Puertos y Duración");
 
 console.log(`\n${"─".repeat(60)}`);

@@ -44,8 +44,8 @@
 
       <!-- ══ HEADER ══ -->
       <!-- Misma anatomía que host; el hueco del gauge lo ocupa el contador de puertos.
-           La barra toma el color del riesgo real (riskClass), igual que el badge. -->
-      <div class="header-card" :class="riskClass">
+           La barra toma el color del riesgo real (claseRiesgo), igual que el badge. -->
+      <div class="header-card" :class="claseRiesgo">
         <div class="header-main">
           <div class="header-eyebrow">LoCoAudit · Auditoría de red</div>
           <div class="host-name">
@@ -53,12 +53,12 @@
             <span class="host-name-text">{{ auditData.host && auditData.host.hostname }}</span>
           </div>
           <div class="header-idline">
-            <span class="risk-badge" :class="riskClass">
+            <span class="risk-badge" :class="claseRiesgo">
               <span class="risk-badge-dot"></span>
-              {{ riskLabel }}
+              {{ etiquetaRiesgo }}
             </span>
             <!-- Mismo recuento que la columna derecha. -->
-            <span class="risk-note">{{ noPortData ? 'Sin datos de puertos' : donutTotal + (donutTotal === 1 ? ' puerto abierto' : ' puertos abiertos') }}</span>
+            <span class="risk-note"><template v-if="sinDatosPuertos">Sin datos de puertos</template><template v-else-if="totalDonut === 1">{{ totalDonut + ' puerto abierto' }}</template><template v-else>{{ totalDonut + ' puertos abiertos' }}</template></span>
           </div>
 
           <div class="meta-grid">
@@ -68,40 +68,40 @@
             </div>
             <div class="meta-item">
               <span class="meta-key">Fuente</span>
-              <span class="meta-val">{{ srcLabel }}</span>
+              <span class="meta-val">{{ etiquetaFuente }}</span>
             </div>
             <div class="meta-item">
               <span class="meta-key">Modo</span>
-              <span class="meta-val">{{ modeLabel }}</span>
+              <span class="meta-val">{{ etiquetaModo }}</span>
             </div>
-            <div class="meta-item" v-if="targetLabel">
+            <div class="meta-item" v-if="etiquetaObjetivo">
               <span class="meta-key">Objetivo</span>
-              <span class="meta-val meta-val-mono">{{ targetLabel }}</span>
+              <span class="meta-val meta-val-mono">{{ etiquetaObjetivo }}</span>
             </div>
-            <div class="meta-item" v-if="hostnameLabel">
+            <div class="meta-item" v-if="etiquetaNombreHost">
               <span class="meta-key">Nombre</span>
-              <span class="meta-val meta-val-mono">{{ hostnameLabel }}</span>
+              <span class="meta-val meta-val-mono">{{ etiquetaNombreHost }}</span>
             </div>
             <!-- Celda ancha: el rango de puertos es largo y estiraría la fila. -->
-            <div class="meta-item meta-item-wide" v-if="rangeLabel">
+            <div class="meta-item meta-item-wide" v-if="etiquetaRango">
               <span class="meta-key">Puertos</span>
-              <span class="meta-val meta-val-mono">{{ rangeLabel }}</span>
+              <span class="meta-val meta-val-mono">{{ etiquetaRango }}</span>
             </div>
             <div class="meta-item" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">
               <span class="meta-key">Duración</span>
-              <span class="meta-val">{{ durLabel }}</span>
+              <span class="meta-val">{{ etiquetaDuracion }}</span>
             </div>
             <div class="meta-item">
               <span class="meta-key">Análisis</span>
-              <span class="meta-val">{{ scanTime }}</span>
+              <span class="meta-val">{{ horaEscaneo }}</span>
             </div>
             <div class="meta-item meta-item-actions">
               <span class="meta-key">Exportar</span>
               <span class="dl-group">
-                <button class="dl-btn" @click="downloadHtml" title="Descargar informe HTML (imprimible a PDF)">
+                <button class="dl-btn" @click="descargarHtml" title="Descargar informe HTML (imprimible a PDF)">
                   <svg class="icon icon-sm"><use href="#lca-i-download"></use></svg> HTML
                 </button>
-                <button class="dl-btn" @click="downloadJson" title="Descargar datos JSON">
+                <button class="dl-btn" @click="descargarJson" title="Descargar datos JSON">
                   <svg class="icon icon-sm"><use href="#lca-i-download"></use></svg> JSON
                 </button>
               </span>
@@ -109,32 +109,32 @@
           </div>
         </div>
 
-        <!-- Puertos abiertos por severidad, desde barCols (el mismo computed que el gráfico). -->
+        <!-- Puertos abiertos por severidad, desde columnasBarras (el mismo computed que el gráfico). -->
         <div class="header-aside">
           <span class="aside-label-top">Puertos abiertos</span>
-          <div class="port-count-num" :class="{ 'all-info': allInfo && !noPortData, 'no-data': noPortData }">{{ portCountLabel }}</div>
+          <div class="port-count-num" :class="{ 'all-info': todoInformativo && !sinDatosPuertos, 'no-data': sinDatosPuertos }">{{ etiquetaNumPuertos }}</div>
           <!-- Sin datos no hay desglose: un reparto de ceros se leería como "limpio". -->
-          <div class="port-breakdown" v-if="!noPortData && donutTotal > 0">
-            <div class="port-breakdown-row" v-for="col in barCols" :key="'hb-' + col.sev"
+          <div class="port-breakdown" v-if="!sinDatosPuertos && totalDonut > 0">
+            <div class="port-breakdown-row" v-for="col in columnasBarras" :key="'hb-' + col.sev"
                  :class="{ 'is-zero': col.count === 0 }">
-              <span class="port-breakdown-dot" :style="{ background: col.count > 0 ? col.color : 'var(--text-muted)' }"></span>
+              <span class="port-breakdown-dot" :style="{ background: colorPunto(col) }"></span>
               <span class="port-breakdown-name">{{ col.label }}</span>
               <span class="port-breakdown-val">{{ col.count }}</span>
             </div>
           </div>
-          <span class="port-count-note" v-else-if="noPortData">No se ha llegado a escanear</span>
+          <span class="port-count-note" v-else-if="sinDatosPuertos">No se ha llegado a escanear</span>
           <span class="port-count-note" v-else>Sin servicios de red visibles</span>
         </div>
       </div>
 
-      <!-- ══ AVISOS ══ .lca-notice en tres niveles, como host. scanWarn es siempre cobertura (nivel 2):
+      <!-- ══ AVISOS ══ .lca-notice en tres niveles, como host. avisoEscaneo es siempre cobertura (nivel 2):
            neutro si el objetivo no responde, ámbar si el escaneo quedó a medias. -->
-      <div class="lca-notice lvl-2" v-if="scanWarn"
-           :class="scanWarn.neutral ? 'is-neutral' : 'is-warn'">
-        <svg class="icon lca-notice-icon"><use :href="scanWarn.neutral ? '#lca-i-antenna' : '#lca-i-alert'"></use></svg>
+      <div class="lca-notice lvl-2" v-if="avisoEscaneo"
+           :class="claseAviso()">
+        <svg class="icon lca-notice-icon"><use :href="iconoAviso()"></use></svg>
         <div class="lca-notice-main">
-          <div class="lca-notice-title">{{ scanWarn.title }}</div>
-          <div class="lca-notice-body is-prewrap">{{ scanWarn.desc }}</div>
+          <div class="lca-notice-title">{{ avisoEscaneo.title }}</div>
+          <div class="lca-notice-body is-prewrap">{{ avisoEscaneo.desc }}</div>
         </div>
       </div>
 
@@ -146,18 +146,18 @@
         <section>
           <div class="section-title">Mapa de puertos</div>
           <!-- 0 puertos: verde si el objetivo respondió; neutro si no hubo auditoría. -->
-          <div class="port-grid" v-if="sortedPorts.length > 0">
-            <div v-for="(p, i) in visiblePorts" :key="'pg-'+i"
+          <div class="port-grid" v-if="puertosOrdenados.length > 0">
+            <div v-for="(p, i) in puertosVisibles" :key="'pg-'+i"
                  class="port-card" :class="'sev-' + (p.severity || 'info').toLowerCase()">
               <span class="port-sev-badge" :class="(p.severity || 'info').toLowerCase()">
-                {{ sevLabel(p.severity) }}
+                {{ etiquetaSeveridad(p.severity) }}
               </span>
               <div class="port-number">{{ p.port }}</div>
               <div class="port-service">{{ p.service || 'unknown' }}</div>
               <div class="port-meta" v-if="p.process || p.version">
                 <div class="port-meta-item" v-if="p.process">
                   <span class="meta-key">Proceso</span>
-                  <code>{{ p.process }}{{ p.pid != null ? ' (' + p.pid + ')' : '' }}</code>
+                  <code>{{ p.process }}<template v-if="p.pid != null">{{ ' (' + p.pid + ')' }}</template><template v-else></template></code>
                 </div>
                 <div class="port-meta-item" v-if="p.version">
                   <span class="meta-key">Versión</span>
@@ -170,11 +170,11 @@
               </div>
             </div>
           </div>
-          <div class="empty-state" v-else-if="notAudited">
+          <div class="empty-state" v-else-if="noAuditado">
             <svg class="icon icon-xl empty-ico"><use href="#lca-i-antenna"></use></svg>
             <div class="empty-title empty-title--neutral">Auditoría no realizada</div>
             <div class="empty-sub">
-              No se ha podido contactar con <strong>{{ targetLabel || 'el objetivo' }}</strong>, así que no se ha escaneado ningún puerto.<br>
+              No se ha podido contactar con <strong>{{ etiquetaObjetivo || 'el objetivo' }}</strong>, así que no se ha escaneado ningún puerto.<br>
               Esto <strong>no</strong> quiere decir que el equipo esté seguro: quiere decir que no se ha podido comprobar.
             </div>
           </div>
@@ -183,25 +183,25 @@
             <div class="empty-title">Sin puertos expuestos</div>
             <div class="empty-sub">El escaneo no encontró puertos abiertos.<br>Tu equipo no tiene servicios de red visibles.</div>
           </div>
-          <div v-if="sortedPorts.length > 0 && visiblePorts.length === 0" class="filter-empty">
-            Ningún puerto con severidad <strong>{{ sevLabel(filterSev) }}</strong>.
+          <div v-if="puertosOrdenados.length > 0 && puertosVisibles.length === 0" class="filter-empty">
+            Ningún puerto con severidad <strong>{{ etiquetaSeveridad(filterSev) }}</strong>.
             <a href="#" @click.prevent="filterSev = 'all'">Quitar filtro</a>
           </div>
         </section>
 
         <!-- 2 · BARRA DE SEVERIDAD + TABLA DE PUERTOS -->
-        <div class="two-col" v-if="sortedPorts.length > 0">
+        <div class="two-col" v-if="puertosOrdenados.length > 0">
 
           <!-- Gráfico de barras -->
           <div class="card">
             <div class="section-title" style="margin-bottom:0">Exposición por severidad</div>
             <div class="bar-chart">
-              <div class="bar-col" v-for="col in barCols" :key="col.sev"
+              <div class="bar-col" v-for="col in columnasBarras" :key="col.sev"
                    :class="{ 'bar-col-active': filterSev === col.sev }"
-                   @click="toggleSevFilter(col.sev)" title="Filtrar por esta severidad">
-                <div class="bar-count" :style="{ color: col.count > 0 ? col.textColor : 'var(--text-secondary)' }">{{ col.count }}</div>
+                   @click="alternarFiltroSeveridad(col.sev)" title="Filtrar por esta severidad">
+                <div class="bar-count" :style="{ color: colorCifra(col) }">{{ col.count }}</div>
                 <div class="bar-fill"
-                     :style="{ background: col.color, height: col.height + 'px', opacity: col.count > 0 ? '1' : '0.18' }">
+                     :style="{ background: col.color, height: col.height + 'px', opacity: opacidadBarra(col) }">
                   <div class="bar-ports">
                     <div class="bar-port-num" v-for="p in col.ports" :key="p">{{ p }}</div>
                   </div>
@@ -211,7 +211,7 @@
             </div>
             <div class="bar-axis"></div>
             <div class="bar-total-label">
-              <strong>{{ donutTotal }}</strong> puerto{{ donutTotal !== 1 ? 's' : '' }} abierto{{ donutTotal !== 1 ? 's' : '' }}
+              <strong>{{ totalDonut }}</strong> puerto<template v-if="totalDonut !== 1">s</template><template v-else></template> abierto<template v-if="totalDonut !== 1">s</template><template v-else></template>
             </div>
           </div>
 
@@ -228,12 +228,12 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(p, i) in visiblePorts" :key="'tr-'+i">
+                <tr v-for="(p, i) in puertosVisibles" :key="'tr-'+i">
                   <td class="td-port">{{ p.port }}</td>
                   <td class="td-service">{{ p.service || 'unknown' }}</td>
                   <td class="td-process">{{ p.process || '—' }}</td>
                   <td>
-                    <span class="badge" :class="(p.severity || 'info').toLowerCase()">{{ sevLabel(p.severity) }}</span>
+                    <span class="badge" :class="(p.severity || 'info').toLowerCase()">{{ etiquetaSeveridad(p.severity) }}</span>
                   </td>
                 </tr>
               </tbody>
@@ -243,17 +243,17 @@
 
         <!-- 3 · HALLAZGOS, AGRUPADOS POR PUERTO -->
         <!-- Una sola lista agrupada por puerto; agrupa, no fusiona: cada hallazgo mantiene su ficha. -->
-        <section v-if="findingGroups.length > 0">
+        <section v-if="gruposHallazgos.length > 0">
           <div class="section-title">Hallazgos</div>
           <div class="findings-list">
-            <template v-for="g in findingGroups" :key="g.key">
+            <template v-for="g in gruposHallazgos" :key="g.key">
               <!-- No renombrar .group-header ni .group-body: el export los busca por subcadena
                    y el cuerpo debe ser el hermano siguiente de la cabecera. -->
               <div class="findings-group">
-                <div class="group-header" @click="toggleGroup(g.key)">
+                <div class="group-header" @click="alternarGrupo(g.key)">
                   <code v-if="g.port != null" class="group-port">{{ g.port }}/{{ g.protocol }}</code>
                   <span v-else class="group-port group-port-general">General</span>
-                  <span class="group-service">{{ g.port == null ? 'Estado del escaneo' : (g.service || 'servicio no identificado') }}</span>
+                  <span class="group-service"><template v-if="g.port == null">Estado del escaneo</template><template v-else>{{ g.service || 'servicio no identificado' }}</template></span>
                   <code v-if="g.version" class="group-version">{{ g.version }}</code>
                   <span class="group-sevs">
                     <span v-if="g.sev.critical" class="gsev critical">{{ g.sev.critical }}</span>
@@ -262,27 +262,27 @@
                     <span v-if="g.sev.low"      class="gsev low">{{ g.sev.low }}</span>
                     <span v-if="g.sev.info"     class="gsev info">{{ g.sev.info }}</span>
                   </span>
-                  <svg class="icon icon-sm group-chevron" :class="{ open: isGroupOpen(g.key) }"><use href="#lca-i-chevron"></use></svg>
+                  <svg class="icon icon-sm group-chevron" :class="{ open: grupoAbierto(g.key) }"><use href="#lca-i-chevron"></use></svg>
                 </div>
-                <div class="group-body" v-show="isGroupOpen(g.key)">
+                <div class="group-body" v-show="grupoAbierto(g.key)">
                   <div class="finding-item" v-for="(f, fi) in g.findings" :key="g.key + '-' + fi">
-                    <div class="finding-header" @click="toggleFinding(g.key + '-' + fi)">
-                      <span class="badge" :class="(f.severity || 'info').toLowerCase()">{{ sevLabel(f.severity) }}</span>
-                      <!-- Tipo según el prefijo del id (ver typeLabel). -->
-                      <span class="badge cat" v-if="typeLabel(f)">{{ typeLabel(f) }}</span>
+                    <div class="finding-header" @click="alternarHallazgo(g.key + '-' + fi)">
+                      <span class="badge" :class="(f.severity || 'info').toLowerCase()">{{ etiquetaSeveridad(f.severity) }}</span>
+                      <!-- Tipo según el prefijo del id (ver etiquetaTipo). -->
+                      <span class="badge cat" v-if="etiquetaTipo(f)">{{ etiquetaTipo(f) }}</span>
                       <div class="finding-title">{{ f.title }}</div>
                       <code class="finding-id" v-if="f.id">{{ f.id }}</code>
                       <svg class="icon icon-sm finding-chevron" :class="{ open: openFindings[g.key + '-' + fi] }"><use href="#lca-i-chevron"></use></svg>
                     </div>
                     <div class="finding-body" :class="{ open: openFindings[g.key + '-' + fi] }">
-                      <div class="detail-stack" v-if="f.evidence || f.fix || cveRows(f).length">
+                      <div class="detail-stack" v-if="f.evidence || f.fix || filasCve(f).length">
                         <!-- La evidencia se muestra aunque no haya fix. -->
                         <div class="detail-col" v-if="f.evidence">
                           <div class="detail-col-title">Evidencia</div>
                           <pre class="detail-evidence">{{ f.evidence }}</pre>
 
                           <!-- Tira de metadatos: solo NET-VULN-*, con datos de vulners vía NSE. -->
-                          <div v-if="hasMeta(f)" class="meta-strip">
+                          <div v-if="tieneMeta(f)" class="meta-strip">
                             <div v-if="f.service" class="meta-cell">
                               <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-antenna"></use></svg> Servicio</span>
                               <span class="meta-value">{{ f.service }}</span>
@@ -291,16 +291,16 @@
                               <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-info"></use></svg> Versión anunciada</span>
                               <span class="meta-value meta-mono">{{ f.version }}</span>
                             </div>
-                            <div v-if="maxCvss(f) != null" class="meta-cell">
+                            <div v-if="cvssMaximo(f) != null" class="meta-cell">
                               <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-alert"></use></svg> CVSS máximo</span>
                               <span class="meta-value">
-                                {{ Number(maxCvss(f)).toFixed(1) }}
-                                <span class="cvss-chip" :class="(f.severity || 'info').toLowerCase()">{{ sevLabel(f.severity) }}</span>
+                                {{ Number(cvssMaximo(f)).toFixed(1) }}
+                                <span class="cvss-chip" :class="(f.severity || 'info').toLowerCase()">{{ etiquetaSeveridad(f.severity) }}</span>
                               </span>
                             </div>
                             <div class="meta-cell">
                               <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg> CVE</span>
-                              <span class="meta-value">{{ cveRows(f).length }}</span>
+                              <span class="meta-value">{{ filasCve(f).length }}</span>
                             </div>
                             <div class="meta-cell">
                               <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-search"></use></svg> Fuente</span>
@@ -310,18 +310,18 @@
                         </div>
 
                         <!-- Todos los CVE, ordenados por nota y sin scroll interno, para que salgan enteros al imprimir. -->
-                        <div class="detail-col" v-if="cveRows(f).length">
+                        <div class="detail-col" v-if="filasCve(f).length">
                           <div class="detail-col-title">CVE publicados</div>
                           <table class="cve-table">
                             <thead>
                               <tr><th>CVE</th><th>CVSS</th><th>Severidad</th><th>Ficha</th></tr>
                             </thead>
                             <tbody>
-                              <tr v-for="v in cveRows(f)" :key="v.id">
+                              <tr v-for="v in filasCve(f)" :key="v.id">
                                 <td><code class="cve-id">{{ v.id }}</code></td>
-                                <td><span class="cve-score">{{ v.cvss != null ? Number(v.cvss).toFixed(1) : '—' }}</span></td>
+                                <td><span class="cve-score"><template v-if="v.cvss != null">{{ Number(v.cvss).toFixed(1) }}</template><template v-else>—</template></span></td>
                                 <td>
-                                  <span class="cvss-chip" :class="(v.severity || 'info').toLowerCase()">{{ sevLabel(v.severity) }}</span>
+                                  <span class="cvss-chip" :class="(v.severity || 'info').toLowerCase()">{{ etiquetaSeveridad(v.severity) }}</span>
                                   <span v-if="v.isExploit" class="cve-exploit">exploit público</span>
                                 </td>
                                 <td>
@@ -342,7 +342,7 @@
                           <!-- Una rama por alternativa excluyente; dentro de cada rama, pasos en orden (<ol>). -->
                           <template v-if="!f.isCommand">
                             <!-- v-for sobre un array de un elemento: parsea el fix una sola vez. -->
-                            <div class="fix-plan" v-for="(fx, xi) in [parseFixSteps(f.fix)]" :key="xi">
+                            <div class="fix-plan" v-for="(fx, xi) in [pasosDeSolucion(f.fix)]" :key="xi">
                               <!-- La intro describe el servicio y va sin numerar. -->
                               <p v-for="(ln, ii) in fx.intro" :key="'i' + ii" class="fix-intro">{{ ln }}</p>
                               <p v-for="(nt, ni) in fx.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
@@ -355,10 +355,10 @@
                                     <!-- El comando va DENTRO del paso que lo usa, no como paso aparte. -->
                                     <span v-if="st.cmd" class="command-box command-inline">
                                       <code class="command-text">{{ st.cmd }}</code>
-                                      <button @click.stop="copyCommand(st.cmd)"
+                                      <button @click.stop="copiarComando(st.cmd)"
                                               :class="{ copied: copiedKey === st.cmd }"
                                               class="command-btn">
-                                        <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg>{{ copiedKey === st.cmd ? ' Copiado' : 'Copiar' }}
+                                        <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg><template v-if="copiedKey === st.cmd"> Copiado</template><template v-else>Copiar</template>
                                       </button>
                                     </span>
                                   </li>
@@ -368,21 +368,21 @@
                             </div>
                           </template>
                           <p v-if="f.isCommand" class="cmd-intro">
-                            Comando sugerido<span class="cmd-origin">{{ originLabel(f.source) }}</span>:
+                            Comando sugerido<span class="cmd-origin">{{ etiquetaOrigen(f.source) }}</span>:
                           </p>
                           <div v-if="f.isCommand" class="command-box">
                             <code class="command-text">{{ f.command || f.fix }}</code>
-                            <button @click.stop="copyCommand(f.command || f.fix)"
+                            <button @click.stop="copiarComando(f.command || f.fix)"
                                     :class="{ copied: copiedKey === (f.command || f.fix) }"
                                     class="command-btn">
-                              <svg class="icon icon-sm" v-if="copiedKey === (f.command || f.fix)"><use href="#lca-i-check"></use></svg>{{ copiedKey === (f.command || f.fix) ? ' Copiado' : 'Copiar' }}
+                              <svg class="icon icon-sm" v-if="copiedKey === (f.command || f.fix)"><use href="#lca-i-check"></use></svg><template v-if="copiedKey === (f.command || f.fix)"> Copiado</template><template v-else>Copiar</template>
                             </button>
                           </div>
-                          <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
+                          <p v-if="notaSolucion(f)" class="cmd-note">{{ notaSolucion(f) }}</p>
                           <!-- Una sola nota neutra por ficha; el ámbar se reserva para la severidad Media. -->
-                          <div v-if="fixHasCmd(f)" class="cmd-note cmd-note-safety">
+                          <div v-if="solucionConComando(f)" class="cmd-note cmd-note-safety">
                             <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
-                            <span>LoCoAudit no ejecuta estos comandos: cópialos y revísalos antes de ejecutarlos.<template v-if="fixNeedsSudo(f)"> Requieren privilegios de administrador.</template></span>
+                            <span>LoCoAudit no ejecuta estos comandos: cópialos y revísalos antes de ejecutarlos.<template v-if="solucionConSudo(f)"> Requieren privilegios de administrador.</template></span>
                           </div>
                         </div>
                       </div>
@@ -402,11 +402,11 @@
 
                       <!-- ── Chat con IA ── -->
                       <div class="lca-chat-wrap" v-if="llmAvailable === true">
-                        <button class="ai-ask-btn" @click.stop="toggleChat(chatKey(f, g.key + '-' + fi), f)">
+                        <button class="ai-ask-btn" @click.stop="alternarChat(claveChat(f, g.key + '-' + fi), f)">
                           <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
-                          {{ chatOpen[chatKey(f, g.key + '-' + fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
+                          <template v-if="chatOpen[claveChat(f, g.key + '-' + fi)]"> Cerrar asistente</template><template v-else> Preguntar a la IA</template>
                         </button>
-                        <div class="lca-chat" v-if="chatOpen[chatKey(f, g.key + '-' + fi)]">
+                        <div class="lca-chat" v-if="chatOpen[claveChat(f, g.key + '-' + fi)]">
                           <!-- Cabecera con el modelo, para saber quién ha escrito la respuesta. -->
                           <div class="lca-chat-head">
                             <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
@@ -414,36 +414,36 @@
                             <span class="lca-chat-model" v-if="llmModel">{{ llmModel }}</span>
                           </div>
                           <div class="lca-chat-msgs">
-                            <div v-for="(cm, ci) in (chatMessages[chatKey(f, g.key + '-' + fi)] || [])" :key="ci"
-                                 class="chat-msg" :class="cm.role === 'user' ? 'chat-user' : 'chat-ai'">
+                            <div v-for="(cm, ci) in (chatMessages[claveChat(f, g.key + '-' + fi)] || [])" :key="ci"
+                                 class="chat-msg" :class="claseMensaje(cm)">
                               <div class="chat-bubble" :class="{ 'chat-error': cm.error }">
-                                <template v-for="(seg, si) in parseChatContent(cm.content)" :key="si">
+                                <template v-for="(seg, si) in trocearRespuesta(cm.content)" :key="si">
                                   <div v-if="seg.type === 'text'" class="chat-text" v-html="seg.html"></div>
                                   <div v-else class="command-box">
                                     <code class="command-text">{{ seg.code }}</code>
-                                    <button @click.stop="copyCommand(seg.code)"
+                                    <button @click.stop="copiarComando(seg.code)"
                                             :class="{ copied: copiedKey === seg.code }"
                                             class="command-btn">
-                                      <svg class="icon icon-sm" v-if="copiedKey === seg.code"><use href="#lca-i-check"></use></svg>{{ copiedKey === seg.code ? ' Copiado' : 'Copiar' }}
+                                      <svg class="icon icon-sm" v-if="copiedKey === seg.code"><use href="#lca-i-check"></use></svg><template v-if="copiedKey === seg.code"> Copiado</template><template v-else>Copiar</template>
                                     </button>
                                   </div>
                                 </template>
                               </div>
                             </div>
-                            <div v-if="chatLoading[chatKey(f, g.key + '-' + fi)]" class="chat-msg chat-ai">
+                            <div v-if="chatLoading[claveChat(f, g.key + '-' + fi)]" class="chat-msg chat-ai">
                               <div class="chat-bubble chat-loading">
                                 <span class="chat-dot"></span><span class="chat-dot"></span><span class="chat-dot"></span>
                               </div>
                             </div>
                           </div>
                           <div class="lca-chat-input">
-                            <input type="text" v-model="chatInput[chatKey(f, g.key + '-' + fi)]"
+                            <input type="text" v-model="chatInput[claveChat(f, g.key + '-' + fi)]"
                                    placeholder="Escribe tu pregunta…"
-                                   :disabled="chatLoading[chatKey(f, g.key + '-' + fi)]"
-                                   @keydown.enter.prevent="sendChat(chatKey(f, g.key + '-' + fi), f)">
+                                   :disabled="chatLoading[claveChat(f, g.key + '-' + fi)]"
+                                   @keydown.enter.prevent="enviarChat(claveChat(f, g.key + '-' + fi), f)">
                             <button class="chat-send-btn"
-                                    :disabled="chatLoading[chatKey(f, g.key + '-' + fi)]"
-                                    @click.stop="sendChat(chatKey(f, g.key + '-' + fi), f)">Enviar</button>
+                                    :disabled="chatLoading[claveChat(f, g.key + '-' + fi)]"
+                                    @click.stop="enviarChat(claveChat(f, g.key + '-' + fi), f)">Enviar</button>
                           </div>
                           <!-- Aviso al pie: se lee después de la respuesta, antes de actuar. -->
                           <div class="lca-chat-foot">
@@ -461,7 +461,7 @@
         </section>
 
         <!-- Sin hallazgos (nunca si no se ha auditado: eso no es un "todo bien") -->
-        <div v-if="sortedPorts.length === 0 && findingGroups.length === 0 && !notAudited"
+        <div v-if="puertosOrdenados.length === 0 && gruposHallazgos.length === 0 && !noAuditado"
              class="lca-state-center lca-state-inline">
           <svg class="icon icon-xl lca-state-ico"><use href="#lca-i-check-circle"></use></svg>
           <h3 class="lca-state-title">¡Sin hallazgos!</h3>
@@ -476,11 +476,11 @@
           </div>
           <div class="report-foot-item">
             <span class="report-foot-key">Fuentes</span>
-            <span class="report-foot-val">{{ srcLabel }} · modo {{ modeLabel }}</span>
+            <span class="report-foot-val">{{ etiquetaFuente }} · modo {{ etiquetaModo }}</span>
           </div>
           <div class="report-foot-item">
             <span class="report-foot-key">Generado</span>
-            <span class="report-foot-val">{{ scanTime }}</span>
+            <span class="report-foot-val">{{ horaEscaneo }}</span>
           </div>
         </div>
 
@@ -500,7 +500,7 @@ export default {
       copiedKey: null,
       // Filtro por severidad: clic en una barra de "Exposición por severidad".
       filterSev: 'all',
-      // Los grupos nacen abiertos; solo se guarda lo que el usuario cierra (ver isGroupOpen).
+      // Los grupos nacen abiertos; solo se guarda lo que el usuario cierra (ver grupoAbierto).
       openGroups: {},
       // ── Chat con LLM (asistente IA) ──
       chatOpen: {},        // por findingKey: panel abierto/cerrado
@@ -511,7 +511,7 @@ export default {
       llmAvailable: null,  // null = sin comprobar; true/false tras comprobar
       llmModel: null,      // modelo que responde; /locoaudit/chat/status ya lo devuelve
 
-      // ── Tokens de color leídos del :root (ver readTokens) para estilos en JS.
+      // ── Tokens de color leídos del :root (ver leerTokens) para estilos en JS.
       // Vacíos hasta la primera lectura: sin constantes de respaldo que dupliquen el CSS.
       tok: {
         critical: '', high: '', medium: '', low: '', info: '',
@@ -522,11 +522,11 @@ export default {
   },
 
   computed: {
-    maxSev() {
+    severidadMaxima() {
       return (this.auditData && this.auditData.summary && this.auditData.summary.maxSeverity) || 'info';
     },
 
-    counts() {
+    conteos() {
       var c = (this.auditData && this.auditData.summary && this.auditData.summary.counts) || {};
       return {
         critical: c.critical || 0,
@@ -537,59 +537,76 @@ export default {
       };
     },
 
-    allInfo() {
-      var c = this.counts;
+    todoInformativo() {
+      var c = this.conteos;
       return c.critical === 0 && c.high === 0 && c.medium === 0 && c.low === 0;
     },
 
     // ── Estado del objetivo: lo decide host-discovery.js (nmap -sn), no la severidad.
     // Payloads antiguos sin el campo: 'reachable'.
-    targetState() {
+    estadoObjetivo() {
       var meta = this.auditData && this.auditData.scanMeta;
       return (meta && meta.targetState) || 'reachable';
     },
 
     // Único interruptor del modo neutro en toda la vista.
-    notAudited() {
-      return this.targetState === 'unreachable';
+    noAuditado() {
+      return this.estadoObjetivo === 'unreachable';
     },
 
     // Sin recuento si el objetivo no respondió o el escaneo no terminó:
     // cero por no mirar y cero por no haber puertos no se pintan igual.
-    noPortData() {
+    sinDatosPuertos() {
       var meta = this.auditData && this.auditData.scanMeta;
-      return this.notAudited || (meta && meta.scanStatus === 'inconclusive');
+      return this.noAuditado || (meta && meta.scanStatus === 'inconclusive');
     },
 
-    riskClass() {
-      return this.notAudited ? 'not-audited' : this.maxSev;
+    claseRiesgo() {
+      if (this.noAuditado) {
+        return 'not-audited';
+      } else {
+        return this.severidadMaxima;
+      }
     },
 
-    riskLabel() {
-      if (this.notAudited) return 'No auditado';
+    etiquetaRiesgo() {
+      if (this.noAuditado) return 'No auditado';
       var MAP = {
         critical: 'Riesgo Crítico', high: 'Riesgo Alto',
         medium: 'Riesgo Moderado', low: 'Riesgo Bajo', info: 'Sin Riesgo'
       };
-      return MAP[this.maxSev] || this.maxSev;
+      return MAP[this.severidadMaxima] || this.severidadMaxima;
     },
 
-    portCountLabel() {
-      return this.noPortData ? '—' : this.donutTotal;
+    etiquetaNumPuertos() {
+      if (this.sinDatosPuertos) {
+        return '—';
+      } else {
+        return this.totalDonut;
+      }
     },
 
-    scanWarn() {
+    avisoEscaneo() {
       var meta = this.auditData && this.auditData.scanMeta;
       var st = meta && meta.scanStatus;
 
       // 1. El objetivo no responde: no hay auditoría que interpretar.
-      if (this.notAudited) {
+      if (this.noAuditado) {
         var disc = (meta && meta.discovery) || {};
-        var host = this.targetLabel || 'el objetivo';
+        var host = this.etiquetaObjetivo || 'el objetivo';
         // El motivo solo afina el texto; la decisión ya está tomada arriba.
-        var causa = (disc.reason === 'host-unreach' || disc.reason === 'net-unreach')
-          ? 'Este equipo no sabe por dónde llegar hasta ' + host + ': no es que no conteste, es que no hay ruta de red hasta él.'
-          : host + ' no ha respondido a la comprobación previa.';
+        var causa;
+        if (disc.reason === 'host-unreach' || disc.reason === 'net-unreach') {
+          causa = 'Este equipo no sabe por dónde llegar hasta ' + host + ': no es que no conteste, es que no hay ruta de red hasta él.';
+        } else {
+          causa = host + ' no ha respondido a la comprobación previa.';
+        }
+        let forzado;
+        if (meta && meta.forceScan) {
+          forzado = ' (Se ha escaneado de todas formas por tener activada la opción "Escanear aunque el equipo no responda".)';
+        } else {
+          forzado = '';
+        }
         return {
           neutral: true,
           title: 'No se ha podido auditar ' + host,
@@ -598,7 +615,7 @@ export default {
                 'no hay ruta de red hasta él (otra subred) o hay una VPN levantada que cambia el camino.\n' +
                 'Comprueba primero que responde: ping ' + host + '\n' +
                 'No se ha escaneado ningún puerto: la ausencia de hallazgos NO significa que el equipo esté protegido.' +
-                (meta && meta.forceScan ? ' (Se ha escaneado de todas formas por tener activada la opción "Escanear aunque el equipo no responda".)' : '')
+                forzado
         };
       }
 
@@ -618,52 +635,60 @@ export default {
       };
     },
 
-    scanTime() {
+    horaEscaneo() {
       var ts = this.auditData && this.auditData.timestamp;
       if (!ts) return '—';
       return new Date(ts).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
     },
 
-    durLabel() {
+    etiquetaDuracion() {
       var ms = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.durationMs;
       if (!ms) return '—';
-      return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+      if (ms >= 1000) {
+        return (ms / 1000).toFixed(1) + 's';
+      } else {
+        return ms + 'ms';
+      }
     },
 
-    srcLabel() {
+    etiquetaFuente() {
       // portSource solo vale 'nmap' o 'none' (Nmap no instalado).
       var src = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.portSource;
-      return src === 'nmap' ? 'Nmap' : 'Nmap no disponible';
+      if (src === 'nmap') {
+        return 'Nmap';
+      } else {
+        return 'Nmap no disponible';
+      }
     },
 
-    modeLabel() {
+    etiquetaModo() {
       var MAP = { rapido: 'Rápido', standard: 'Estándar', full: 'Completo', custom: 'Personalizado' };
       var mode = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.scanMode;
       return MAP[mode] || mode || 'Estándar';
     },
 
-    targetLabel() {
+    etiquetaObjetivo() {
       var meta = this.auditData && this.auditData.scanMeta;
       if (!meta) return null;
       return meta.target || meta.customTarget || null;
     },
 
-    hostnameLabel() {
+    etiquetaNombreHost() {
       var meta = this.auditData && this.auditData.scanMeta;
       var h = meta && meta.hostname;
       // Sin PTR no se pinta nada, ni un guion, como el resto de campos opcionales.
       if (!h) return null;
       // Si el PTR repite el target (p. ej. localhost), se omite.
-      if (h === this.targetLabel) return null;
+      if (h === this.etiquetaObjetivo) return null;
       return h;
     },
 
-    rangeLabel() {
+    etiquetaRango() {
       var meta = this.auditData && this.auditData.scanMeta;
       return (meta && meta.portRange) || null;
     },
 
-    sortedPorts() {
+    puertosOrdenados() {
       var ports = this.auditData && this.auditData.raw && this.auditData.raw.ports;
       if (!Array.isArray(ports)) return [];
       var SEV_ORDER = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
@@ -673,7 +698,7 @@ export default {
       });
     },
 
-    sortedFindings() {
+    hallazgosOrdenados() {
       var findings = this.auditData && this.auditData.findings;
       if (!Array.isArray(findings)) return [];
       var SEV_ORDER = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
@@ -684,36 +709,50 @@ export default {
     },
 
     // Filtro por severidad (clic en una barra de "Exposición por severidad").
-    visiblePorts() {
+    puertosVisibles() {
       var self = this;
-      if (this.filterSev === 'all') return this.sortedPorts;
-      return this.sortedPorts.filter(function(p) {
+      if (this.filterSev === 'all') return this.puertosOrdenados;
+      return this.puertosOrdenados.filter(function(p) {
         return (p.severity || 'info').toLowerCase() === self.filterSev;
       });
     },
-    visibleFindings() {
+    hallazgosVisibles() {
       var self = this;
-      if (this.filterSev === 'all') return this.sortedFindings;
-      return this.sortedFindings.filter(function(f) {
+      if (this.filterSev === 'all') return this.hallazgosOrdenados;
+      return this.hallazgosOrdenados.filter(function(f) {
         return (f.severity || 'info').toLowerCase() === self.filterSev;
       });
     },
 
     // Grupos por puerto+protocolo: agrupa sin fusionar NET-VULN y NET-PORT del mismo puerto.
     // Los hallazgos sin puerto van a "General", al principio.
-    findingGroups() {
+    gruposHallazgos() {
       var rank = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
       var grupos = {};
       var orden = [];
-      this.visibleFindings.forEach(function (f) {
+      this.hallazgosVisibles.forEach(function (f) {
         var conPuerto = Number.isInteger(f.port);
         var protocol = f.protocol || 'tcp';
-        var key = conPuerto ? f.port + '/' + protocol : 'general';
+        var key;
+        if (conPuerto) {
+          key = f.port + '/' + protocol;
+        } else {
+          key = 'general';
+        }
         if (!grupos[key]) {
+          let puerto;
+          let protocolo;
+          if (conPuerto) {
+            puerto = f.port;
+            protocolo = protocol;
+          } else {
+            puerto = null;
+            protocolo = null;
+          }
           grupos[key] = {
             key: key,
-            port: conPuerto ? f.port : null,
-            protocol: conPuerto ? protocol : null,
+            port: puerto,
+            protocol: protocolo,
             service: null,
             version: null,
             findings: [],
@@ -740,14 +779,20 @@ export default {
         return g;
       }).sort(function (a, b) {
         // "General" primero: si algo no se pudo mirar, se lee antes que cualquier recuento.
-        if ((a.port == null) !== (b.port == null)) return a.port == null ? -1 : 1;
+        if ((a.port == null) !== (b.port == null)) {
+          if (a.port == null) {
+            return -1;
+          } else {
+            return 1;
+          }
+        }
         return (rank[b.maxSeverity] || 0) - (rank[a.maxSeverity] || 0) ||
                (a.port || 0) - (b.port || 0);
       });
     },
 
-    barCols() {
-      var ports = this.sortedPorts;
+    columnasBarras() {
+      var ports = this.puertosOrdenados;
       // Color en cadena de estilo: se lee del :root porque var() no llega ahí.
       var T = this.tok;
       // `color` rellena la barra; `textColor` (tono 700) pinta la cifra con contraste suficiente.
@@ -778,10 +823,16 @@ export default {
       return cols;
     },
 
-    donutTotal() {
+    totalDonut() {
       var meta = this.auditData && this.auditData.scanMeta;
       var open = meta && meta.portsOpen;
-      return (open != null ? open : null) || this.sortedPorts.length;
+      let abiertos;
+      if (open != null) {
+        abiertos = open;
+      } else {
+        abiertos = null;
+      }
+      return abiertos || this.puertosOrdenados.length;
     }
   },
 
@@ -796,17 +847,65 @@ export default {
         }
         this.auditData    = newMsg.payload;
         this.state        = 'done';
-        this.readTokens();   // síncrono: el primer pintado de los resultados ya va con color
+        this.leerTokens();   // síncrono: el primer pintado de los resultados ya va con color
         this.openFindings = {};
-        this.resetChats();
+        this.reiniciarChats();
       }
     }
   },
 
   methods: {
+    colorPunto(col) {
+      if (col.count > 0) {
+        return col.color;
+      } else {
+        return 'var(--text-muted)';
+      }
+    },
+
+    claseAviso() {
+      if (this.avisoEscaneo.neutral) {
+        return 'is-neutral';
+      } else {
+        return 'is-warn';
+      }
+    },
+
+    iconoAviso() {
+      if (this.avisoEscaneo.neutral) {
+        return '#lca-i-antenna';
+      } else {
+        return '#lca-i-alert';
+      }
+    },
+
+    colorCifra(col) {
+      if (col.count > 0) {
+        return col.textColor;
+      } else {
+        return 'var(--text-secondary)';
+      }
+    },
+
+    opacidadBarra(col) {
+      if (col.count > 0) {
+        return '1';
+      } else {
+        return '0.18';
+      }
+    },
+
+    claseMensaje(cm) {
+      if (cm.role === 'user') {
+        return 'chat-user';
+      } else {
+        return 'chat-ai';
+      }
+    },
+
     // ── Lee los tokens del :root para estilos en JS, donde no llega var().
     // Si una lectura vuelve vacía se conserva la anterior.
-    readTokens() {
+    leerTokens() {
       var cs;
       try { cs = getComputedStyle(document.documentElement); } catch (e) { return; }
       var NOMBRES = {
@@ -825,20 +924,20 @@ export default {
       if (got) this.tok = next;
     },
 
-    toggleFinding(key) {
+    alternarHallazgo(key) {
       this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
     },
     // Abiertos por defecto: el estado guarda solo los cerrados.
-    isGroupOpen(key) {
+    grupoAbierto(key) {
       return this.openGroups[key] !== false;
     },
-    toggleGroup(key) {
+    alternarGrupo(key) {
       this.openGroups = Object.assign({}, this.openGroups, {
-        [key]: !this.isGroupOpen(key)
+        [key]: !this.grupoAbierto(key)
       });
     },
     // Tipo según el prefijo del id; un id desconocido devuelve "" y no se pinta píldora.
-    typeLabel(f) {
+    etiquetaTipo(f) {
       var M = {
         'NET-PORT': 'Exposición',
         'NET-VULN': 'CVE',
@@ -853,31 +952,47 @@ export default {
       return M[String((f && f.id) || '').split('-').slice(0, 2).join('-')] || '';
     },
     // Todas las filas de CVE, por nota descendente, sin recorte.
-    cveRows(f) {
+    filasCve(f) {
       var v = f && f.vulnerabilities;
       if (!Array.isArray(v) || !v.length) return [];
       return v.slice().sort(function (a, b) {
-        return (b.cvss == null ? -1 : b.cvss) - (a.cvss == null ? -1 : a.cvss);
+        let notaB;
+        if (b.cvss == null) {
+          notaB = -1;
+        } else {
+          notaB = b.cvss;
+        }
+        let notaA;
+        if (a.cvss == null) {
+          notaA = -1;
+        } else {
+          notaA = a.cvss;
+        }
+        return notaB - notaA;
       });
     },
-    maxCvss(f) {
+    cvssMaximo(f) {
       var max = null;
-      this.cveRows(f).forEach(function (v) {
+      this.filasCve(f).forEach(function (v) {
         if (v.cvss != null && (max == null || v.cvss > max)) max = v.cvss;
       });
       return max;
     },
     // La tira de metadatos solo tiene sentido donde hay datos estructurados detrás.
-    hasMeta(f) {
-      return this.cveRows(f).length > 0;
+    tieneMeta(f) {
+      return this.filasCve(f).length > 0;
     },
     // Filtro por severidad: clic en la barra activa/desactiva ese filtro.
-    toggleSevFilter(sev) {
-      this.filterSev = this.filterSev === sev ? 'all' : sev;
+    alternarFiltroSeveridad(sev) {
+      if (this.filterSev === sev) {
+        this.filterSev = 'all';
+      } else {
+        this.filterSev = sev;
+      }
     },
 
     // Origen del comando: lo genera LoCoAudit a partir del análisis de la herramienta.
-    originLabel(source) {
+    etiquetaOrigen(source) {
       var M = {
         trivy: '· a partir del análisis de Trivy',
         lynis: '· a partir de Lynis',
@@ -888,20 +1003,26 @@ export default {
     },
 
     // ── Descarga de reporte (HTML imprimible + JSON) ──────────────────────────
-    _escHtml(s) {
-      return String(s == null ? '' : s)
+    escaparHtml(s) {
+      let valor;
+      if (s == null) {
+        valor = '';
+      } else {
+        valor = s;
+      }
+      return String(valor)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
     },
-    _reportBasename(ext) {
+    nombreInforme(ext) {
       var d = new Date();
-      var p = function(n) { return String(n).padStart(2, '0'); };
-      var stamp = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
-                  '_' + p(d.getHours()) + p(d.getMinutes());
+      var dosCifras = function(n) { return String(n).padStart(2, '0'); };
+      var stamp = d.getFullYear() + '-' + dosCifras(d.getMonth() + 1) + '-' + dosCifras(d.getDate()) +
+                  '_' + dosCifras(d.getHours()) + dosCifras(d.getMinutes());
       var type = (this.auditData && this.auditData.auditType) || 'audit';
       return 'locoaudit-' + type + '-' + stamp + '.' + ext;
     },
-    _triggerDownload(filename, content, mime) {
+    descargar(filename, content, mime) {
       var blob = new Blob([content], { type: mime });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
@@ -910,17 +1031,17 @@ export default {
       document.body.removeChild(a);
       setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
     },
-    downloadJson() {
+    descargarJson() {
       if (!this.auditData) return;
-      this._triggerDownload(this._reportBasename('json'),
+      this.descargar(this.nombreInforme('json'),
         JSON.stringify(this.auditData, null, 2), 'application/json');
     },
-    downloadHtml() {
+    descargarHtml() {
       if (!this.auditData) return;
-      this._triggerDownload(this._reportBasename('html'),
-        this._buildHtmlReport(), 'text/html;charset=utf-8');
+      this.descargar(this.nombreInforme('html'),
+        this.construirInforme(), 'text/html;charset=utf-8');
     },
-    _buildHtmlReport() {
+    construirInforme() {
       try {
         // LCA:SNAPSHOT:START — única fuente: lib/snapshot-body.txt (build-dashboards.js). NO EDITAR.
       // El export es una foto del DOM ya renderizado, así no puede divergir del dashboard.
@@ -955,23 +1076,31 @@ export default {
         + '.scope-detail{display:block!important}'
         + '[data-lca-acc]{cursor:pointer}.command-btn,.ia-copy-btn{cursor:pointer}'
         + '@media print{[class*="finding-detail"],[class*="finding-body"],[class*="group-body"],[class*="group-findings"]{display:block!important;max-height:none!important;opacity:1!important;overflow:visible!important}}';
-      var toggleJs = "(function(){document.addEventListener('click',function(e){var cb=e.target.closest('.command-btn,.ia-copy-btn');if(cb){var box=cb.parentElement,c=box&&box.querySelector('code');var t=c?c.textContent:'';try{navigator.clipboard.writeText(t);}catch(_){}var o=cb.textContent;cb.textContent='\\u2713 Copiado';setTimeout(function(){cb.textContent=o;},1500);return;}var h=e.target.closest('[data-lca-acc]');if(!h)return;var b=h.nextElementSibling;if(!b)return;var willOpen=b.getAttribute('data-lca-open')==='0';b.style.display=willOpen?'':'none';b.classList.toggle('open',willOpen);b.setAttribute('data-lca-open',willOpen?'1':'0');var cv=h.querySelector('[class*=chevron]');if(cv)cv.classList.toggle('open',willOpen);});})();";
-      var esc = function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+      var toggleJs = "(function(){document.addEventListener('click',function(e){var cb=e.target.closest('.command-btn,.ia-copy-btn');if(cb){var box=cb.parentElement,c=box&&box.querySelector('code');var t='';if(c){t=c.textContent;}try{navigator.clipboard.writeText(t);}catch(_){}var o=cb.textContent;cb.textContent='\\u2713 Copiado';setTimeout(function(){cb.textContent=o;},1500);return;}var h=e.target.closest('[data-lca-acc]');if(!h)return;var b=h.nextElementSibling;if(!b)return;var willOpen=b.getAttribute('data-lca-open')==='0';if(willOpen){b.style.display='';}else{b.style.display='none';}b.classList.toggle('open',willOpen);if(willOpen){b.setAttribute('data-lca-open','1');}else{b.setAttribute('data-lca-open','0');}var cv=h.querySelector('[class*=chevron]');if(cv)cv.classList.toggle('open',willOpen);});})();";
+      var escapar = function (s) {
+        var texto;
+        if (s == null) {
+          texto = '';
+        } else {
+          texto = s;
+        }
+        return String(texto).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      };
       var titleMap = { image: 'Imagen', host: 'Host', network: 'Red' };
       var hn = (payload.host && payload.host.hostname) || '';
       return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">'
         + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        + '<title>LoCoAudit — ' + esc(titleMap[auditType] || 'Auditoria') + ' — ' + esc(hn) + '</title>'
+        + '<title>LoCoAudit — ' + escapar(titleMap[auditType] || 'Auditoria') + ' — ' + escapar(hn) + '</title>'
         + '<style>' + css + '\n' + extra + '</style></head><body><div class="lca-export">'
         + clone.innerHTML + '</div><script>' + toggleJs + '<\/script></body></html>';
         // LCA:SNAPSHOT:END
       } catch (e) {
         console.error('[LoCoAudit] export snapshot fallo, uso tabla de respaldo:', e);
-        return this._buildHtmlReportFallback();
+        return this.construirInformeSencillo();
       }
     },
-    _buildHtmlReportFallback() {
-      var esc = this._escHtml;
+    construirInformeSencillo() {
+      var escapar = this.escaparHtml;
       var a = this.auditData || {};
       var host = a.host || {};
       var counts = (a.summary && a.summary.counts) || {};
@@ -981,22 +1110,32 @@ export default {
       var sevLabelMap = { critical: 'Crítico', high: 'Alto', medium: 'Medio', low: 'Bajo', info: 'Info' };
       var sevColor = { critical: '#B91C1C', high: '#C2410C', medium: '#A16207', low: '#15803D', info: '#0369A1' };
 
-      var rank = function(f) {
+      var rangoDe = function(f) {
         var r = sevOrder[(f.severity || 'info').toLowerCase()];
-        return r === undefined ? 9 : r;
+        if (r === undefined) {
+          return 9;
+        } else {
+          return r;
+        }
       };
-      var sorted = findings.slice().sort(function(x, y) { return rank(x) - rank(y); });
+      var sorted = findings.slice().sort(function(x, y) { return rangoDe(x) - rangoDe(y); });
 
       var rows = sorted.map(function(f) {
         var sev = (f.severity || 'info').toLowerCase();
         var origen = f.image || f.category || '—';
+        let arreglo;
+        if (f.fix) {
+          arreglo = '<code>' + escapar(f.fix) + '</code>';
+        } else {
+          arreglo = '—';
+        }
         return '<tr>' +
-          '<td><span class="sev" style="background:' + sevColor[sev] + '">' + esc(sevLabelMap[sev] || sev) + '</span></td>' +
-          '<td class="mono">' + esc(f.id) + '</td>' +
-          '<td class="mono">' + esc(origen) + '</td>' +
-          '<td>' + esc(f.title) + '</td>' +
-          '<td>' + esc(f.evidence) + '</td>' +
-          '<td>' + (f.fix ? '<code>' + esc(f.fix) + '</code>' : '—') + '</td>' +
+          '<td><span class="sev" style="background:' + sevColor[sev] + '">' + escapar(sevLabelMap[sev] || sev) + '</span></td>' +
+          '<td class="mono">' + escapar(f.id) + '</td>' +
+          '<td class="mono">' + escapar(origen) + '</td>' +
+          '<td>' + escapar(f.title) + '</td>' +
+          '<td>' + escapar(f.evidence) + '</td>' +
+          '<td>' + arreglo + '</td>' +
           '</tr>';
       }).join('');
 
@@ -1005,20 +1144,28 @@ export default {
           (sevLabelMap[s]) + ': <b>' + (counts[s] || 0) + '</b></span>';
       }).join(' ');
 
-      var dur = meta.durationMs ? (meta.durationMs / 1000).toFixed(1) + ' s' : '—';
+      var dur;
+      if (meta.durationMs) {
+        dur = (meta.durationMs / 1000).toFixed(1) + ' s';
+      } else {
+        dur = '—';
+      }
       var titleMap = { image: 'Imagen', host: 'Host', network: 'Red' };
       var auditTitle = titleMap[a.auditType] || 'Auditoría';
 
       // Si el objetivo no respondió, el informe no puede leerse como "sin hallazgos = seguro".
       var notAudited = meta.targetState === 'unreachable';
-      var notice = notAudited
-        ? '<div class="notice"><b>Auditoría no realizada.</b> No se pudo contactar con ' +
-          esc(meta.target || meta.customTarget || 'el objetivo') +
-          ', por lo que no se escaneó ningún puerto. La ausencia de hallazgos NO indica que el equipo esté protegido.</div>'
-        : '';
+      var notice;
+      if (notAudited) {
+        notice = '<div class="notice"><b>Auditoría no realizada.</b> No se pudo contactar con ' +
+            escapar(meta.target || meta.customTarget || 'el objetivo') +
+            ', por lo que no se escaneó ningún puerto. La ausencia de hallazgos NO indica que el equipo esté protegido.</div>';
+      } else {
+        notice = '';
+      }
 
       return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">' +
-        '<title>LoCoAudit — ' + esc(auditTitle) + ' — ' + esc(host.hostname || '') + '</title>' +
+        '<title>LoCoAudit — ' + escapar(auditTitle) + ' — ' + escapar(host.hostname || '') + '</title>' +
         '<style>' +
         'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e1b2e;margin:32px;background:#fff}' +
         'h1{color:#7C3AED;margin:0 0 4px}.sub{color:#666;margin:0 0 20px}' +
@@ -1033,21 +1180,21 @@ export default {
         '.notice{border:1px solid #cbd5e1;border-left:4px solid #64748b;background:#f8fafc;' +
         'color:#334155;padding:10px 12px;border-radius:6px;margin:0 0 16px;font-size:13px}' +
         '</style></head><body>' +
-        '<h1>LoCoAudit · Auditoría de ' + esc(auditTitle) + '</h1>' +
-        '<p class="sub">' + esc(host.hostname || '') + ' · ' + esc(host.platform || '') + '</p>' +
+        '<h1>LoCoAudit · Auditoría de ' + escapar(auditTitle) + '</h1>' +
+        '<p class="sub">' + escapar(host.hostname || '') + ' · ' + escapar(host.platform || '') + '</p>' +
         notice +
-        '<div class="meta">Fecha: <b>' + esc(this.scanTime || new Date().toLocaleString()) + '</b> · ' +
-        'Duración: <b>' + esc(dur) + '</b> · Hallazgos: <b>' + findings.length + '</b></div>' +
+        '<div class="meta">Fecha: <b>' + escapar(this.horaEscaneo || new Date().toLocaleString()) + '</b> · ' +
+        'Duración: <b>' + escapar(dur) + '</b> · Hallazgos: <b>' + findings.length + '</b></div>' +
         '<div class="chips">' + sumChips + '</div>' +
         '<table><thead><tr><th>Severidad</th><th>ID</th><th>Origen</th><th>Título</th><th>Evidencia</th><th>Recomendación</th></tr></thead>' +
         '<tbody>' + (rows || '<tr><td colspan="6">Sin hallazgos.</td></tr>') + '</tbody></table>' +
-        '<footer>Generado por LoCoAudit · ' + esc(new Date().toISOString()) + '</footer>' +
+        '<footer>Generado por LoCoAudit · ' + escapar(new Date().toISOString()) + '</footer>' +
         '</body></html>';
     },
 
     // Gramática de `fix` (marcadores puestos en origen), copia del parser de host:
     // "## " abre rama, "$ " comando del último paso, "> " nota sin numerar, resto paso nuevo.
-    parseFixSteps(fix) {
+    pasosDeSolucion(fix) {
       var res = { intro: [], notes: [], branches: [] };
       if (!fix) return res;
       var lineas = String(fix).split('\n')
@@ -1064,7 +1211,13 @@ export default {
         if (s.indexOf('> ') === 0) {
           var nota = s.slice(2).trim();
           // Antes de la primera rama la nota cuelga del bloque introductorio.
-          if (nota) (actual ? actual.notes : res.notes).push(nota);
+          if (nota) {
+            if (actual) {
+              actual.notes.push(nota);
+            } else {
+              res.notes.push(nota);
+            }
+          }
           return;
         }
         if (s.indexOf('$ ') === 0) {
@@ -1088,41 +1241,46 @@ export default {
     },
 
     // El botón copia solo el comando; la nota se muestra aparte.
-    fixNote(f) {
+    notaSolucion(f) {
       if (!f || !f.command || !f.fix) return "";
       return String(f.fix).split("\n").slice(1).join("\n").trim();
     },
     // Todos los comandos de la ficha: `command` y los pasos con "$ ".
-    fixCommands(f) {
+    comandosSolucion(f) {
       if (!f || !f.fix) return [];
-      var cmds = f.command ? [String(f.command)] : [];
+      var cmds;
+      if (f.command) {
+        cmds = [String(f.command)];
+      } else {
+        cmds = [];
+      }
       try {
-        this.parseFixSteps(f.fix).branches.forEach(function (r) {
+        this.pasosDeSolucion(f.fix).branches.forEach(function (r) {
           r.steps.forEach(function (st) { if (st.cmd) cmds.push(st.cmd); });
         });
       } catch (e) { /* fix ilegible: queda el comando directo, si lo hay */ }
       return cmds;
     },
     // ¿El paso de resolución contiene algún comando (directo o dentro de un paso)?
-    fixHasCmd(f) {
-      return this.fixCommands(f).length > 0;
+    solucionConComando(f) {
+      return this.comandosSolucion(f).length > 0;
     },
     // Se mira el comando, no la prosa, para decidir el aviso de sudo.
-    fixNeedsSudo(f) {
-      return this.fixCommands(f).some(function (c) { return /^sudo(\s|$)/.test(String(c).trim()); });
+    solucionConSudo(f) {
+      return this.comandosSolucion(f).some(function (c) { return /^sudo(\s|$)/.test(String(c).trim()); });
     },
 
-    sevLabel(sev) {
+    etiquetaSeveridad(sev) {
       var MAP = { high: 'Alto', medium: 'Medio', low: 'Bajo', info: 'Info', critical: 'Crítico' };
       return MAP[(sev || '').toLowerCase()] || (sev || '').toUpperCase();
     },
 
-    formatDate(iso) {
+    formatearFecha(iso) {
       if (!iso) return '—';
       return new Date(iso).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
     },
 
-    async copyCommand(text) {
+    async copiarComando(text) {
       try {
         await navigator.clipboard.writeText(text);
         this.copiedKey = text;
@@ -1142,12 +1300,16 @@ export default {
     // ── Chat con LLM ──────────────────────────────────────────
 
     // Clave por finding.id, no por posición (cambia al filtrar).
-    chatKey(f, fi) {
-      return (f && f.id) ? 'id:' + f.id : 'idx:' + fi;
+    claveChat(f, fi) {
+      if (f && f.id) {
+        return 'id:' + f.id;
+      } else {
+        return 'idx:' + fi;
+      }
     },
 
     // Escaneo nuevo: se borran las conversaciones de hallazgos que ya no existen.
-    resetChats() {
+    reiniciarChats() {
       this.chatEpoch++;
       this.chatOpen     = {};
       this.chatMessages = {};
@@ -1155,19 +1317,22 @@ export default {
       this.chatLoading  = {};
     },
 
-    toggleChat(findingKey, finding) {
+    alternarChat(findingKey, finding) {
       var willOpen = !this.chatOpen[findingKey];
       this.chatOpen = Object.assign({}, this.chatOpen, { [findingKey]: willOpen });
       if (willOpen && !(this.chatMessages[findingKey] && this.chatMessages[findingKey].length)) {
-        this.sendChat(findingKey, finding,
+        this.enviarChat(findingKey, finding,
           'Explícame este hallazgo de forma sencilla: qué significa, por qué importa y cómo lo soluciono.');
       }
     },
 
-    async sendChat(findingKey, finding, presetQuestion) {
-      var question = presetQuestion != null
-        ? presetQuestion
-        : (this.chatInput[findingKey] || '').trim();
+    async enviarChat(findingKey, finding, presetQuestion) {
+      var question;
+      if (presetQuestion != null) {
+        question = presetQuestion;
+      } else {
+        question = (this.chatInput[findingKey] || '').trim();
+      }
       if (!question || this.chatLoading[findingKey]) return;
 
       var epoch = this.chatEpoch;
@@ -1192,9 +1357,11 @@ export default {
           })
         });
         var data = await res.json();
-        reply = (data && data.ok)
-          ? { role: 'assistant', content: data.content }
-          : { role: 'assistant', content: (data && data.error) || 'Error desconocido del asistente.', error: true };
+        if (data && data.ok) {
+          reply = { role: 'assistant', content: data.content };
+        } else {
+          reply = { role: 'assistant', content: (data && data.error) || 'Error desconocido del asistente.', error: true };
+        }
       } catch (e) {
         reply = { role: 'assistant', content: 'No se pudo contactar con el asistente: ' + (e.message || e), error: true };
       }
@@ -1207,7 +1374,7 @@ export default {
       this.chatLoading = Object.assign({}, this.chatLoading, { [findingKey]: false });
     },
 
-    parseChatContent(content) {
+    trocearRespuesta(content) {
       var text = String(content || '');
       var segments = [];
       var regex = /```[a-zA-Z0-9_-]*\n?([\s\S]*?)```/g;
@@ -1215,19 +1382,19 @@ export default {
       var m;
       while ((m = regex.exec(text)) !== null) {
         if (m.index > lastIndex) {
-          segments.push({ type: 'text', html: this.mdInline(text.slice(lastIndex, m.index)) });
+          segments.push({ type: 'text', html: this.markdownEnLinea(text.slice(lastIndex, m.index)) });
         }
         segments.push({ type: 'code', code: m[1].replace(/\n$/, '') });
         lastIndex = regex.lastIndex;
       }
       if (lastIndex < text.length) {
-        segments.push({ type: 'text', html: this.mdInline(text.slice(lastIndex)) });
+        segments.push({ type: 'text', html: this.markdownEnLinea(text.slice(lastIndex)) });
       }
       if (segments.length === 0) segments.push({ type: 'text', html: '' });
       return segments;
     },
 
-    mdInline(str) {
+    markdownEnLinea(str) {
       var esc = String(str)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       esc = esc.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
@@ -1237,9 +1404,9 @@ export default {
   },
 
   mounted() {
-    this.readTokens();
+    this.leerTokens();
     // Segunda lectura por si la hoja aún no estaba en el head al montar.
-    this.$nextTick(this.readTokens);
+    this.$nextTick(this.leerTokens);
 
     // Comprueba si hay un llm-config desplegado y qué modelo responde.
     var self = this;
@@ -1260,7 +1427,7 @@ export default {
 
   /* ═══ TOKENS ═══ Mismo vocabulario que host, la referencia de diseño. */
   :root {
-    /* Severidad, idéntica a host; la lee readTokens() para estilos en JS. */
+    /* Severidad, idéntica a host; la lee leerTokens() para estilos en JS. */
     --critical: #DC2626;
     --critical-bg: #FEF2F2;
     --critical-border: #FECACA;

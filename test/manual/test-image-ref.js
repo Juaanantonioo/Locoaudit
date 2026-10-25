@@ -2,7 +2,7 @@
 
 /**
  * test-image-ref.js: qué referencia de imagen llega a la línea de órdenes de trivy.
- * Comprueba isValidImageRef() y que una referencia con shell no ejecuta nada.
+ * Comprueba esReferenciaValida() y que una referencia con shell no ejecuta nada.
  * Uso: node test/manual/test-image-ref.js
  */
 
@@ -30,10 +30,10 @@ if (!isWin) {
   process.env.PATH = `${tmp}${path.delimiter}${process.env.PATH}`;
 }
 
-const { isValidImageRef, runTrivyImage } = require("../../nodes/audit-image/modules/cve-checker");
+const { esReferenciaValida, ejecutarTrivyImagen } = require("../../nodes/audit-image/modules/cve-checker");
 
-// ── 1 · isValidImageRef ─────────────────────────────────────────────────────────────────────
-console.log("\n── 1 · isValidImageRef(): qué es una referencia de imagen ────────\n");
+// ── 1 · esReferenciaValida ─────────────────────────────────────────────────────────────────────
+console.log("\n── 1 · esReferenciaValida(): qué es una referencia de imagen ────────\n");
 
 const VALIDAS = [
   "nginx",
@@ -48,7 +48,7 @@ const VALIDAS = [
   "sha256:" + "b".repeat(64),   // el ID que da docker images para una imagen sin nombre
   "4f2b6e7d8c9a",
 ];
-for (const r of VALIDAS) ok(isValidImageRef(r), `acepta ${r.length > 50 ? r.slice(0, 50) + "…" : r}`);
+for (const r of VALIDAS) ok(esReferenciaValida(r), `acepta ${r.length > 50 ? r.slice(0, 50) + "…" : r}`);
 
 const INVALIDAS = [
   "",
@@ -68,22 +68,22 @@ const INVALIDAS = [
   "nginx & calc.exe",
   "nginx%PATH%",
 ];
-for (const r of INVALIDAS) ok(!isValidImageRef(r), `rechaza ${JSON.stringify(r).slice(0, 50)}`);
+for (const r of INVALIDAS) ok(!esReferenciaValida(r), `rechaza ${JSON.stringify(r).slice(0, 50)}`);
 
-// ── 2 · runTrivyImage con una referencia inyectada ──────────────────────────────────────────
+// ── 2 · ejecutarTrivyImagen con una referencia inyectada ──────────────────────────────────────────
 async function main() {
-  console.log("\n── 2 · runTrivyImage() no lanza la orden inyectada ──────────────\n");
+  console.log("\n── 2 · ejecutarTrivyImagen() no lanza la orden inyectada ──────────────\n");
   if (isWin) {
     console.log("  (omitido en Windows: el trivy falso es un script de sh)");
   } else {
     const ref = `lca-dummy; echo INJECTED > "${pwned}"; #`;
-    const r = await runTrivyImage([{ id: ref, repository: "", tag: "" }], 5000);
+    const r = await ejecutarTrivyImagen([{ id: ref, repository: "", tag: "" }], 5000);
     ok(!fs.existsSync(pwned), "la orden inyectada no se ejecutó");
     ok(!fs.existsSync(witness), "trivy no llegó a lanzarse");
     ok(r && Array.isArray(r.failed) && r.failed.length === 1, "la imagen sale en failed", JSON.stringify(r && r.failed));
     ok(r && r.failed && /^INVALID_REF:/.test(r.failed[0].error), "con motivo INVALID_REF", JSON.stringify(r && r.failed));
 
-    const okRef = await runTrivyImage([{ id: "nginx:latest", repository: "", tag: "" }], 5000);
+    const okRef = await ejecutarTrivyImagen([{ id: "nginx:latest", repository: "", tag: "" }], 5000);
     ok(fs.existsSync(witness), "una referencia válida sí lanza trivy");
     ok(okRef && okRef.failed && okRef.failed.length === 0, "y no sale como fallida", JSON.stringify(okRef && okRef.failed));
   }

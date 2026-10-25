@@ -3,7 +3,7 @@
 /**
  * test-homedir-injection.js: un nombre de carpeta del home no puede ejecutar órdenes.
  * Crea carpetas llamadas `$(touch${IFS}SENTINEL)` y con comillas invertidas, y comprueba que
- * classifyDir(), execToFile() y runTrivyFs() (con un trivy falso) no ejecutan nada.
+ * clasificarCarpeta(), ejecutarAFichero() y ejecutarTrivyFs() (con un trivy falso) no ejecutan nada.
  * No aplica a Windows. Uso: node test/manual/test-homedir-injection.js
  */
 
@@ -53,21 +53,21 @@ process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
 process.env.HOME = home;
 delete process.env.SUDO_USER;
 
-const { classifyDir }   = require("../../nodes/audit-host/modules/local-fs");
-const { execToFile }    = require("../../lib/executor");
-const { runTrivyFs }    = require("../../nodes/audit-host/modules/trivy-fs");
+const { clasificarCarpeta }   = require("../../nodes/audit-host/modules/local-fs");
+const { ejecutarAFichero }    = require("../../lib/executor");
+const { ejecutarTrivyFs }    = require("../../nodes/audit-host/modules/trivy-fs");
 
 (async () => {
-  console.log("\n── 1 · classifyDir() sobre la carpeta trampa ─────────────────────\n");
-  const cls = classifyDir(path.join(home, TRAP));
-  classifyDir(path.join(home, TRAP_BQ));
+  console.log("\n── 1 · clasificarCarpeta() sobre la carpeta trampa ─────────────────────\n");
+  const cls = clasificarCarpeta(path.join(home, TRAP));
+  clasificarCarpeta(path.join(home, TRAP_BQ));
   ok(!fs.existsSync(sentinel), "$(...) en el nombre no se ejecuta");
   ok(!fs.existsSync(sentBq), "comillas invertidas en el nombre no se ejecutan");
   ok(cls && cls.local === true, `la carpeta se clasifica como local (${cls && cls.detail})`);
 
-  console.log("\n── 2 · execToFile() con array de argumentos ──────────────────────\n");
+  console.log("\n── 2 · ejecutarAFichero() con array de argumentos ──────────────────────\n");
   const lit = "$(touch${IFS}SENTINEL); `id` \"x\" 'y'";
-  const parsed = await execToFile((file) => [
+  const parsed = await ejecutarAFichero((file) => [
     process.execPath, "-e",
     "require('fs').writeFileSync(process.argv[1], JSON.stringify({ v: process.argv[2] }))",
     file, lit,
@@ -75,8 +75,8 @@ const { runTrivyFs }    = require("../../nodes/audit-host/modules/trivy-fs");
   ok(parsed && parsed.v === lit, "el argumento llega literal al programa", JSON.stringify(parsed));
   ok(!fs.existsSync(sentinel), "y no se ejecuta nada");
 
-  console.log("\n── 3 · runTrivyFs() sobre el home falso ──────────────────────────\n");
-  const res = await runTrivyFs({});
+  console.log("\n── 3 · ejecutarTrivyFs() sobre el home falso ──────────────────────────\n");
+  const res = await ejecutarTrivyFs({});
   ok(!res.skipped, "el escaneo termina", res.reason);
   ok(!fs.existsSync(sentinel) && !fs.existsSync(sentBq), "ninguna carpeta trampa ejecuta su orden");
   const calls = fs.existsSync(argsLog)

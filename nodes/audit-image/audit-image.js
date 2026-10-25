@@ -4,17 +4,17 @@
 // Sin Docker no lanza error: emite un IMG-DOCKER-OFF informativo.
 
 const os = require("os");
-const { getDockerInfo }      = require("./modules/docker-api");
-const { auditDockerConfig }  = require("./modules/config-audit");
-const { runTrivyImage, imageRef } = require("./modules/cve-checker");
-const { normalizeImage, buildSkippedChecksSummary } = require("../../lib/normalizer");
-const { summarize }          = require("../../lib/severity-map");
-const { createFinding }      = require("../../lib/finding-schema");
-const { commandExists }      = require("../../lib/executor");
-const { withoutResults }     = require("../../lib/utils");
+const { infoDocker }      = require("./modules/docker-api");
+const { auditarConfigDocker }  = require("./modules/config-audit");
+const { ejecutarTrivyImagen, referenciaImagen } = require("./modules/cve-checker");
+const { normalizarImagen, resumenOmitidas } = require("../../lib/normalizer");
+const { resumir }          = require("../../lib/severity-map");
+const { crearHallazgo }      = require("../../lib/finding-schema");
+const { existeComando }      = require("../../lib/executor");
+const { sinResultados }     = require("../../lib/utils");
 
 // URL de Docker Hub a referencia de trivy (hub.docker.com/_/nginx → nginx). Si no encaja, se devuelve tal cual.
-function parseImageRef(ref) {
+function leerReferenciaImagen(ref) {
   if (!/^https?:\/\/hub\.docker\.com\//i.test(ref)) return ref;
   let m = ref.match(/hub\.docker\.com\/r\/([^/?#]+\/[^/?#]+)/i);
   if (m) return m[1];
@@ -24,7 +24,7 @@ function parseImageRef(ref) {
 }
 
 // Error de Trivy en lenguaje claro; el original queda en raw.trivy.failed. El orden de las comprobaciones importa.
-function summarizeScanError(err) {
+function resumirErrorEscaneo(err) {
   const e = String(err || "");
   if (/^INVALID_REF:/.test(e)) {
     return "La referencia no tiene la forma de una imagen (registro/repositorio:tag o @sha256:digest) y no se ha escaneado. " +
@@ -88,11 +88,17 @@ function summarizeScanError(err) {
 }
 
 function plural(n, uno, varios) {
-  return `${n} ${n === 1 ? uno : varios}`;
+  let palabra;
+  if (n === 1) {
+    palabra = uno;
+  } else {
+    palabra = varios;
+  }
+  return `${n} ${palabra}`;
 }
 
 // Sin análisis de CVE una imagen no puede darse por limpia: se dice que no se hizo y por qué.
-function cveSkippedFinding(trivy, rejectReason) {
+function hallazgoCveOmitido(trivy, rejectReason) {
   let kind = trivy && trivy.kind;
   let reason = trivy && trivy.reason;
   if (rejectReason) {
@@ -108,7 +114,7 @@ function cveSkippedFinding(trivy, rejectReason) {
     "disabled":      "Activa el análisis de vulnerabilidades en las opciones del nodo si quieres revisar las imágenes.",
     "error":         "Vuelve a lanzar la auditoría. Si se repite, comprueba que Trivy funciona con 'trivy --version'.",
   }[kind];
-  return createFinding({
+  return crearHallazgo({
     id:        "IMG-TRIVY-SKIP",
     title:     "Vulnerabilidades de las imágenes: no se han analizado",
     severity:  "info",
@@ -124,8 +130,8 @@ function cveSkippedFinding(trivy, rejectReason) {
 }
 
 // Consulta a Docker fallida: comprobación no realizada, no "sin resultados".
-function listFailedFinding(id, label, reason, checkCmd) {
-  return createFinding({
+function hallazgoListaFallida(id, label, reason, checkCmd) {
+  return crearHallazgo({
     id,
     title:     `${label}: no se ha podido comprobar`,
     severity:  "info",
@@ -142,13 +148,13 @@ function listFailedFinding(id, label, reason, checkCmd) {
 }
 
 // Un hallazgo por imagen fallida, en los dos modos, para que ninguna desaparezca sin avisar.
-function buildScanErrorFindings(failed) {
+function hallazgosErrorEscaneo(failed) {
   return (failed || []).map((fa, i) =>
-    createFinding({
+    crearHallazgo({
       id:       `IMG-SCAN-ERR-${String(i + 1).padStart(3, "0")}`,
       title:    `No se pudo escanear la imagen «${fa.ref || "desconocida"}»`,
       severity: "info",
-      evidence: summarizeScanError(fa.error),
+      evidence: resumirErrorEscaneo(fa.error),
       // La causa concreta ya va en la evidencia.
       fix:      "Consulta el detalle del error arriba: indica la causa (tiempo de espera, tamaño, red, credenciales, caché ocupada o nombre) y cómo resolverla.",
       category: "image",
@@ -161,29 +167,39 @@ function buildScanErrorFindings(failed) {
   );
 }
 
-function buildImagePayload(findings, scanMeta, raw, scannedImages) {
-  raw = { ...raw, trivy: withoutResults(raw.trivy) };
+function construirPayload(findings, scanMeta, raw, scannedImages) {
+  raw = { ...raw, trivy: sinResultados(raw.trivy) };
+  let imagenes;
+  if (Array.isArray(scannedImages)) {
+    imagenes = scannedImages;
+  } else {
+    imagenes = [];
+  }
   return {
     findings,
-    summary:   summarize(findings),
+    summary:   resumir(findings),
     source:    "audit-image",
     auditType: "image",
     host: { hostname: os.hostname(), platform: process.platform },
     scanMeta,
     // El dashboard lo usa cuando no hay datos de `docker images` (imágenes remotas).
-    scannedImages: Array.isArray(scannedImages) ? scannedImages : [],
+    scannedImages: imagenes,
     raw,
     timestamp: new Date().toISOString(),
   };
 }
 
 module.exports = function (RED) {
-  function AuditImageNode(config) {
+  function NodoAuditoriaImagen(config) {
     RED.nodes.createNode(this, config);
     const node = this;
 
     // Solo para poder elegir el config desde el editor: el chat lo sirve /locoaudit/chat.
-    node.llmConfig = config.llmConfig ? RED.nodes.getNode(config.llmConfig) : null;
+    if (config.llmConfig) {
+      node.llmConfig = RED.nodes.getNode(config.llmConfig);
+    } else {
+      node.llmConfig = null;
+    }
 
     node.on("input", async function (msg, send, done) {
       const scanMode     = config.scanMode || "local";
@@ -209,12 +225,12 @@ module.exports = function (RED) {
 
           const refs = rawRef
             .split(",")
-            .map((s) => parseImageRef(s.trim()))
+            .map((s) => leerReferenciaImagen(s.trim()))
             .filter(Boolean);
 
           if (refs.length === 0) {
             const findings = [
-              createFinding({
+              crearHallazgo({
                 id:       "IMG-IMAGE-NONE",
                 title:    "No se indicó ninguna imagen a escanear",
                 severity: "info",
@@ -225,7 +241,7 @@ module.exports = function (RED) {
                 source:   "native",
               }),
             ];
-            msg.payload = buildImagePayload(
+            msg.payload = construirPayload(
               findings,
               { modulesRun: [], imagesFound: 0, containersFound: 0, containersRunning: 0, durationMs: Date.now() - startTime },
               { docker: null, configFindings: [], trivy: null }
@@ -237,10 +253,10 @@ module.exports = function (RED) {
           }
 
           // Única herramienta necesaria en este modo.
-          const trivyAvailable = await commandExists("trivy");
+          const trivyAvailable = await existeComando("trivy");
           if (!trivyAvailable) {
             const findings = [
-              createFinding({
+              crearHallazgo({
                 id:       "IMG-TRIVY-OFF",
                 title:    "Trivy no disponible",
                 severity: "info",
@@ -250,7 +266,7 @@ module.exports = function (RED) {
                 source:   "native",
               }),
             ];
-            msg.payload = buildImagePayload(
+            msg.payload = construirPayload(
               findings,
               { modulesRun: [], imagesFound: 0, containersFound: 0, containersRunning: 0, durationMs: Date.now() - startTime },
               { docker: null, configFindings: [], trivy: null }
@@ -261,37 +277,53 @@ module.exports = function (RED) {
             return;
           }
 
-          // Con repository vacío, imageRef() de cve-checker usa el id tal cual.
+          // Con repository vacío, referenciaImagen() de cve-checker usa el id tal cual.
           const targets = refs.map((r) => ({ id: r, repository: "", tag: "" }));
-          const trivy   = await runTrivyImage(targets, imageTimeout);
+          const trivy   = await ejecutarTrivyImagen(targets, imageTimeout);
 
-          const findings = (trivy && !trivy.skipped)
-            ? normalizeImage(trivy, "trivy")
-            : [];
+          let findings;
+          if (trivy && !trivy.skipped) {
+            findings = normalizarImagen(trivy, "trivy");
+          } else {
+            findings = [];
+          }
 
           const failed = (trivy && trivy.failed) || [];
-          findings.push(...buildScanErrorFindings(failed));
+          findings.push(...hallazgosErrorEscaneo(failed));
 
           const scannedImages = (trivy && trivy.scannedImages) || [];
 
-          msg.payload = buildImagePayload(
+          msg.payload = construirPayload(
             findings,
             { modulesRun: ["trivy-image"], imagesFound: scannedImages.length, containersFound: 0, containersRunning: 0, durationMs: Date.now() - startTime },
             { docker: null, configFindings: [], trivy },
             scannedImages
           );
 
-          msg.payload.scanMeta.checksSkipped = buildSkippedChecksSummary(findings);
+          msg.payload.scanMeta.checksSkipped = resumenOmitidas(findings);
 
           const maxSev = msg.payload.summary.maxSeverity || "info";
-          const statusColor =
-            maxSev === "critical" || maxSev === "high" ? "red"
-            : maxSev === "medium" || failed.length     ? "yellow"
-            :                                            "green";
-          const statusTxt = failed.length
-            ? `${scannedImages.length} ok · ${plural(failed.length, "fallo", "fallos")} · riesgo: ${maxSev}`
-            : `${plural(scannedImages.length, "imagen", "imágenes")} · riesgo: ${maxSev}`;
-          node.status({ fill: statusColor, shape: failed.length ? "ring" : "dot", text: statusTxt });
+          let statusColor;
+          if (maxSev === "critical" || maxSev === "high") {
+            statusColor = "red";
+          } else if (maxSev === "medium" || failed.length) {
+            statusColor = "yellow";
+          } else {
+            statusColor = "green";
+          }
+          let statusTxt;
+          if (failed.length) {
+            statusTxt = `${scannedImages.length} ok · ${plural(failed.length, "fallo", "fallos")} · riesgo: ${maxSev}`;
+          } else {
+            statusTxt = `${plural(scannedImages.length, "imagen", "imágenes")} · riesgo: ${maxSev}`;
+          }
+          let formaRemota;
+          if (failed.length) {
+            formaRemota = "ring";
+          } else {
+            formaRemota = "dot";
+          }
+          node.status({ fill: statusColor, shape: formaRemota, text: statusTxt });
 
           send(msg);
           done();
@@ -301,11 +333,11 @@ module.exports = function (RED) {
         // Modo local: todas las imágenes del daemon.
         node.status({ fill: "blue", shape: "dot", text: "Auditando imágenes..." });
 
-        const docker = await getDockerInfo();
+        const docker = await infoDocker();
 
         if (docker.skipped) {
           const findings = [
-            createFinding({
+            crearHallazgo({
               id:       "IMG-DOCKER-OFF",
               title:    "Docker no disponible",
               severity: "info",
@@ -315,7 +347,7 @@ module.exports = function (RED) {
               source:   "native",
             }),
           ];
-          const summary    = summarize(findings);
+          const summary    = resumir(findings);
           const durationMs = Date.now() - startTime;
 
           msg.payload = {
@@ -341,28 +373,48 @@ module.exports = function (RED) {
           return;
         }
 
+        let promesaConfig;
+        if (enableConfig) {
+          promesaConfig = auditarConfigDocker(docker);
+        } else {
+          promesaConfig = Promise.resolve([]);
+        }
+        let promesaTrivy;
+        if (enableTrivy) {
+          promesaTrivy = ejecutarTrivyImagen(docker.images, imageTimeout);
+        } else {
+          // kind distingue "desactivado" de "falló"; reason es solo para leer.
+          promesaTrivy = Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de vulnerabilidades de las imágenes está desactivado en las opciones del nodo." });
+        }
         const [configResult, trivyResult] = await Promise.allSettled([
-          enableConfig ? auditDockerConfig(docker)         : Promise.resolve([]),
-          enableTrivy
-            ? runTrivyImage(docker.images, imageTimeout)
-            // kind distingue "desactivado" de "falló"; reason es solo para leer.
-            : Promise.resolve({ skipped: true, kind: "disabled", reason: "El análisis de vulnerabilidades de las imágenes está desactivado en las opciones del nodo." }),
+          promesaConfig,
+          promesaTrivy,
         ]);
 
-        const configFindings = configResult.status === "fulfilled" ? configResult.value : [];
+        let configFindings;
+        if (configResult.status === "fulfilled") {
+          configFindings = configResult.value;
+        } else {
+          configFindings = [];
+        }
         // Un fallo de la revisión o de los listados no puede quedar como lista vacía.
         const dockerGaps = [];
         if (configResult.status === "rejected") {
-          dockerGaps.push(listFailedFinding("IMG-CFG-SKIP", "Configuración de los contenedores",
+          dockerGaps.push(hallazgoListaFallida("IMG-CFG-SKIP", "Configuración de los contenedores",
             String((configResult.reason && configResult.reason.message) || configResult.reason), "docker ps -a"));
         }
         if (docker.imagesError) {
-          dockerGaps.push(listFailedFinding("IMG-DOCKER-IMAGES-SKIP", "Inventario de imágenes locales", docker.imagesError, "docker images"));
+          dockerGaps.push(hallazgoListaFallida("IMG-DOCKER-IMAGES-SKIP", "Inventario de imágenes locales", docker.imagesError, "docker images"));
         }
         if (docker.containersError) {
-          dockerGaps.push(listFailedFinding("IMG-DOCKER-CONTAINERS-SKIP", "Inventario de contenedores", docker.containersError, "docker ps -a"));
+          dockerGaps.push(hallazgoListaFallida("IMG-DOCKER-CONTAINERS-SKIP", "Inventario de contenedores", docker.containersError, "docker ps -a"));
         }
-        const trivy          = trivyResult.status  === "fulfilled" ? trivyResult.value  : null;
+        let trivy;
+        if (trivyResult.status  === "fulfilled") {
+          trivy = trivyResult.value;
+        } else {
+          trivy = null;
+        }
 
         if (configResult.status === "rejected") {
           node.warn(`[audit-image] config-audit falló: ${configResult.reason}`);
@@ -371,27 +423,42 @@ module.exports = function (RED) {
           node.warn(`[audit-image] cve-checker falló: ${trivyResult.reason}`);
         }
 
-        const trivyFindings = (trivy && !trivy.skipped)
-          ? normalizeImage(trivy, "trivy")
-          : [];
+        let trivyFindings;
+        if (trivy && !trivy.skipped) {
+          trivyFindings = normalizarImagen(trivy, "trivy");
+        } else {
+          trivyFindings = [];
+        }
 
         // trivy.failed se lee también con skipped:true: es el caso en que fallaron todas.
-        const scanErrors = buildScanErrorFindings(trivy && trivy.failed);
-        const cveGap = cveSkippedFinding(trivy,
-          trivyResult.status === "rejected" ? String((trivyResult.reason && trivyResult.reason.message) || trivyResult.reason) : null);
+        const scanErrors = hallazgosErrorEscaneo(trivy && trivy.failed);
+        let motivoRechazo;
+        if (trivyResult.status === "rejected") {
+          motivoRechazo = String((trivyResult.reason && trivyResult.reason.message) || trivyResult.reason);
+        } else {
+          motivoRechazo = null;
+        }
+        const cveGap = hallazgoCveOmitido(trivy,
+          motivoRechazo);
 
         // El dashboard solo pinta "Limpia" en las imágenes que Trivy analizó de verdad.
         const analizadas = new Set(((trivy && trivy.scannedImages) || []).map((m) => m.name));
         const fallidas = new Set(((trivy && trivy.failed) || []).map((f) => f.ref));
         for (const img of docker.images) {
-          const ref = imageRef(img);
+          const ref = referenciaImagen(img);
           if (fallidas.has(ref)) img.cveScan = "fallida";
           else if (analizadas.has(ref)) img.cveScan = "analizada";
           else img.cveScan = "sin-analizar";
         }
 
-        const findings   = [...configFindings, ...dockerGaps, ...trivyFindings, ...scanErrors, ...(cveGap ? [cveGap] : [])];
-        const summary    = summarize(findings);
+        let huecoCve;
+        if (cveGap) {
+          huecoCve = [cveGap];
+        } else {
+          huecoCve = [];
+        }
+        const findings   = [...configFindings, ...dockerGaps, ...trivyFindings, ...scanErrors, ...huecoCve];
+        const summary    = resumir(findings);
         const durationMs = Date.now() - startTime;
 
         const modulesRun = [
@@ -408,7 +475,7 @@ module.exports = function (RED) {
           host: { hostname: os.hostname(), platform: process.platform },
           scanMeta: {
             // Mismo resumen que audit-host, sacado de los hallazgos.
-            checksSkipped: buildSkippedChecksSummary(findings),
+            checksSkipped: resumenOmitidas(findings),
             modulesRun,
             imagesFound:       docker.images.length,
             containersFound:   docker.containers.length,
@@ -420,7 +487,7 @@ module.exports = function (RED) {
           },
           // En local el dashboard usa raw.docker.images; en remoto cae a este campo.
           scannedImages: (trivy && trivy.scannedImages) || [],
-          raw: { docker, configFindings, trivy: withoutResults(trivy) },
+          raw: { docker, configFindings, trivy: sinResultados(trivy) },
           timestamp: new Date().toISOString(),
         };
 
@@ -432,13 +499,31 @@ module.exports = function (RED) {
         if (maxSev === "critical" || maxSev === "high") statusColor = "red";
         else if (maxSev === "medium" || incompleto) statusColor = "yellow";
 
+        let forma;
+        if (incompleto) {
+          forma = "ring";
+        } else {
+          forma = "dot";
+        }
+        let sufijoFallos;
+        if (scanErrors.length) {
+          sufijoFallos = ` · ${plural(scanErrors.length, "fallo", "fallos")}`;
+        } else {
+          sufijoFallos = "";
+        }
+        let sufijoCve;
+        if (cveGap) {
+          sufijoCve = " · CVE sin analizar";
+        } else {
+          sufijoCve = "";
+        }
         node.status({
           fill:  statusColor,
-          shape: incompleto ? "ring" : "dot",
+          shape: forma,
           text:  `${plural(docker.images.length, "imagen", "imágenes")} · ` +
                  `${plural(docker.containers.length, "contenedor", "contenedores")}` +
-                 (scanErrors.length ? ` · ${plural(scanErrors.length, "fallo", "fallos")}` : "") +
-                 (cveGap ? " · CVE sin analizar" : "") +
+                 sufijoFallos +
+                 sufijoCve +
                  ` · riesgo: ${maxSev}`,
         });
 
@@ -451,5 +536,5 @@ module.exports = function (RED) {
     });
   }
 
-  RED.nodes.registerType("audit-image", AuditImageNode);
+  RED.nodes.registerType("audit-image", NodoAuditoriaImagen);
 };

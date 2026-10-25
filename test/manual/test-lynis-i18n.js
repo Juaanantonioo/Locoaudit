@@ -10,10 +10,10 @@
  *   node test/manual/test-lynis-i18n.js
  */
 
-const { LYNIS_ES, LYNIS_ES_IDS, lynisText, lynisFix, lynisCoverage, lynisControlUrl,
-        pickLynisDiscriminators } = require("../../lib/lynis-i18n");
-const { installCmd } = require("../../lib/pkg-manager");
-const { fromLynisRaw } = require("../../lib/normalizer");
+const { LYNIS_ES, LYNIS_ES_IDS, textoLynis, solucionLynis, coberturaLynis, urlControlLynis,
+        elegirDiscriminadores } = require("../../lib/lynis-i18n");
+const { comandoInstalar } = require("../../lib/pkg-manager");
+const { desdeLynis } = require("../../lib/normalizer");
 
 let failed = 0;
 let passed = 0;
@@ -34,11 +34,11 @@ const TODOS = [...DEBIAN, ...MACOS];
 
 console.log("\n── 1 · Cobertura exacta de los informes de referencia ────────────\n");
 
-const cov = lynisCoverage(TODOS);
+const cov = coberturaLynis(TODOS);
 console.log(`  ${cov.translated}/${cov.total} controles traducidos`);
 
 ok(TODOS.length === 44, `los informes aportan 44 controles`, String(TODOS.length));
-ok(cov.total === 44, "lynisCoverage los cuenta todos", String(cov.total));
+ok(cov.total === 44, "coberturaLynis los cuenta todos", String(cov.total));
 ok(cov.missing.length === 0,
    "los 44 están en la tabla", JSON.stringify(cov.missing));
 
@@ -63,13 +63,13 @@ ok(conIngles.length === 0, "ninguna traducción se ha quedado en inglés", JSON.
 
 console.log("\n── 3 · Sin entrada, nunca se queda muda ──────────────────────────\n");
 
-const desconocido = lynisText("ZZZZ-9999", "Some brand new Lynis control");
+const desconocido = textoLynis("ZZZZ-9999", "Some brand new Lynis control");
 ok(desconocido.text === "Some brand new Lynis control",
    "control sin traducir → texto original en inglés", desconocido.text);
 ok(desconocido.translated === false, "y marcado como no traducido");
 
 // El peor caso: ni traducción ni original. Ni cadena vacía ni el ID a secas.
-const nada = lynisText("ZZZZ-9999", "");
+const nada = textoLynis("ZZZZ-9999", "");
 ok(nada.text.length > 10, "sin original tampoco devuelve cadena vacía", JSON.stringify(nada.text));
 ok(nada.text !== "ZZZZ-9999", "ni el ID pelado", nada.text);
 ok(nada.text.includes("ZZZZ-9999") && /Lynis/.test(nada.text),
@@ -77,16 +77,16 @@ ok(nada.text.includes("ZZZZ-9999") && /Lynis/.test(nada.text),
 ok(nada.translated === false, "y también marcado como no traducido");
 
 // Insensible a mayúsculas y espacios: el ID viene del .dat y no siempre está limpio.
-ok(lynisText(" usb-1000 ", "x").translated === true,
+ok(textoLynis(" usb-1000 ", "x").translated === true,
    "el ID se normaliza (minúsculas y espacios)");
 
 console.log("\n── 4 · Determinista: mismas entradas, mismas salidas ─────────────\n");
 
 // La razón de no usar el LLM, comprobada: mil llamadas, un solo resultado.
-const primera = TODOS.map((id) => lynisText(id, "original").text).join("|");
+const primera = TODOS.map((id) => textoLynis(id, "original").text).join("|");
 let estable = true;
 for (let i = 0; i < 1000; i++) {
-  if (TODOS.map((id) => lynisText(id, "original").text).join("|") !== primera) { estable = false; break; }
+  if (TODOS.map((id) => textoLynis(id, "original").text).join("|") !== primera) { estable = false; break; }
 }
 ok(estable, "1000 pasadas dan exactamente el mismo texto");
 
@@ -102,7 +102,7 @@ const raw = {
     { id: "AUTH-9286", description: "Configure maximum password age in /etc/login.defs", detail: null, solution: null },
   ],
 };
-const f = fromLynisRaw(raw, "linux", "apt");
+const f = desdeLynis(raw, "linux", "apt");
 
 const usb = f.find((x) => x.control === "USB-1000");
 ok(usb.translated === true, "USB-1000 sale traducido");
@@ -181,7 +181,7 @@ const CASOS = [
 ];
 
 for (const c of CASOS) {
-  const r = lynisFix(c.id, c.plat, "apt", installCmd);
+  const r = solucionLynis(c.id, c.plat, "apt", comandoInstalar);
   const texto = `${r.fix || ""} ${r.command || ""}`;
   ok(!!r.fix, `[${c.id}] tiene fix en ${c.plat}`, JSON.stringify(r));
   ok(c.debe.test(texto), `[${c.id}] la solución menciona lo que toca — ${c.nota}`, texto.slice(0, 120));
@@ -191,7 +191,7 @@ for (const c of CASOS) {
 // La regla general: ningún fix puede ser el marcador de posición de la tabla por prefijo.
 const conPlaceholder = LYNIS_ES_IDS.filter((id) => {
   for (const plat of ["linux", "darwin"]) {
-    const r = lynisFix(id, plat, "apt", installCmd);
+    const r = solucionLynis(id, plat, "apt", comandoInstalar);
     if (r.fix && /relacionada con/i.test(r.fix)) return true;
   }
   return false;
@@ -201,7 +201,7 @@ ok(conPlaceholder.length === 0,
 
 // Y ninguno puede quedar en cadena vacía: o hay texto, o no hay campo.
 const vaciosFix = LYNIS_ES_IDS.filter((id) => {
-  const r = lynisFix(id, "linux", "apt", installCmd);
+  const r = solucionLynis(id, "linux", "apt", comandoInstalar);
   return r.fix !== null && String(r.fix).trim().length < 20;
 });
 ok(vaciosFix.length === 0, "ningún fix es una cadena vacía o de una palabra", JSON.stringify(vaciosFix));
@@ -209,34 +209,34 @@ ok(vaciosFix.length === 0, "ningún fix es una cadena vacía o de una palabra", 
 console.log("\n── 7 · Sin fix: no se inventa uno, se da la ficha ────────────────\n");
 
 // NETW-2705 ("Couldn't find 2 responsive nameservers") en una red doméstica no admite acción.
-const proc = lynisFix("NETW-2705", "linux", "apt", installCmd);
+const proc = solucionLynis("NETW-2705", "linux", "apt", comandoInstalar);
 ok(proc.fix === null, "NETW-2705 no emite fix", JSON.stringify(proc.fix));
 ok(proc.noAction === true, "y se marca como 'no admite acción', no como 'nos falta escribirlo'");
 
 // El nombre del paquete depende de la distribución: con pacman no se puede proponer `auditd`.
-const auditPac = lynisFix("ACCT-9628", "linux", "pacman", installCmd);
+const auditPac = solucionLynis("ACCT-9628", "linux", "pacman", comandoInstalar);
 ok(auditPac.command === "sudo pacman -S --noconfirm audit",
    "ACCT-9628 con pacman instala `audit`, no `auditd`", JSON.stringify(auditPac.command));
-const acctPac = lynisFix("ACCT-9622", "linux", "pacman", installCmd);
+const acctPac = solucionLynis("ACCT-9622", "linux", "pacman", comandoInstalar);
 ok(acctPac.fix && acctPac.command === null,
    "ACCT-9622 con pacman: hay texto, pero sin orden (el nombre en Arch no está confirmado)", JSON.stringify(acctPac));
-const pwqDnf = lynisFix("AUTH-9262", "linux", "dnf", installCmd);
+const pwqDnf = solucionLynis("AUTH-9262", "linux", "dnf", comandoInstalar);
 ok(pwqDnf.command === "sudo dnf install -y libpwquality",
    "AUTH-9262 con dnf instala `libpwquality`", JSON.stringify(pwqDnf.command));
 
 // Un control que sí admite acción pero cuyo paso es solo de Linux: en macOS no se inventa.
-const soloLinux = lynisFix("BOOT-5122", "darwin", "brew", installCmd);
+const soloLinux = solucionLynis("BOOT-5122", "darwin", "brew", comandoInstalar);
 ok(soloLinux.fix === null, "un paso solo de Linux NO se ofrece en macOS");
 ok(soloLinux.noAction === false, "y NO se marca como 'no admite acción': sí la admite, en Linux");
 
 // La ficha oficial, que es lo que ocupa el sitio del fix ausente.
-ok(lynisControlUrl("PROC-3614") === "https://cisofy.com/lynis/controls/PROC-3614/",
-   "lynisControlUrl compone la ficha oficial del control");
-ok(lynisControlUrl("no-es-un-id") === null, "y no inventa URL para un id que no lo parece");
+ok(urlControlLynis("PROC-3614") === "https://cisofy.com/lynis/controls/PROC-3614/",
+   "urlControlLynis compone la ficha oficial del control");
+ok(urlControlLynis("no-es-un-id") === null, "y no inventa URL para un id que no lo parece");
 
 console.log("\n── 8 · Cobertura: tres cifras, no una ────────────────────────────\n");
 
-const cov44 = lynisCoverage(TODOS, "linux");
+const cov44 = coberturaLynis(TODOS, "linux");
 console.log(`  ${cov44.translated}/${cov44.total} traducidos · ${cov44.withFix} con solución · ` +
             `${cov44.noAction} sin acción posible · ${cov44.missingFix} sin paso escrito`);
 
@@ -277,7 +277,7 @@ const GRUPOS = [
 ];
 
 for (const g of GRUPOS) {
-  const elegidos = pickLynisDiscriminators(g.entradas);
+  const elegidos = elegirDiscriminadores(g.entradas);
   ok(!!elegidos, `[${g.nombre}] se encuentra un discriminador`);
   if (!elegidos) continue;
   const textos = elegidos.map((e) => e.text);
@@ -288,13 +288,13 @@ for (const g of GRUPOS) {
 }
 
 // /etc/login.defs aparece en las DOS entradas de AUTH-9286: no distingue nada y no puede salir.
-const authDisc = pickLynisDiscriminators(GRUPOS[0].entradas);
+const authDisc = elegirDiscriminadores(GRUPOS[0].entradas);
 ok(authDisc.every((e) => !/etc\/login\.defs/.test(e.text)),
    "una ruta de configuración compartida NO se usa como discriminador",
    JSON.stringify(authDisc.map((e) => e.text)));
 
 // Último recurso: sin nada reconocible, la frase original, MARCADA como inglés.
-const sinPista = pickLynisDiscriminators([
+const sinPista = elegirDiscriminadores([
   { description: "Some entirely opaque suggestion alpha", detail: null },
   { description: "Some entirely opaque suggestion beta", detail: null },
 ]);

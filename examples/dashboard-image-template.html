@@ -55,8 +55,8 @@
 
       <!-- ══ HEADER ══ -->
       <!-- Misma anatomía que host y network; a la derecha, los recuentos del inventario Docker.
-           La barra toma el color del riesgo real (riskClass), igual que el badge. -->
-      <div class="header-card" :class="riskClass">
+           La barra toma el color del riesgo real (claseRiesgo), igual que el badge. -->
+      <div class="header-card" :class="claseRiesgo">
         <div class="header-main">
           <div class="header-eyebrow">LoCoAudit · Auditoría de imagen</div>
           <div class="host-name">
@@ -64,12 +64,12 @@
             <span class="host-name-text">{{ auditData.host && auditData.host.hostname }}</span>
           </div>
           <div class="header-idline">
-            <span class="risk-badge" :class="riskClass">
+            <span class="risk-badge" :class="claseRiesgo">
               <span class="risk-badge-dot"></span>
-              {{ riskLabel }}
+              {{ etiquetaRiesgo }}
             </span>
             <!-- Texto corto: el mismo recuento que el donut enseña en grande. -->
-            <span class="risk-note">{{ donutTotal }} {{ donutTotal === 1 ? 'hallazgo' : 'hallazgos' }}</span>
+            <span class="risk-note">{{ totalDonut }} <template v-if="totalDonut === 1">hallazgo</template><template v-else>hallazgos</template></span>
           </div>
 
           <div class="meta-grid">
@@ -79,19 +79,19 @@
             </div>
             <div class="meta-item" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">
               <span class="meta-key">Duración</span>
-              <span class="meta-val">{{ durLabel }}</span>
+              <span class="meta-val">{{ etiquetaDuracion }}</span>
             </div>
             <div class="meta-item">
               <span class="meta-key">Análisis</span>
-              <span class="meta-val">{{ scanTime }}</span>
+              <span class="meta-val">{{ horaEscaneo }}</span>
             </div>
             <div class="meta-item meta-item-actions">
               <span class="meta-key">Exportar</span>
               <span class="dl-group">
-                <button class="dl-btn" @click="downloadHtml" title="Descargar informe HTML (imprimible a PDF)">
+                <button class="dl-btn" @click="descargarHtml" title="Descargar informe HTML (imprimible a PDF)">
                   <svg class="icon icon-sm"><use href="#lca-i-download"></use></svg> HTML
                 </button>
-                <button class="dl-btn" @click="downloadJson" title="Descargar datos JSON">
+                <button class="dl-btn" @click="descargarJson" title="Descargar datos JSON">
                   <svg class="icon icon-sm"><use href="#lca-i-download"></use></svg> JSON
                 </button>
               </span>
@@ -127,40 +127,37 @@
              Va pegada a la cabecera y antes de los avisos. -->
         <div class="sev-block">
           <div class="sev-strip">
-            <div v-for="card in urgencyCards" :key="card.sev"
-                 class="sev-cell" :class="[card.sev, { 'active': filterSev === card.sev, 'zero': !counts[card.sev] }]"
+            <div v-for="card in tarjetasUrgencia" :key="card.sev"
+                 class="sev-cell" :class="[card.sev, { 'active': filterSev === card.sev, 'zero': !conteos[card.sev] }]"
                  role="button" tabindex="0"
-                 :aria-pressed="filterSev === card.sev ? 'true' : 'false'"
-                 @click="filterSev = filterSev === card.sev ? 'all' : card.sev"
-                 @keydown.enter.prevent="filterSev = filterSev === card.sev ? 'all' : card.sev"
-                 @keydown.space.prevent="filterSev = filterSev === card.sev ? 'all' : card.sev"
-                 :title="'Filtrar por severidad ' + sevLabel(card.sev)">
-              <span class="sev-cell-label">{{ sevLabel(card.sev) }}</span>
-              <span class="sev-cell-num">{{ counts[card.sev] }}</span>
+                 :aria-pressed="pulsado(card.sev)"
+                 @click="alternarFiltroSeveridad(card.sev)"
+                 @keydown.enter.prevent="alternarFiltroSeveridad(card.sev)"
+                 @keydown.space.prevent="alternarFiltroSeveridad(card.sev)"
+                 :title="'Filtrar por severidad ' + etiquetaSeveridad(card.sev)">
+              <span class="sev-cell-label">{{ etiquetaSeveridad(card.sev) }}</span>
+              <span class="sev-cell-num">{{ conteos[card.sev] }}</span>
               <span class="sev-cell-sub">{{ card.action }}</span>
             </div>
           </div>
         </div>
 
         <!-- ══ AVISOS ══ .lca-notice en los mismos niveles que host y network.
-             Image no tiene nivel 1 (veredicto): no existe un nothingState para él. -->
+             Image no tiene nivel 1 (veredicto): no existe un estadoSinHallazgos para él. -->
 
         <!-- ── Nivel 2 · COBERTURA ──────────────────────────────────────────── -->
         <!-- Comprobaciones no realizadas en un solo bloque: son alcance, no problemas de las imágenes. -->
-        <div class="lca-notice lvl-2" v-if="checksSkipped"
-             :class="checksSkipped.failed > 0 ? 'is-warn' : 'is-neutral'">
-          <svg class="icon lca-notice-icon"><use :href="checksSkipped.failed > 0 ? '#lca-i-alert' : '#lca-i-info'"></use></svg>
+        <div class="lca-notice lvl-2" v-if="omitidas"
+             :class="claseAviso()">
+          <svg class="icon lca-notice-icon"><use :href="iconoAviso()"></use></svg>
           <div class="lca-notice-main">
-            <div class="lca-notice-title">{{ checksSkipped.title }}</div>
-            <div class="lca-notice-body" v-for="(frase, i) in checksSkipped.evidence.split('\n\n')" :key="i">
+            <div class="lca-notice-title">{{ omitidas.title }}</div>
+            <div class="lca-notice-body" v-for="(frase, i) in omitidas.evidence.split('\n\n')" :key="i">
               {{ frase }}
             </div>
             <ul class="lca-notice-list is-stated">
-              <li v-for="it in checksSkipped.items" :key="it.id" :class="'chk-' + it.estado">
-                <span class="lca-notice-state">{{
-                  it.estado === 'failed' ? 'no se pudo'
-                  : it.estado === 'not-applicable' ? 'no aplica'
-                  : 'desactivada' }}</span>
+              <li v-for="it in omitidas.items" :key="it.id" :class="'chk-' + it.estado">
+                <span class="lca-notice-state"><template v-if="it.estado === 'failed'">no se pudo</template><template v-else-if="it.estado === 'not-applicable'">no aplica</template><template v-else>desactivada</template></span>
                 <span class="lca-notice-name">{{ it.title }}<span v-if="it.reason && it.id.indexOf('IMG-SCAN-ERR') === 0" class="lca-notice-reason">{{ it.reason }}</span></span>
               </li>
             </ul>
@@ -206,23 +203,23 @@
           <div class="section-label">
             <span class="title-bar"></span>
             Contenedores activos
-            <span class="section-count">({{ runningContainers.length }})</span>
+            <span class="section-count">({{ contenedoresActivos.length }})</span>
           </div>
 
-          <div v-if="runningContainers.length === 0" class="empty-dashed">
+          <div v-if="contenedoresActivos.length === 0" class="empty-dashed">
             No hay contenedores activos
           </div>
           <div v-else class="container-grid">
-            <div v-for="c in runningContainers" :key="c.id"
+            <div v-for="c in contenedoresActivos" :key="c.id"
                  class="container-card"
-                 :class="'crisk-' + containerRisk(c.name)">
+                 :class="'crisk-' + riesgoContenedor(c.name)">
               <!-- Layer strips (decorative) -->
               <div class="layer-strip strip-0"
-                   :style="{ background: containerStripColor(c.name, 0) }"></div>
+                   :style="{ background: colorFranjaContenedor(c.name, 0) }"></div>
               <div class="layer-strip strip-1"
-                   :style="{ background: containerStripColor(c.name, 1) }"></div>
+                   :style="{ background: colorFranjaContenedor(c.name, 1) }"></div>
               <div class="layer-strip strip-2"
-                   :style="{ background: containerStripColor(c.name, 2) }"></div>
+                   :style="{ background: colorFranjaContenedor(c.name, 2) }"></div>
 
               <div class="container-body">
                 <div class="container-top">
@@ -230,9 +227,9 @@
                     <div class="container-name">{{ c.name }}</div>
                     <code class="container-image">{{ c.image }}</code>
                   </div>
-                  <div class="status-badge" :class="c.running ? 'running' : 'stopped'">
-                    <svg class="icon icon-sm"><use :href="c.running ? '#lca-i-play' : '#lca-i-stop'"></use></svg>
-                    {{ c.running ? 'Activo' : 'Detenido' }}
+                  <div class="status-badge" :class="claseEstado(c)">
+                    <svg class="icon icon-sm"><use :href="iconoEstado(c)"></use></svg>
+                    <template v-if="c.running"> Activo</template><template v-else> Detenido</template>
                   </div>
                 </div>
 
@@ -240,15 +237,15 @@
                   <span v-for="p in c.ports" :key="p" class="port-chip"><svg class="icon icon-sm"><use href="#lca-i-plug"></use></svg> {{ p }}</span>
                 </div>
 
-                <div class="container-findings" v-if="relatedFindings(c.name).length > 0">
+                <div class="container-findings" v-if="hallazgosRelacionados(c.name).length > 0">
                   <span class="findings-prefix">
-                    {{ relatedFindings(c.name).length }} hallazgo{{ relatedFindings(c.name).length > 1 ? 's' : '' }}:
+                    {{ hallazgosRelacionados(c.name).length }} hallazgo<template v-if="hallazgosRelacionados(c.name).length > 1">s</template><template v-else></template>:
                   </span>
                   <template v-for="sev in ['critical','high','medium','low']" :key="'csev-'+sev">
-                    <span v-if="sevCountFor(c.name, sev) > 0"
+                    <span v-if="conteoSeveridad(c.name, sev) > 0"
                           class="mini-sev-badge"
                           :class="'' + sev">
-                      {{ sevCountFor(c.name, sev) }} {{ sevLabel(sev) }}
+                      {{ conteoSeveridad(c.name, sev) }} {{ etiquetaSeveridad(sev) }}
                     </span>
                   </template>
                 </div>
@@ -271,24 +268,24 @@
                 <!-- track -->
                 <circle cx="80" cy="80" r="60" fill="none" :stroke="tok.surface" stroke-width="20"></circle>
                 <!-- segments -->
-                <circle v-for="seg in donutSegments" :key="'ds-' + seg.key"
+                <circle v-for="seg in segmentosDonut" :key="'ds-' + seg.key"
                         cx="80" cy="80" r="60" fill="none"
                         :stroke="seg.color" stroke-width="20"
                         :stroke-dasharray="seg.dasharray"
                         :stroke-dashoffset="seg.dashoffset"></circle>
                 <!-- inner disc -->
                 <circle cx="80" cy="80" r="48" :fill="tok.card"></circle>
-                <text x="80" y="74"  text-anchor="middle" class="donut-total">{{ donutTotal }}</text>
+                <text x="80" y="74"  text-anchor="middle" class="donut-total">{{ totalDonut }}</text>
                 <text x="80" y="88"  text-anchor="middle" class="donut-sub">hallazgos</text>
                 <text x="80" y="100" text-anchor="middle" class="donut-sub">totales</text>
               </svg>
               <div class="donut-legend">
-                <div v-for="seg in donutSegments" :key="'dl-' + seg.key" class="legend-item">
+                <div v-for="seg in segmentosDonut" :key="'dl-' + seg.key" class="legend-item">
                   <span class="legend-dot" :style="{ background: seg.color }"></span>
-                  <span class="legend-name">{{ sevLabel(seg.key) }}</span>
+                  <span class="legend-name">{{ etiquetaSeveridad(seg.key) }}</span>
                   <div class="legend-bar-track">
                     <div class="legend-bar-fill"
-                         :style="{ width: (donutTotal > 0 ? (seg.count / donutTotal * 100) : 0) + '%', background: seg.color }"></div>
+                         :style="{ width: anchoBarra(seg), background: seg.color }"></div>
                   </div>
                   <span class="legend-count" :style="{ color: seg.textColor }">{{ seg.count }}</span>
                 </div>
@@ -303,16 +300,16 @@
               Imágenes escaneadas
             </div>
             <div class="images-list">
-              <div v-for="img in images" :key="img.id" class="image-row">
+              <div v-for="img in imagenes" :key="img.id" class="image-row">
                 <!-- Layer icon (stacked slabs) -->
                 <div class="layer-icon">
                   <div class="layer-slab slab-0"
-                       :class="maxSevForImage(img) ? 'slab-' + maxSevForImage(img) : 'slab-clean'"></div>
+                       :class="claseCapa(img)"></div>
                   <div class="layer-slab slab-1"
-                       :class="maxSevForImage(img) ? 'slab-' + maxSevForImage(img) : 'slab-clean'"
+                       :class="claseCapa(img)"
                        style="opacity:0.6"></div>
                   <div class="layer-slab slab-2"
-                       :class="maxSevForImage(img) ? 'slab-' + maxSevForImage(img) : 'slab-clean'"
+                       :class="claseCapa(img)"
                        style="opacity:0.35"></div>
                 </div>
 
@@ -321,17 +318,17 @@
                   <div class="image-meta">
                     <span v-if="img.os">{{ img.os }}</span>
                     <span v-if="img.os && (img.sizeBytes || img.created)"> · </span>
-                    <span v-if="img.sizeBytes">{{ fmtBytes(img.sizeBytes) }}</span>
+                    <span v-if="img.sizeBytes">{{ formatearBytes(img.sizeBytes) }}</span>
                     <span v-if="img.sizeBytes && img.created"> · </span>
                     <span v-if="img.created">creada {{ img.created }}</span>
                   </div>
                 </div>
 
                 <div class="image-badge-wrap">
-                  <span v-if="cvesForImage(img) > 0"
+                  <span v-if="cvesDeImagen(img) > 0"
                         class="cve-badge"
-                        :class="maxSevForImage(img) ? '' + maxSevForImage(img) : ''">
-                    {{ cvesForImage(img) }} CVE{{ cvesForImage(img) > 1 ? 's' : '' }}
+                        :class="claseCve(img)">
+                    {{ cvesDeImagen(img) }} CVE<template v-if="cvesDeImagen(img) > 1">s</template><template v-else></template>
                   </span>
                   <span v-else-if="img.cveScan === undefined || img.cveScan === 'analizada'" class="clean-badge"><svg class="icon icon-sm"><use href="#lca-i-check"></use></svg> Limpia</span>
                   <span v-else class="unscanned-badge" title="Trivy no ha analizado esta imagen: que no tenga CVE listados no significa que no los haya"><svg class="icon icon-sm"><use href="#lca-i-info"></use></svg> Sin analizar</span>
@@ -348,11 +345,11 @@
               <span class="title-bar"></span>
               Hallazgos
               <span class="section-count">
-                ({{ filteredFindings.length }}{{ filterSev !== 'all' || filterType !== 'all' ? ' filtrados' : '' }})
+                ({{ hallazgosFiltrados.length }}<template v-if="filterSev !== 'all' || filterType !== 'all'"> filtrados</template><template v-else></template>)
               </span>
             </div>
             <div class="filter-bar">
-              <button v-for="ft in typeFilters" :key="ft.val"
+              <button v-for="ft in filtrosTipo" :key="ft.val"
                       class="filter-btn"
                       :class="{ active: filterType === ft.val }"
                       @click="filterType = ft.val">{{ ft.label }}</button>
@@ -362,16 +359,16 @@
             </div>
           </div>
 
-          <div v-if="filteredFindings.length === 0" class="empty-dashed" style="margin-top:10px">
+          <div v-if="hallazgosFiltrados.length === 0" class="empty-dashed" style="margin-top:10px">
             No hay hallazgos para los filtros seleccionados
           </div>
 
           <div v-else class="findings-list">
-            <template v-for="grp in findingGroups" :key="grp.key">
-            <div v-if="showFindingGroups" class="group-header"
-                 :class="{ open: isGroupOpen(grp.key) }"
-                 @click="toggleGroup(grp.key)">
-              <svg class="icon icon-sm group-chevron" :class="{ open: isGroupOpen(grp.key) }"><use href="#lca-i-chevron"></use></svg>
+            <template v-for="grp in gruposHallazgos" :key="grp.key">
+            <div v-if="mostrarGrupos" class="group-header"
+                 :class="{ open: grupoAbierto(grp.key) }"
+                 @click="alternarGrupo(grp.key)">
+              <svg class="icon icon-sm group-chevron" :class="{ open: grupoAbierto(grp.key) }"><use href="#lca-i-chevron"></use></svg>
               <span class="group-name"><svg class="icon icon-sm"><use href="#lca-i-layers"></use></svg> {{ grp.label }}</span>
               <span v-if="grp.os" class="group-os">{{ grp.os }}</span>
               <span class="group-sevs">
@@ -383,16 +380,16 @@
               </span>
               <span class="group-count">{{ grp.findings.length }}</span>
             </div>
-            <div class="group-body" v-show="!showFindingGroups || isGroupOpen(grp.key)">
+            <div class="group-body" v-show="!mostrarGrupos || grupoAbierto(grp.key)">
             <div v-for="(f, fi) in grp.findings" :key="f.id || fi" class="finding-item"
                  :class="{ 'finding-open': openFindings[f.id || fi] }">
-              <button class="finding-row" @click="toggleFinding(f.id || fi)">
+              <button class="finding-row" @click="alternarHallazgo(f.id || fi)">
                 <!-- Sin modificador de color: el tipo lo dice la palabra, no el tinte. -->
                 <span class="type-badge">
-                  {{ findingIsCVE(f) ? 'CVE' : findingIsSecret(f) ? 'Secreto' : 'Config' }}
+                  <template v-if="esCve(f)">CVE</template><template v-else-if="esSecreto(f)">Secreto</template><template v-else>Config</template>
                 </span>
                 <span class="sev-badge" :class="f.severity || 'info'">
-                  {{ sevLabel(f.severity) }}
+                  {{ etiquetaSeveridad(f.severity) }}
                 </span>
                 <span class="finding-title">{{ f.title }}</span>
                 <span v-if="f.image" class="finding-img-badge">{{ f.image }}</span>
@@ -408,7 +405,7 @@
                     <div class="detail-col-title">Evidencia</div>
                     <p class="detail-evidence">{{ f.evidence }}</p>
                     <!-- Tira de metadatos: datos estructurados de Trivy (findings CVE) -->
-                    <div v-if="hasMeta(f)" class="meta-strip">
+                    <div v-if="tieneMeta(f)" class="meta-strip">
                       <div v-if="f.pkg" class="meta-cell">
                         <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-box"></use></svg> Paquete</span>
                         <span class="meta-value">{{ f.pkg }}</span>
@@ -429,7 +426,7 @@
                         <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-gauge"></use></svg> CVSS</span>
                         <span class="meta-value">
                           {{ f.cvss }}
-                          <span class="cvss-chip" :class="f.severity || 'info'">{{ sevLabel(f.severity) }}</span>
+                          <span class="cvss-chip" :class="f.severity || 'info'">{{ etiquetaSeveridad(f.severity) }}</span>
                         </span>
                       </div>
                       <div v-if="f.cveCount > 1" class="meta-cell">
@@ -438,7 +435,7 @@
                       </div>
                       <div class="meta-cell">
                         <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-search"></use></svg> Fuente</span>
-                        <span class="meta-value">{{ originLabel(f.source) }}</span>
+                        <span class="meta-value">{{ etiquetaOrigen(f.source) }}</span>
                       </div>
                       <div class="meta-cell">
                         <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-link"></use></svg> Advisory</span>
@@ -447,12 +444,12 @@
                       </div>
                     </div>
                   </div>
-                  <!-- Resolución para cualquier hallazgo con fix, también los CVE (buildImageFix). -->
+                  <!-- Resolución para cualquier hallazgo con fix, también los CVE (solucionImagen). -->
                   <div class="detail-col" v-if="f.fix">
                     <div class="detail-col-title">Resolución</div>
                     <!-- Una rama por alternativa excluyente; dentro de cada rama, pasos en orden (<ol>). -->
                     <!-- v-for sobre un array de un elemento: parsea el fix una sola vez. -->
-                    <div class="fix-plan" v-for="(fx, xi) in [parseFixSteps(f.fix)]" :key="xi">
+                    <div class="fix-plan" v-for="(fx, xi) in [pasosDeSolucion(f.fix)]" :key="xi">
                       <!-- La intro describe el contexto y va sin numerar. -->
                       <p v-for="(ln, ii) in fx.intro" :key="'i' + ii" class="fix-intro">{{ ln }}</p>
                       <p v-for="(nt, ni) in fx.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
@@ -465,10 +462,10 @@
                             <!-- El comando va DENTRO del paso que lo usa, no como paso aparte. -->
                             <span v-if="st.cmd" class="command-box command-inline">
                               <code class="command-text">{{ st.cmd }}</code>
-                              <button @click.stop="copyCommand(st.cmd)"
+                              <button @click.stop="copiarComando(st.cmd)"
                                       :class="{ copied: copiedKey === st.cmd }"
                                       class="command-btn">
-                                <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg>{{ copiedKey === st.cmd ? ' Copiado' : 'Copiar' }}
+                                <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg><template v-if="copiedKey === st.cmd"> Copiado</template><template v-else>Copiar</template>
                               </button>
                             </span>
                           </li>
@@ -476,11 +473,11 @@
                         <p v-for="(nt, ni) in br.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
                       </div>
                     </div>
-                    <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
+                    <p v-if="notaSolucion(f)" class="cmd-note">{{ notaSolucion(f) }}</p>
                     <!-- Una sola nota neutra por ficha; el ámbar se reserva para la severidad Media. -->
-                    <div v-if="fixHasCmd(f)" class="cmd-note cmd-note-safety">
+                    <div v-if="solucionConComando(f)" class="cmd-note cmd-note-safety">
                       <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
-                      <span>LoCoAudit no ejecuta estos comandos: cópialos y revísalos antes de ejecutarlos.<template v-if="fixNeedsSudo(f)"> Requieren privilegios de administrador.</template></span>
+                      <span>LoCoAudit no ejecuta estos comandos: cópialos y revísalos antes de ejecutarlos.<template v-if="solucionConSudo(f)"> Requieren privilegios de administrador.</template></span>
                     </div>
                   </div>
                 </div>
@@ -500,11 +497,11 @@
 
                 <!-- ── Chat con IA ── -->
                 <div class="lca-chat-wrap" v-if="llmAvailable === true">
-                  <button class="ai-ask-btn" @click.stop="toggleChat(chatKey(f, grp.key, fi), f)">
+                  <button class="ai-ask-btn" @click.stop="alternarChat(claveChat(f, grp.key, fi), f)">
                     <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
-                    {{ chatOpen[chatKey(f, grp.key, fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
+                    <template v-if="chatOpen[claveChat(f, grp.key, fi)]"> Cerrar asistente</template><template v-else> Preguntar a la IA</template>
                   </button>
-                  <div class="lca-chat" v-if="chatOpen[chatKey(f, grp.key, fi)]">
+                  <div class="lca-chat" v-if="chatOpen[claveChat(f, grp.key, fi)]">
                     <!-- Cabecera con el modelo, para saber quién ha escrito la respuesta. -->
                     <div class="lca-chat-head">
                       <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
@@ -512,36 +509,36 @@
                       <span class="lca-chat-model" v-if="llmModel">{{ llmModel }}</span>
                     </div>
                     <div class="lca-chat-msgs">
-                      <div v-for="(cm, ci) in (chatMessages[chatKey(f, grp.key, fi)] || [])" :key="ci"
-                           class="chat-msg" :class="cm.role === 'user' ? 'chat-user' : 'chat-ai'">
+                      <div v-for="(cm, ci) in (chatMessages[claveChat(f, grp.key, fi)] || [])" :key="ci"
+                           class="chat-msg" :class="claseMensaje(cm)">
                         <div class="chat-bubble" :class="{ 'chat-error': cm.error }">
-                          <template v-for="(seg, si) in parseChatContent(cm.content)" :key="si">
+                          <template v-for="(seg, si) in trocearRespuesta(cm.content)" :key="si">
                             <div v-if="seg.type === 'text'" class="chat-text" v-html="seg.html"></div>
                             <div v-else class="command-box">
                               <code class="command-text">{{ seg.code }}</code>
                               <button class="command-btn"
                                       :class="{ copied: copiedKey === seg.code }"
-                                      @click.stop="copyCommand(seg.code)">
-                                <svg class="icon icon-sm" v-if="copiedKey === seg.code"><use href="#lca-i-check"></use></svg>{{ copiedKey === seg.code ? ' Copiado' : 'Copiar' }}
+                                      @click.stop="copiarComando(seg.code)">
+                                <svg class="icon icon-sm" v-if="copiedKey === seg.code"><use href="#lca-i-check"></use></svg><template v-if="copiedKey === seg.code"> Copiado</template><template v-else>Copiar</template>
                               </button>
                             </div>
                           </template>
                         </div>
                       </div>
-                      <div v-if="chatLoading[chatKey(f, grp.key, fi)]" class="chat-msg chat-ai">
+                      <div v-if="chatLoading[claveChat(f, grp.key, fi)]" class="chat-msg chat-ai">
                         <div class="chat-bubble chat-loading">
                           <span class="chat-dot"></span><span class="chat-dot"></span><span class="chat-dot"></span>
                         </div>
                       </div>
                     </div>
                     <div class="lca-chat-input">
-                      <input type="text" v-model="chatInput[chatKey(f, grp.key, fi)]"
+                      <input type="text" v-model="chatInput[claveChat(f, grp.key, fi)]"
                              placeholder="Escribe tu pregunta…"
-                             :disabled="chatLoading[chatKey(f, grp.key, fi)]"
-                             @keydown.enter.prevent="sendChat(chatKey(f, grp.key, fi), f)">
+                             :disabled="chatLoading[claveChat(f, grp.key, fi)]"
+                             @keydown.enter.prevent="enviarChat(claveChat(f, grp.key, fi), f)">
                       <button class="chat-send-btn"
-                              :disabled="chatLoading[chatKey(f, grp.key, fi)]"
-                              @click.stop="sendChat(chatKey(f, grp.key, fi), f)">Enviar</button>
+                              :disabled="chatLoading[claveChat(f, grp.key, fi)]"
+                              @click.stop="enviarChat(claveChat(f, grp.key, fi), f)">Enviar</button>
                     </div>
                     <!-- Aviso al pie: se lee después de la respuesta, antes de actuar. -->
                     <div class="lca-chat-foot">
@@ -564,9 +561,9 @@
             <span class="report-foot-key">Herramienta</span>
             <span class="report-foot-val">LoCoAudit · auditoría de imagen</span>
           </div>
-          <div class="report-foot-item" v-if="toolSources">
+          <div class="report-foot-item" v-if="herramientas">
             <span class="report-foot-key">Fuentes</span>
-            <span class="report-foot-val">{{ toolSources }}</span>
+            <span class="report-foot-val">{{ herramientas }}</span>
           </div>
           <div class="report-foot-item" v-if="(auditData.scanMeta.modulesRun || []).length">
             <span class="report-foot-key">Módulos</span>
@@ -574,7 +571,7 @@
           </div>
           <div class="report-foot-item">
             <span class="report-foot-key">Generado</span>
-            <span class="report-foot-val">{{ scanTime }}</span>
+            <span class="report-foot-val">{{ horaEscaneo }}</span>
           </div>
         </div>
 
@@ -604,7 +601,7 @@ export default {
       llmModel: null,      // modelo que responde; /locoaudit/chat/status ya lo devuelve
       openGroups: {},      // por grupo de imagen: desplegado (true) / colapsado (def. false)
 
-      // ── Tokens de color leídos del :root (ver readTokens) para el donut SVG y estilos en JS.
+      // ── Tokens de color leídos del :root (ver leerTokens) para el donut SVG y estilos en JS.
       // Vacíos hasta la primera lectura: sin constantes de respaldo que dupliquen el CSS.
       tok: {
         critical: '', high: '', medium: '', low: '', info: '',
@@ -615,11 +612,11 @@ export default {
   },
 
   computed: {
-    maxSev() {
+    severidadMaxima() {
       return (this.auditData && this.auditData.summary && this.auditData.summary.maxSeverity) || 'info';
     },
 
-    counts() {
+    conteos() {
       var c = (this.auditData && this.auditData.summary && this.auditData.summary.counts) || {};
       return {
         critical: c.critical || 0,
@@ -629,95 +626,111 @@ export default {
       };
     },
 
-    riskLabel() {
+    etiquetaRiesgo() {
       var MAP = {
         critical: 'Riesgo Crítico', high: 'Riesgo Alto',
         medium: 'Riesgo Moderado', low: 'Riesgo Bajo', info: 'Sin Riesgo'
       };
-      return MAP[this.maxSev] || this.maxSev;
+      return MAP[this.severidadMaxima] || this.severidadMaxima;
     },
 
-    riskClass() {
-      return this.maxSev;
+    claseRiesgo() {
+      return this.severidadMaxima;
     },
 
     // Herramientas con su versión desde scanMeta; sin versión se muestra solo el nombre.
-    toolSources() {
+    herramientas() {
       var m = (this.auditData && this.auditData.scanMeta) || {};
       var out = [];
       if (m.trivyVersion) out.push('Trivy ' + m.trivyVersion);
       else if ((m.modulesRun || []).indexOf('trivy-image') >= 0) out.push('Trivy');
       if (m.engineVersion) out.push('Docker ' + m.engineVersion);
       else if ((m.modulesRun || []).indexOf('docker-api') >= 0) out.push('Docker');
-      return out.length ? out.join(' · ') : null;
+      if (out.length) {
+        return out.join(' · ');
+      } else {
+        return null;
+      }
     },
 
-    scanTime() {
+    horaEscaneo() {
       var ts = this.auditData && this.auditData.timestamp;
       if (!ts) return '—';
       return new Date(ts).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
     },
 
-    durLabel() {
+    etiquetaDuracion() {
       var ms = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.durationMs;
       if (!ms) return '—';
-      return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+      if (ms >= 1000) {
+        return (ms / 1000).toFixed(1) + 's';
+      } else {
+        return ms + 'ms';
+      }
     },
 
-    runningContainers() {
+    contenedoresActivos() {
       var docker = this.auditData && this.auditData.raw && this.auditData.raw.docker;
       var containers = docker && docker.containers;
       if (!Array.isArray(containers)) return [];
       return containers.filter(function(c) { return c.running; });
     },
 
-    allContainers() {
+    todosLosContenedores() {
       var docker = this.auditData && this.auditData.raw && this.auditData.raw.docker;
       var containers = docker && docker.containers;
-      return Array.isArray(containers) ? containers : [];
+      if (Array.isArray(containers)) {
+        return containers;
+      } else {
+        return [];
+      }
     },
 
-    images() {
+    imagenes() {
       var docker = this.auditData && this.auditData.raw && this.auditData.raw.docker;
       var imgs = docker && docker.images;
       // Modo local: usar los metadatos ricos de `docker images` (sin cambios).
       if (Array.isArray(imgs) && imgs.length) return imgs;
       // Imagen remota / sin daemon Docker: caer a la lista derivada de Trivy.
       var scanned = this.auditData && this.auditData.scannedImages;
-      return Array.isArray(scanned) ? scanned : [];
+      if (Array.isArray(scanned)) {
+        return scanned;
+      } else {
+        return [];
+      }
     },
 
-    // Resumen de buildSkippedChecksSummary(), el mismo helper que audit-host.
-    checksSkipped() {
+    // Resumen de resumenOmitidas(), el mismo helper que audit-host.
+    omitidas() {
       var m = this.auditData && this.auditData.scanMeta;
       return (m && m.checksSkipped) || null;
     },
 
-    filteredFindings() {
+    hallazgosFiltrados() {
       var findings = (this.auditData && this.auditData.findings) || [];
       var self = this;
       return findings.filter(function(f) {
         // Las comprobaciones no realizadas se muestran agregadas en su bloque, no como hallazgos.
         if (f.skipped === true) return false;
         if (self.filterSev !== 'all' && f.severity !== self.filterSev) return false;
-        if (self.filterType === 'cve' && !self.findingIsCVE(f)) return false;
-        if (self.filterType === 'config' && !self.findingIsConfig(f)) return false;
-        if (self.filterType === 'secret' && !self.findingIsSecret(f)) return false;
+        if (self.filterType === 'cve' && !self.esCve(f)) return false;
+        if (self.filterType === 'config' && !self.esConfig(f)) return false;
+        if (self.filterType === 'secret' && !self.esSecreto(f)) return false;
         return true;
       });
     },
 
     // Agrupa por imagen (f.image); los que no tienen imagen van a "General".
-    findingGroups() {
+    gruposHallazgos() {
       // SO por imagen, reutilizando el mismo dato de la tarjeta "Imágenes escaneadas"
       var osByImage = {};
-      (this.images || []).forEach(function(img) {
+      (this.imagenes || []).forEach(function(img) {
         var name = img.name || (img.repository + ':' + img.tag);
         if (name) osByImage[name] = img.os || '';
       });
       var groups = [];
       var byKey = {};
-      this.filteredFindings.forEach(function(f) {
+      this.hallazgosFiltrados.forEach(function(f) {
         var label = f.image || 'General';
         if (!byKey[label]) {
           byKey[label] = {
@@ -740,20 +753,20 @@ export default {
     },
 
     // Cabeceras de grupo solo con 2+ imágenes con hallazgos.
-    showFindingGroups() {
-      return this.findingGroups.filter(function(g) { return g.label !== 'General'; }).length > 1;
+    mostrarGrupos() {
+      return this.gruposHallazgos.filter(function(g) { return g.label !== 'General'; }).length > 1;
     },
 
-    donutTotal() {
-      var c = this.counts;
+    totalDonut() {
+      var c = this.conteos;
       return c.critical + c.high + c.medium + c.low;
     },
 
     // Donut SVG puro — r=60, cx=cy=80, C≈376.99
-    donutSegments() {
+    segmentosDonut() {
       var C = 2 * Math.PI * 60;
-      var c = this.counts;
-      var total = this.donutTotal;
+      var c = this.conteos;
+      var total = this.totalDonut;
       if (total === 0) return [];
       // El color va a un :stroke, donde no llega var(): se lee del :root.
       var T = this.tok;
@@ -781,7 +794,7 @@ export default {
       });
     },
 
-    urgencyCards() {
+    tarjetasUrgencia() {
       return [
         // Sin `icon`: el color de la celda ya lo dice.
         { sev: 'critical', action: 'Acción inmediata'     },
@@ -791,7 +804,7 @@ export default {
       ];
     },
 
-    typeFilters() {
+    filtrosTipo() {
       return [
         { val: 'all',    label: 'Todo'     },
         { val: 'cve',    label: 'CVE'    },
@@ -812,19 +825,101 @@ export default {
         }
         this.auditData    = newMsg.payload;
         this.state        = 'done';
-        this.readTokens();   // síncrono: el primer pintado de los resultados ya va con color
+        this.leerTokens();   // síncrono: el primer pintado de los resultados ya va con color
         this.openFindings = {};
         this.filterSev    = 'all';
         this.filterType   = 'all';
-        this.resetChats();
+        this.reiniciarChats();
       }
     }
   },
 
   methods: {
+    pulsado(sev) {
+      if (this.filterSev === sev) {
+        return 'true';
+      } else {
+        return 'false';
+      }
+    },
+
+    alternarFiltroSeveridad(sev) {
+      if (this.filterSev === sev) {
+        this.filterSev = 'all';
+      } else {
+        this.filterSev = sev;
+      }
+    },
+
+    claseAviso() {
+      if (this.omitidas.failed > 0) {
+        return 'is-warn';
+      } else {
+        return 'is-neutral';
+      }
+    },
+
+    iconoAviso() {
+      if (this.omitidas.failed > 0) {
+        return '#lca-i-alert';
+      } else {
+        return '#lca-i-info';
+      }
+    },
+
+    claseEstado(c) {
+      if (c.running) {
+        return 'running';
+      } else {
+        return 'stopped';
+      }
+    },
+
+    iconoEstado(c) {
+      if (c.running) {
+        return '#lca-i-play';
+      } else {
+        return '#lca-i-stop';
+      }
+    },
+
+    anchoBarra(seg) {
+      let ancho;
+      if (this.totalDonut > 0) {
+        ancho = seg.count / this.totalDonut * 100;
+      } else {
+        ancho = 0;
+      }
+      return ancho + '%';
+    },
+
+    claseCapa(img) {
+      if (this.severidadMaximaImagen(img)) {
+        return 'slab-' + this.severidadMaximaImagen(img);
+      } else {
+        return 'slab-clean';
+      }
+    },
+
+    claseCve(img) {
+      if (this.severidadMaximaImagen(img)) {
+        return '' + this.severidadMaximaImagen(img);
+      } else {
+        return '';
+      }
+    },
+
+    claseMensaje(cm) {
+      if (cm.role === 'user') {
+        return 'chat-user';
+      } else {
+        return 'chat-ai';
+      }
+    },
+
     // ── Lee los tokens del :root para atributos SVG y estilos en JS, donde no llega var().
     // Si una lectura vuelve vacía se conserva la anterior.
-    readTokens() {
+    leerTokens() {
       var cs;
       try { cs = getComputedStyle(document.documentElement); } catch (e) { return; }
       var NOMBRES = {
@@ -843,12 +938,12 @@ export default {
       if (got) this.tok = next;
     },
 
-    toggleFinding(key) {
+    alternarHallazgo(key) {
       this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
     },
 
     // Origen del comando: lo genera LoCoAudit a partir del análisis de la herramienta.
-    originLabel(source) {
+    etiquetaOrigen(source) {
       var M = {
         trivy: '· a partir del análisis de Trivy',
         lynis: '· a partir de Lynis',
@@ -859,28 +954,34 @@ export default {
     },
 
     // ── Acordeón de grupos por imagen (estado local, colapsados por defecto) ──
-    isGroupOpen(key) {
+    grupoAbierto(key) {
       return this.openGroups[key] === true;
     },
-    toggleGroup(key) {
+    alternarGrupo(key) {
       this.openGroups = Object.assign({}, this.openGroups, { [key]: !this.openGroups[key] });
     },
 
     // ── Descarga de reporte (HTML imprimible + JSON) ──────────────────────────
-    _escHtml(s) {
-      return String(s == null ? '' : s)
+    escaparHtml(s) {
+      let valor;
+      if (s == null) {
+        valor = '';
+      } else {
+        valor = s;
+      }
+      return String(valor)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
     },
-    _reportBasename(ext) {
+    nombreInforme(ext) {
       var d = new Date();
-      var p = function(n) { return String(n).padStart(2, '0'); };
-      var stamp = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
-                  '_' + p(d.getHours()) + p(d.getMinutes());
+      var dosCifras = function(n) { return String(n).padStart(2, '0'); };
+      var stamp = d.getFullYear() + '-' + dosCifras(d.getMonth() + 1) + '-' + dosCifras(d.getDate()) +
+                  '_' + dosCifras(d.getHours()) + dosCifras(d.getMinutes());
       var type = (this.auditData && this.auditData.auditType) || 'audit';
       return 'locoaudit-' + type + '-' + stamp + '.' + ext;
     },
-    _triggerDownload(filename, content, mime) {
+    descargar(filename, content, mime) {
       var blob = new Blob([content], { type: mime });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
@@ -889,17 +990,17 @@ export default {
       document.body.removeChild(a);
       setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
     },
-    downloadJson() {
+    descargarJson() {
       if (!this.auditData) return;
-      this._triggerDownload(this._reportBasename('json'),
+      this.descargar(this.nombreInforme('json'),
         JSON.stringify(this.auditData, null, 2), 'application/json');
     },
-    downloadHtml() {
+    descargarHtml() {
       if (!this.auditData) return;
-      this._triggerDownload(this._reportBasename('html'),
-        this._buildHtmlReport(), 'text/html;charset=utf-8');
+      this.descargar(this.nombreInforme('html'),
+        this.construirInforme(), 'text/html;charset=utf-8');
     },
-    _buildHtmlReport() {
+    construirInforme() {
       try {
         // LCA:SNAPSHOT:START — única fuente: lib/snapshot-body.txt (build-dashboards.js). NO EDITAR.
       // El export es una foto del DOM ya renderizado, así no puede divergir del dashboard.
@@ -934,23 +1035,31 @@ export default {
         + '.scope-detail{display:block!important}'
         + '[data-lca-acc]{cursor:pointer}.command-btn,.ia-copy-btn{cursor:pointer}'
         + '@media print{[class*="finding-detail"],[class*="finding-body"],[class*="group-body"],[class*="group-findings"]{display:block!important;max-height:none!important;opacity:1!important;overflow:visible!important}}';
-      var toggleJs = "(function(){document.addEventListener('click',function(e){var cb=e.target.closest('.command-btn,.ia-copy-btn');if(cb){var box=cb.parentElement,c=box&&box.querySelector('code');var t=c?c.textContent:'';try{navigator.clipboard.writeText(t);}catch(_){}var o=cb.textContent;cb.textContent='\\u2713 Copiado';setTimeout(function(){cb.textContent=o;},1500);return;}var h=e.target.closest('[data-lca-acc]');if(!h)return;var b=h.nextElementSibling;if(!b)return;var willOpen=b.getAttribute('data-lca-open')==='0';b.style.display=willOpen?'':'none';b.classList.toggle('open',willOpen);b.setAttribute('data-lca-open',willOpen?'1':'0');var cv=h.querySelector('[class*=chevron]');if(cv)cv.classList.toggle('open',willOpen);});})();";
-      var esc = function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+      var toggleJs = "(function(){document.addEventListener('click',function(e){var cb=e.target.closest('.command-btn,.ia-copy-btn');if(cb){var box=cb.parentElement,c=box&&box.querySelector('code');var t='';if(c){t=c.textContent;}try{navigator.clipboard.writeText(t);}catch(_){}var o=cb.textContent;cb.textContent='\\u2713 Copiado';setTimeout(function(){cb.textContent=o;},1500);return;}var h=e.target.closest('[data-lca-acc]');if(!h)return;var b=h.nextElementSibling;if(!b)return;var willOpen=b.getAttribute('data-lca-open')==='0';if(willOpen){b.style.display='';}else{b.style.display='none';}b.classList.toggle('open',willOpen);if(willOpen){b.setAttribute('data-lca-open','1');}else{b.setAttribute('data-lca-open','0');}var cv=h.querySelector('[class*=chevron]');if(cv)cv.classList.toggle('open',willOpen);});})();";
+      var escapar = function (s) {
+        var texto;
+        if (s == null) {
+          texto = '';
+        } else {
+          texto = s;
+        }
+        return String(texto).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      };
       var titleMap = { image: 'Imagen', host: 'Host', network: 'Red' };
       var hn = (payload.host && payload.host.hostname) || '';
       return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">'
         + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        + '<title>LoCoAudit — ' + esc(titleMap[auditType] || 'Auditoria') + ' — ' + esc(hn) + '</title>'
+        + '<title>LoCoAudit — ' + escapar(titleMap[auditType] || 'Auditoria') + ' — ' + escapar(hn) + '</title>'
         + '<style>' + css + '\n' + extra + '</style></head><body><div class="lca-export">'
         + clone.innerHTML + '</div><script>' + toggleJs + '<\/script></body></html>';
         // LCA:SNAPSHOT:END
       } catch (e) {
         console.error('[LoCoAudit] export snapshot fallo, uso tabla de respaldo:', e);
-        return this._buildHtmlReportFallback();
+        return this.construirInformeSencillo();
       }
     },
-    _buildHtmlReportFallback() {
-      var esc = this._escHtml;
+    construirInformeSencillo() {
+      var escapar = this.escaparHtml;
       var a = this.auditData || {};
       var host = a.host || {};
       var counts = (a.summary && a.summary.counts) || {};
@@ -960,22 +1069,32 @@ export default {
       var sevLabelMap = { critical: 'Crítico', high: 'Alto', medium: 'Medio', low: 'Bajo', info: 'Info' };
       var sevColor = { critical: '#B91C1C', high: '#C2410C', medium: '#A16207', low: '#15803D', info: '#0369A1' };
 
-      var rank = function(f) {
+      var rangoDe = function(f) {
         var r = sevOrder[(f.severity || 'info').toLowerCase()];
-        return r === undefined ? 9 : r;
+        if (r === undefined) {
+          return 9;
+        } else {
+          return r;
+        }
       };
-      var sorted = findings.slice().sort(function(x, y) { return rank(x) - rank(y); });
+      var sorted = findings.slice().sort(function(x, y) { return rangoDe(x) - rangoDe(y); });
 
       var rows = sorted.map(function(f) {
         var sev = (f.severity || 'info').toLowerCase();
         var origen = f.image || f.category || '—';
+        let arreglo;
+        if (f.fix) {
+          arreglo = '<code>' + escapar(f.fix) + '</code>';
+        } else {
+          arreglo = '—';
+        }
         return '<tr>' +
-          '<td><span class="sev" style="background:' + sevColor[sev] + '">' + esc(sevLabelMap[sev] || sev) + '</span></td>' +
-          '<td class="mono">' + esc(f.id) + '</td>' +
-          '<td class="mono">' + esc(origen) + '</td>' +
-          '<td>' + esc(f.title) + '</td>' +
-          '<td>' + esc(f.evidence) + '</td>' +
-          '<td>' + (f.fix ? '<code>' + esc(f.fix) + '</code>' : '—') + '</td>' +
+          '<td><span class="sev" style="background:' + sevColor[sev] + '">' + escapar(sevLabelMap[sev] || sev) + '</span></td>' +
+          '<td class="mono">' + escapar(f.id) + '</td>' +
+          '<td class="mono">' + escapar(origen) + '</td>' +
+          '<td>' + escapar(f.title) + '</td>' +
+          '<td>' + escapar(f.evidence) + '</td>' +
+          '<td>' + arreglo + '</td>' +
           '</tr>';
       }).join('');
 
@@ -984,12 +1103,17 @@ export default {
           (sevLabelMap[s]) + ': <b>' + (counts[s] || 0) + '</b></span>';
       }).join(' ');
 
-      var dur = meta.durationMs ? (meta.durationMs / 1000).toFixed(1) + ' s' : '—';
+      var dur;
+      if (meta.durationMs) {
+        dur = (meta.durationMs / 1000).toFixed(1) + ' s';
+      } else {
+        dur = '—';
+      }
       var titleMap = { image: 'Imagen', host: 'Host', network: 'Red' };
       var auditTitle = titleMap[a.auditType] || 'Auditoría';
 
       return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">' +
-        '<title>LoCoAudit — ' + esc(auditTitle) + ' — ' + esc(host.hostname || '') + '</title>' +
+        '<title>LoCoAudit — ' + escapar(auditTitle) + ' — ' + escapar(host.hostname || '') + '</title>' +
         '<style>' +
         'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e1b2e;margin:32px;background:#fff}' +
         'h1{color:#7C3AED;margin:0 0 4px}.sub{color:#666;margin:0 0 20px}' +
@@ -1002,45 +1126,45 @@ export default {
         'code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f6f4fc;padding:1px 4px;border-radius:4px}' +
         'footer{margin-top:24px;color:#999;font-size:11px}@media print{body{margin:0}}' +
         '</style></head><body>' +
-        '<h1>LoCoAudit · Auditoría de ' + esc(auditTitle) + '</h1>' +
-        '<p class="sub">' + esc(host.hostname || '') + ' · ' + esc(host.platform || '') + '</p>' +
-        '<div class="meta">Fecha: <b>' + esc(this.scanTime || new Date().toLocaleString()) + '</b> · ' +
-        'Duración: <b>' + esc(dur) + '</b> · Hallazgos: <b>' + findings.length + '</b></div>' +
+        '<h1>LoCoAudit · Auditoría de ' + escapar(auditTitle) + '</h1>' +
+        '<p class="sub">' + escapar(host.hostname || '') + ' · ' + escapar(host.platform || '') + '</p>' +
+        '<div class="meta">Fecha: <b>' + escapar(this.horaEscaneo || new Date().toLocaleString()) + '</b> · ' +
+        'Duración: <b>' + escapar(dur) + '</b> · Hallazgos: <b>' + findings.length + '</b></div>' +
         '<div class="chips">' + sumChips + '</div>' +
         '<table><thead><tr><th>Severidad</th><th>ID</th><th>Origen</th><th>Título</th><th>Evidencia</th><th>Recomendación</th></tr></thead>' +
         '<tbody>' + (rows || '<tr><td colspan="6">Sin hallazgos.</td></tr>') + '</tbody></table>' +
-        '<footer>Generado por LoCoAudit · ' + esc(new Date().toISOString()) + '</footer>' +
+        '<footer>Generado por LoCoAudit · ' + escapar(new Date().toISOString()) + '</footer>' +
         '</body></html>';
     },
 
-    findingIsCVE(f) {
+    esCve(f) {
       return f.id && f.id.startsWith('IMG-CVE');
     },
 
     // ¿El finding trae metadatos estructurados de Trivy para la tira de detalles?
-    hasMeta(f) {
+    tieneMeta(f) {
       return !!(f.pkg || f.installedVersion || f.fixedVersion ||
                 (f.cvss != null) || f.cveCount || f.primaryUrl);
     },
 
     // Secretos que Trivy encontró en los ficheros de la imagen (IMG-SEC).
-    findingIsSecret(f) {
+    esSecreto(f) {
       return f.id && f.id.startsWith('IMG-SEC');
     },
 
     // Configuración: la de los contenedores (IMG-CFG) y la de la propia imagen (IMG-MIS).
-    findingIsConfig(f) {
+    esConfig(f) {
       return f.id && !f.id.startsWith('IMG-CVE') && !f.id.startsWith('IMG-SEC');
     },
 
     // nombre canónico de la imagen, igual que el f.image que pone el normalizer
-    imageFullName(img) {
+    nombreCompletoImagen(img) {
       return img.name || (img.repository + ':' + img.tag);
     },
 
     // Cuenta los CVE de una imagen por f.image exacto (evita mezclar nginx:latest y nginx:alpine).
-    cvesForImage(img) {
-      var fullName = this.imageFullName(img);
+    cvesDeImagen(img) {
+      var fullName = this.nombreCompletoImagen(img);
       var findings = (this.auditData && this.auditData.findings) || [];
       return findings.filter(function(f) {
         return f.id && f.id.startsWith('IMG-CVE') && f.image === fullName;
@@ -1048,8 +1172,8 @@ export default {
     },
 
     // severidad máxima de findings asociados a una imagen (match estricto por f.image)
-    maxSevForImage(img) {
-      var fullName = this.imageFullName(img);
+    severidadMaximaImagen(img) {
+      var fullName = this.nombreCompletoImagen(img);
       var findings = (this.auditData && this.auditData.findings) || [];
       var order = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
       var best = null;
@@ -1062,7 +1186,7 @@ export default {
     },
 
     // findings cuyo title / target / evidence contienen el nombre del contenedor
-    relatedFindings(containerName) {
+    hallazgosRelacionados(containerName) {
       var findings = (this.auditData && this.auditData.findings) || [];
       return findings.filter(function(f) {
         return (f.title    || '').includes(containerName) ||
@@ -1072,8 +1196,8 @@ export default {
     },
 
     // severidad máxima entre findings relacionados con un contenedor
-    containerRisk(containerName) {
-      var related = this.relatedFindings(containerName);
+    riesgoContenedor(containerName) {
+      var related = this.hallazgosRelacionados(containerName);
       var order = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
       var best = 'none';
       related.forEach(function(f) {
@@ -1084,14 +1208,14 @@ export default {
     },
 
     // conteo de hallazgos por severidad para el badge de un contenedor
-    sevCountFor(containerName, sev) {
-      return this.relatedFindings(containerName).filter(function(f) {
+    conteoSeveridad(containerName, sev) {
+      return this.hallazgosRelacionados(containerName).filter(function(f) {
         return f.severity === sev;
       }).length;
     },
 
     // Añade alfa a un token hex; si no es un hex reconocible, se devuelve opaco.
-    alfa(color, a) {
+    conAlfa(color, a) {
       var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color || '').trim());
       if (!m) return color;
       var h = m[1];
@@ -1100,20 +1224,20 @@ export default {
       return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
     },
 
-    // Color de las tiras de capa: riesgo de containerRisk() con opacidad escalonada.
-    containerStripColor(containerName, i) {
-      var risk = this.containerRisk(containerName);
+    // Color de las tiras de capa: riesgo de riesgoContenedor() con opacidad escalonada.
+    colorFranjaContenedor(containerName, i) {
+      var risk = this.riesgoContenedor(containerName);
       var T = this.tok;
-      if (risk === 'critical') return this.alfa(T.critical, (0.7 - i * 0.2).toFixed(2));
-      if (risk === 'high')     return this.alfa(T.high,     (0.7 - i * 0.2).toFixed(2));
-      if (risk === 'medium')   return this.alfa(T.medium,   (0.7 - i * 0.2).toFixed(2));
+      if (risk === 'critical') return this.conAlfa(T.critical, (0.7 - i * 0.2).toFixed(2));
+      if (risk === 'high')     return this.conAlfa(T.high,     (0.7 - i * 0.2).toFixed(2));
+      if (risk === 'medium')   return this.conAlfa(T.medium,   (0.7 - i * 0.2).toFixed(2));
       // Sin riesgo: el acento, más apagado todavía.
-      return this.alfa(T.accent, (0.5 - i * 0.15).toFixed(2));
+      return this.conAlfa(T.accent, (0.5 - i * 0.15).toFixed(2));
     },
 
     // Gramática de `fix`, copia de la de host y network:
     // "## " abre rama, "$ " comando del último paso, "> " nota sin numerar, resto paso nuevo.
-    parseFixSteps(fix) {
+    pasosDeSolucion(fix) {
       var res = { intro: [], notes: [], branches: [] };
       if (!fix) return res;
       var lineas = String(fix).split('\n')
@@ -1130,7 +1254,13 @@ export default {
         if (s.indexOf('> ') === 0) {
           var nota = s.slice(2).trim();
           // Antes de la primera rama la nota cuelga del bloque introductorio.
-          if (nota) (actual ? actual.notes : res.notes).push(nota);
+          if (nota) {
+            if (actual) {
+              actual.notes.push(nota);
+            } else {
+              res.notes.push(nota);
+            }
+          }
           return;
         }
         if (s.indexOf('$ ') === 0) {
@@ -1154,47 +1284,52 @@ export default {
     },
 
     // El botón copia solo el comando; la nota se muestra aparte.
-    fixNote(f) {
+    notaSolucion(f) {
       if (!f || !f.command || !f.fix) return "";
       return String(f.fix).split("\n").slice(1).join("\n").trim();
     },
     // Todos los comandos de la ficha: `command` y los pasos con "$ ".
-    fixCommands(f) {
+    comandosSolucion(f) {
       if (!f || !f.fix) return [];
-      var cmds = f.command ? [String(f.command)] : [];
+      var cmds;
+      if (f.command) {
+        cmds = [String(f.command)];
+      } else {
+        cmds = [];
+      }
       try {
-        this.parseFixSteps(f.fix).branches.forEach(function (r) {
+        this.pasosDeSolucion(f.fix).branches.forEach(function (r) {
           r.steps.forEach(function (st) { if (st.cmd) cmds.push(st.cmd); });
         });
       } catch (e) { /* fix ilegible: queda el comando directo, si lo hay */ }
       return cmds;
     },
     // ¿El paso de resolución contiene algún comando (directo o dentro de un paso)?
-    fixHasCmd(f) {
-      return this.fixCommands(f).length > 0;
+    solucionConComando(f) {
+      return this.comandosSolucion(f).length > 0;
     },
     // Se mira el comando, no la prosa, para decidir el aviso de sudo.
-    fixNeedsSudo(f) {
-      return this.fixCommands(f).some(function (c) { return /^sudo(\s|$)/.test(String(c).trim()); });
+    solucionConSudo(f) {
+      return this.comandosSolucion(f).some(function (c) { return /^sudo(\s|$)/.test(String(c).trim()); });
     },
 
-    sevLabel(sev) {
+    etiquetaSeveridad(sev) {
       var MAP = { critical: 'Crítico', high: 'Alto', medium: 'Medio', low: 'Bajo', info: 'Info' };
       return MAP[(sev || '').toLowerCase()] || (sev || '').toUpperCase();
     },
 
-    formatDate(iso) {
+    formatearFecha(iso) {
       if (!iso) return '—';
       return new Date(iso).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
     },
 
-    fmtBytes(b) {
+    formatearBytes(b) {
       if (!b) return '—';
       if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
       return (b / 1e6).toFixed(0) + ' MB';
     },
 
-    async copyCommand(text) {
+    async copiarComando(text) {
       try {
         await navigator.clipboard.writeText(text);
         this.copiedKey = text;
@@ -1214,12 +1349,16 @@ export default {
     // ── Chat con LLM ──────────────────────────────────────────
 
     // Clave con la imagen como prefijo: el mismo CVE en dos imágenes son dos conversaciones.
-    chatKey(f, groupKey, fi) {
-      return (f && f.id) ? groupKey + '|id:' + f.id : groupKey + '|idx:' + fi;
+    claveChat(f, groupKey, fi) {
+      if (f && f.id) {
+        return groupKey + '|id:' + f.id;
+      } else {
+        return groupKey + '|idx:' + fi;
+      }
     },
 
     // Escaneo nuevo: se borran las conversaciones de hallazgos que ya no existen.
-    resetChats() {
+    reiniciarChats() {
       this.chatEpoch++;
       this.chatOpen     = {};
       this.chatMessages = {};
@@ -1228,19 +1367,22 @@ export default {
     },
 
     // Cerrar el asistente solo oculta el panel: el historial se conserva.
-    toggleChat(findingKey, finding) {
+    alternarChat(findingKey, finding) {
       var willOpen = !this.chatOpen[findingKey];
       this.chatOpen = Object.assign({}, this.chatOpen, { [findingKey]: willOpen });
       if (willOpen && !(this.chatMessages[findingKey] && this.chatMessages[findingKey].length)) {
-        this.sendChat(findingKey, finding,
+        this.enviarChat(findingKey, finding,
           'Explícame este hallazgo de forma sencilla: qué significa, por qué importa y cómo lo soluciono.');
       }
     },
 
-    async sendChat(findingKey, finding, presetQuestion) {
-      var question = presetQuestion != null
-        ? presetQuestion
-        : (this.chatInput[findingKey] || '').trim();
+    async enviarChat(findingKey, finding, presetQuestion) {
+      var question;
+      if (presetQuestion != null) {
+        question = presetQuestion;
+      } else {
+        question = (this.chatInput[findingKey] || '').trim();
+      }
       if (!question || this.chatLoading[findingKey]) return;
 
       var epoch = this.chatEpoch;
@@ -1265,9 +1407,11 @@ export default {
           })
         });
         var data = await res.json();
-        reply = (data && data.ok)
-          ? { role: 'assistant', content: data.content }
-          : { role: 'assistant', content: (data && data.error) || 'Error desconocido del asistente.', error: true };
+        if (data && data.ok) {
+          reply = { role: 'assistant', content: data.content };
+        } else {
+          reply = { role: 'assistant', content: (data && data.error) || 'Error desconocido del asistente.', error: true };
+        }
       } catch (e) {
         reply = { role: 'assistant', content: 'No se pudo contactar con el asistente: ' + (e.message || e), error: true };
       }
@@ -1280,7 +1424,7 @@ export default {
       this.chatLoading = Object.assign({}, this.chatLoading, { [findingKey]: false });
     },
 
-    parseChatContent(content) {
+    trocearRespuesta(content) {
       var text = String(content || '');
       var segments = [];
       var regex = /```[a-zA-Z0-9_-]*\n?([\s\S]*?)```/g;
@@ -1288,19 +1432,19 @@ export default {
       var m;
       while ((m = regex.exec(text)) !== null) {
         if (m.index > lastIndex) {
-          segments.push({ type: 'text', html: this.mdInline(text.slice(lastIndex, m.index)) });
+          segments.push({ type: 'text', html: this.markdownEnLinea(text.slice(lastIndex, m.index)) });
         }
         segments.push({ type: 'code', code: m[1].replace(/\n$/, '') });
         lastIndex = regex.lastIndex;
       }
       if (lastIndex < text.length) {
-        segments.push({ type: 'text', html: this.mdInline(text.slice(lastIndex)) });
+        segments.push({ type: 'text', html: this.markdownEnLinea(text.slice(lastIndex)) });
       }
       if (segments.length === 0) segments.push({ type: 'text', html: '' });
       return segments;
     },
 
-    mdInline(str) {
+    markdownEnLinea(str) {
       var esc = String(str)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       esc = esc.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
@@ -1310,9 +1454,9 @@ export default {
   },
 
   mounted() {
-    this.readTokens();
+    this.leerTokens();
     // Segunda lectura por si la hoja aún no estaba en el head al montar.
-    this.$nextTick(this.readTokens);
+    this.$nextTick(this.leerTokens);
 
     // Comprueba si hay un llm-config desplegado y qué modelo responde.
     var self = this;

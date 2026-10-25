@@ -8,8 +8,8 @@
  *   node test/manual/test-lynis-skip-kind.js
  */
 
-const { runLynis } = require("../../nodes/audit-host/modules/lynis");
-const { fromLynisRaw } = require("../../lib/normalizer");
+const { ejecutarLynis } = require("../../nodes/audit-host/modules/lynis");
+const { desdeLynis } = require("../../lib/normalizer");
 
 let failed = 0;
 let passed = 0;
@@ -45,11 +45,11 @@ for (const forma of FORMAS) {
 
 console.log("\n── 2 · 'unsupported' se produce de verdad, no solo se etiqueta ───\n");
 
-// La comprobación de plataforma va antes de commandExists; se prueba sin Lynis ni Windows.
+// La comprobación de plataforma va antes de existeComando; se prueba sin Lynis ni Windows.
 const realPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 Object.defineProperty(process, "platform", { value: "win32", configurable: true });
 
-runLynis()
+ejecutarLynis()
   .then((res) => {
     Object.defineProperty(process, "platform", realPlatform);
 
@@ -65,7 +65,7 @@ runLynis()
     // Un Lynis omitido deja rastro en findings[], para no confundirse con "sin hallazgos".
     for (const forma of FORMAS) {
       const res2 = Object.assign({ skipped: true }, forma);
-      const fs2 = fromLynisRaw(res2, "win32", null);
+      const fs2 = desdeLynis(res2, "win32", null);
 
       ok(fs2.length === 1, `kind ${forma.kind} → 1 finding informativo`,
          `devolvió ${fs2.length}`);
@@ -80,7 +80,7 @@ runLynis()
          `kind ${forma.kind} → sin línea copiable`);
     }
 
-    ok(/no se ha comprobado/.test(fromLynisRaw({ skipped: true, kind: "unsupported", reason: "x" }, "win32", null)[0].evidence),
+    ok(/no se ha comprobado/.test(desdeLynis({ skipped: true, kind: "unsupported", reason: "x" }, "win32", null)[0].evidence),
        "la evidencia dice que no se comprobó, no que esté todo bien");
 
     console.log(`\n${"─".repeat(66)}`);
@@ -90,6 +90,6 @@ runLynis()
   })
   .catch((err) => {
     Object.defineProperty(process, "platform", realPlatform);
-    console.error("  ✗ runLynis() lanzó:", err);
+    console.error("  ✗ ejecutarLynis() lanzó:", err);
     process.exit(1);
   });

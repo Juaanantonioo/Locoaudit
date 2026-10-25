@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * build-dashboards.js — Copia lib/snapshot-body.txt como cuerpo de _buildHtmlReport() en los 3 ui_template.
+ * build-dashboards.js — Copia lib/snapshot-body.txt como cuerpo de construirInforme() en los 3 ui_template.
  * Idempotente: también asegura el sentinel LCA-STYLE-DASH y la clase lca-report-root.
  *
  *   node scripts/build-dashboards.js          → aplica
@@ -22,17 +22,17 @@ const TEMPLATES = [
 function methodText() {
   const body = fs.readFileSync(BODY_FILE, "utf8").replace(/\s+$/, "");
   return (
-    "_buildHtmlReport() {\n" +
+    "construirInforme() {\n" +
     "      try {\n" +
     "        // LCA:SNAPSHOT:START — única fuente: lib/snapshot-body.txt (build-dashboards.js). NO EDITAR.\n" +
     body + "\n" +
     "        // LCA:SNAPSHOT:END\n" +
     "      } catch (e) {\n" +
     "        console.error('[LoCoAudit] export snapshot fallo, uso tabla de respaldo:', e);\n" +
-    "        return this._buildHtmlReportFallback();\n" +
+    "        return this.construirInformeSencillo();\n" +
     "      }\n" +
     "    },\n" +
-    "    _buildHtmlReportFallback()"
+    "    construirInformeSencillo()"
   );
 }
 
@@ -41,9 +41,9 @@ function stripOldLib(txt) {
   return txt.replace(/\n?\/\* LCA:EXPORT-LIB[\s\S]*?\/\* \/LCA:EXPORT-LIB \*\/\n?/g, "\n");
 }
 
-// Reemplaza el método completo _buildHtmlReport()…_buildHtmlReportFallback().
+// Reemplaza el método completo construirInforme()…construirInformeSencillo().
 function replaceMethod(txt, method) {
-  const re = /_buildHtmlReport\(\) \{[\s\S]*?\n {4}_buildHtmlReportFallback\(\)/;
+  const re = /construirInforme\(\) \{[\s\S]*?\n {4}construirInformeSencillo\(\)/;
   if (!re.test(txt)) return { txt, ok: false };
   return { txt: txt.replace(re, method), ok: true };
 }

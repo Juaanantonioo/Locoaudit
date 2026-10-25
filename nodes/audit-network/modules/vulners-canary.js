@@ -23,30 +23,30 @@ const CANARY_DETAIL = {
     "No se comprobó la fuente de CVE porque el análisis NSE no se ejecutó.",
 };
 
-function canaryIsOk(state) {
+function canarioCorrecto(state) {
   return state === "ok-inferred";
 }
 
 // El script no emite ese nodo si no recibió respuesta.
-function inferFromScan(ports) {
+function deducirDelEscaneo(ports) {
   return (ports || []).some((p) =>
     ((p && p.nse) || []).some((s) => s && s.id === "vulners")
   );
 }
 
-function anyVersioned(ports, hasVersion) {
+function algunoConVersion(ports, hasVersion) {
   return (ports || []).some((p) => hasVersion(p));
 }
 
 // Devuelve { state, detail, probed, evidence }; probed siempre es false porque LoCoAudit no consulta a terceros.
-function runCanary(ports, opts = {}) {
+function ejecutarCanario(ports, opts = {}) {
   const { hasVersion, nseEnabled = true } = opts;
 
   if (!nseEnabled) {
     return { state: "not-run", detail: CANARY_DETAIL["not-run"], probed: false, evidence: null };
   }
 
-  if (inferFromScan(ports)) {
+  if (deducirDelEscaneo(ports)) {
     return {
       state: "ok-inferred",
       detail: CANARY_DETAIL["ok-inferred"],
@@ -56,7 +56,7 @@ function runCanary(ports, opts = {}) {
   }
 
   // Sin ningún puerto con versión no hay nada que afirmar ni que desmentir.
-  if (typeof hasVersion === "function" && !anyVersioned(ports, hasVersion)) {
+  if (typeof hasVersion === "function" && !algunoConVersion(ports, hasVersion)) {
     return {
       state: "not-needed", detail: CANARY_DETAIL["not-needed"], probed: false, evidence: null,
     };
@@ -72,8 +72,8 @@ function runCanary(ports, opts = {}) {
 }
 
 module.exports = {
-  runCanary,
-  inferFromScan,
-  canaryIsOk,
+  ejecutarCanario,
+  deducirDelEscaneo,
+  canarioCorrecto,
   CANARY_DETAIL,
 };

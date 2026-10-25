@@ -42,8 +42,8 @@ const EN_CLARO = [
   "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ",
 ];
 
-const { normalizeHost, normalizeImage, fromTrivySecretsMisconfig } = require("../../lib/normalizer");
-const { summarize, isActionable } = require("../../lib/severity-map");
+const { normalizarHost, normalizarImagen, desdeSecretosYConfig } = require("../../lib/normalizer");
+const { resumir, esAccionable } = require("../../lib/severity-map");
 
 console.log("\n── 1 · Equipo: secretos y configuraciones del home ───────────────\n");
 
@@ -52,7 +52,7 @@ const home = leer("fs-secrets-misconfig.json");
 for (const r of home.Results) r.__root = "/home/ana";
 home.scan = { mode: "fs-by-children", target: "/home/ana", scanners: "secret,misconfig" };
 
-const hf = normalizeHost({ trivySecrets: home }, { platform: "linux" });
+const hf = normalizarHost({ trivySecrets: home }, { platform: "linux" });
 const hJson = JSON.stringify(hf);
 console.log("  " + hf.map((f) => `${f.id}/${f.severity}`).join(" · "));
 
@@ -62,34 +62,34 @@ ok(!EN_CLARO.some((v) => hJson.includes(v)), "ningún valor en claro en los hall
 const almacen = hf.find((f) => f.category === "secret" && /guardada por su aplicación/.test(f.title));
 ok(almacen && almacen.severity === "info" && /\.ssh\/id_ed25519/.test(almacen.title),
    "clave privada en ~/.ssh: informativa, como credencial guardada por su aplicación", almacen && almacen.title);
-ok(almacen && !isActionable(almacen), "y no cuenta en el riesgo");
+ok(almacen && !esAccionable(almacen), "y no cuenta en el riesgo");
 
 const token = hf.find((f) => f.category === "secret" && /\.env$/.test(f.location || ""));
 ok(token && token.severity === "critical", "token de GitHub en ~/proyecto/.env: crítico", token && token.severity);
-ok(token && isActionable(token), "y cuenta en el riesgo");
+ok(token && esAccionable(token), "y cuenta en el riesgo");
 ok(token && token.evidence.includes("*"), "la evidencia enseña el valor enmascarado de Trivy");
 ok(token && token.location === "~/proyecto/.env", "la ruta sale relativa al home", token && token.location);
 
 const copia = hf.find((f) => f.category === "secret" && /clave_copia/.test(f.location || ""));
-ok(copia && copia.severity === "medium" && isActionable(copia),
+ok(copia && copia.severity === "medium" && esAccionable(copia),
    "una clave privada fuera de su almacén es un hallazgo medio", copia && copia.severity);
 
 const mis = hf.filter((f) => f.category === "misconfig");
 ok(mis.length === 1, "las configuraciones de un fichero salen en un solo hallazgo", String(mis.length));
-ok(mis[0] && mis[0].severity === "info" && !isActionable(mis[0]),
+ok(mis[0] && mis[0].severity === "info" && !esAccionable(mis[0]),
    "y no suben el riesgo del equipo: es un fichero de un proyecto");
 ok(mis[0] && /13 configuraciones mejorables/.test(mis[0].title), "el título dice cuántas son", mis[0] && mis[0].title);
 ok(mis[0] && /DS-0002/.test(mis[0].evidence) && /root/.test(mis[0].evidence),
    "la evidencia nombra los controles, en castellano");
 
-const sum = summarize(hf);
+const sum = resumir(hf);
 ok(sum.actionable.total === 2, "2 accionables en el equipo: el token y la clave copiada", String(sum.actionable.total));
 
 console.log("\n── 2 · Imagen: secretos en capas y configuración de la imagen ────\n");
 
 const img = leer("image-secrets-misconfig.json");
 for (const r of img.Results) r.__image = img.ArtifactName;
-const imf = normalizeImage({ Results: img.Results }, "trivy");
+const imf = normalizarImagen({ Results: img.Results }, "trivy");
 const iJson = JSON.stringify(imf);
 console.log("  " + imf.map((f) => `${f.id}/${f.severity}`).join(" · "));
 
@@ -99,11 +99,11 @@ ok(!EN_CLARO.some((v) => iJson.includes(v)),
 ok(imf.every((f) => f.scope === "image"), "todos llevan scope image");
 
 const sec = imf.find((f) => f.id.startsWith("IMG-SEC"));
-ok(sec && sec.severity === "critical" && isActionable(sec), "el token dentro de la imagen es crítico y accionable");
+ok(sec && sec.severity === "critical" && esAccionable(sec), "el token dentro de la imagen es crítico y accionable");
 ok(sec && sec.image === "demo/leaky:1.0", "y queda asociado a su imagen", sec && sec.image);
 
 const ds31 = imf.find((f) => f.id.startsWith("IMG-MIS") && /DS-0031/.test(f.title));
-ok(ds31 && ds31.severity === "critical" && isActionable(ds31), "secretos en ENV (DS-0031): crítico y accionable");
+ok(ds31 && ds31.severity === "critical" && esAccionable(ds31), "secretos en ENV (DS-0031): crítico y accionable");
 ok(ds31 && ds31.primaryUrl && ds31.primaryUrl.includes("ds-0031"), "con la ficha del control enlazada");
 ok(ds31 && /Revoca/.test(ds31.fix), "y la resolución en castellano");
 
@@ -117,7 +117,7 @@ ok(practicas && /DS-0026, informativo/.test(practicas.evidence), "y sin HEALTHCH
 console.log("\n── 2b · Contexto: rutas reales de un home auditado ───────────────\n");
 
 // Rutas tomadas de una auditoría real (anonimizadas). Cada una con el contexto que le toca.
-const { classifyHostPath, classifyImagePath, misconfSeverity } = require("../../lib/secret-context");
+const { clasificarRutaHost, clasificarRutaImagen, severidadConfig } = require("../../lib/secret-context");
 const H = "/Users/ana";
 const CASOS = [
   ["~/nuclei-templates/helpers/payloads/cve-2023-34039-keys/id_rsa_vnera_keypair_6.0.0_platform", "testdata"],
@@ -136,20 +136,20 @@ const CASOS = [
   ["~/Desktop/proyecto/.env", "user"],
 ];
 for (const [p, esperado] of CASOS) {
-  const c = classifyHostPath(p, H);
+  const c = clasificarRutaHost(p, H);
   ok(c.kind === esperado, `${p.slice(0, 70)} → ${esperado}`, c.kind);
 }
-ok(classifyHostPath("~/Nextcloud/UNI/x/id_rsa", H).synced === true, "Nextcloud se reconoce como carpeta sincronizada");
-ok(classifyHostPath("~/docker/mysql/server-key.pem", H).synced === false, "~/docker no lo es");
-ok(classifyImagePath("/juice-shop/frontend/src/app/app.guard.spec.ts").kind === "testdata", "un .spec.ts de una imagen es de test");
-ok(classifyImagePath("/etc/ssh/ssh_host_rsa_key").kind === "user", "una clave de /etc/ssh de una imagen va grabada en ella");
+ok(clasificarRutaHost("~/Nextcloud/UNI/x/id_rsa", H).synced === true, "Nextcloud se reconoce como carpeta sincronizada");
+ok(clasificarRutaHost("~/docker/mysql/server-key.pem", H).synced === false, "~/docker no lo es");
+ok(clasificarRutaImagen("/juice-shop/frontend/src/app/app.guard.spec.ts").kind === "testdata", "un .spec.ts de una imagen es de test");
+ok(clasificarRutaImagen("/etc/ssh/ssh_host_rsa_key").kind === "user", "una clave de /etc/ssh de una imagen va grabada en ella");
 // Falsos positivos del tercer escaneo real
 for (const [p, kind] of [
   ["~/Desktop/IA/Claude.app/Contents/Resources/ion-dist/assets/v1/index.js", "thirdparty"],
   ["~/Desktop/skills/headroom-main/crates/headroom-core/benches/auth_mode.rs", "thirdparty"],
   ["~/proyecto/benches/auth.rs", "testdata"],
   ["~/Desktop/UNI/EDNL/PRACTICAS/ARBOLES/p2-rep/ej1.cpp", "user"],
-]) ok(classifyHostPath(p, H).kind === kind, `${p} → ${kind}`);
+]) ok(clasificarRutaHost(p, H).kind === kind, `${p} → ${kind}`);
 for (const [p, kind] of [
   ["/opt/gitlab/embedded/lib/ruby/gems/3.2.0/gems/aws-sdk-core-3.1/lib/seahorse/client.rb", "thirdparty"],
   ["/opt/gitlab/embedded/service/gitlab-rails/app/models/personal_access_token.rb", "thirdparty"],
@@ -160,13 +160,13 @@ for (const [p, kind] of [
   ["/opt/app/.env", "user"],
   ["/opt/app/certs/server.key", "user"],
   ["/juice-shop/lib/insecurity.ts", "user"],
-]) ok(classifyImagePath(p).kind === kind, `${p} → ${kind}`);
-ok(misconfSeverity("DS-0029", "HIGH") === "info", "DS-0029 (--no-install-recommends) es higiene: informativo");
-ok(misconfSeverity("DS-0031", "CRITICAL") === null, "DS-0031 (secretos en ENV) conserva la de Trivy");
-ok(misconfSeverity("DS-9999", "HIGH") === "medium", "un control de Dockerfile sin revisar baja de alto a medio");
+]) ok(clasificarRutaImagen(p).kind === kind, `${p} → ${kind}`);
+ok(severidadConfig("DS-0029", "HIGH") === "info", "DS-0029 (--no-install-recommends) es higiene: informativo");
+ok(severidadConfig("DS-0031", "CRITICAL") === null, "DS-0031 (secretos en ENV) conserva la de Trivy");
+ok(severidadConfig("DS-9999", "HIGH") === "medium", "un control de Dockerfile sin revisar baja de alto a medio");
 
 // Lo mismo pasado por el normalizador: terceros y datos de prueba en un solo informativo.
-const ruido = fromTrivySecretsMisconfig({
+const ruido = desdeSecretosYConfig({
   Results: [
     { Target: "helpers/payloads/k/id_rsa_x", __root: `${H}/nuclei-templates`, Secrets: [{ RuleID: "private-key", Severity: "HIGH", Title: "Asymmetric Private Key", StartLine: 1, Match: "****" }] },
     { Target: "extensions/e/dist/extension.bundle.js", __root: `${H}/.vscode`, Secrets: [{ RuleID: "azure-storage-account-key", Severity: "CRITICAL", Title: "Azure", StartLine: 1, Match: "k=****" }] },
@@ -175,7 +175,7 @@ const ruido = fromTrivySecretsMisconfig({
   ],
   scan: { mode: "fs-by-children", target: H },
 }, { context: "host" });
-const accionables = ruido.filter((f) => isActionable({ ...f, scope: "host" }));
+const accionables = ruido.filter((f) => esAccionable({ ...f, scope: "host" }));
 ok(accionables.length === 1 && /sincronizada/.test(accionables[0].title) && accionables[0].severity === "high",
    "de cuatro, solo cuenta la clave de la carpeta sincronizada, como alto", JSON.stringify(accionables.map((f) => f.title)));
 ok(ruido.some((f) => /2 posibles secretos en software de terceros/.test(f.title) && f.severity === "info"),
@@ -183,8 +183,8 @@ ok(ruido.some((f) => /2 posibles secretos en software de terceros/.test(f.title)
 ok(ruido.some((f) => /Credencial guardada por su aplicación: ~\/\.azure/.test(f.title)),
    "el token de ~/.azure, como credencial guardada por su aplicación");
 
-const { findSensitiveEnvVars } = require("../../nodes/audit-image/modules/config-audit");
-const env = findSensitiveEnvVars(JSON.stringify([
+const { variablesSensibles } = require("../../nodes/audit-image/modules/config-audit");
+const env = variablesSensibles(JSON.stringify([
   "GPG_KEYS=39B6 4135", "MYSQL_ROOT_PASSWORD=x", "MYSQL_ROOT_PASSWORD_FILE=/run/secrets/p", "DB_PASS=", "PATH=/bin",
 ]));
 ok(env.length === 1 && env[0] === "MYSQL_ROOT_PASSWORD",
@@ -192,7 +192,7 @@ ok(env.length === 1 && env[0] === "MYSQL_ROOT_PASSWORD",
 
 console.log("\n── 3 · Defensa: sin asteriscos no se enseña el valor ─────────────\n");
 
-const sinMascara = fromTrivySecretsMisconfig({
+const sinMascara = desdeSecretosYConfig({
   Results: [{ Target: "app/.env", __root: "/home/ana", Secrets: [{
     RuleID: "github-pat", Severity: "CRITICAL", Title: "GitHub Personal Access Token", StartLine: 1,
     Match: "GITHUB_TOKEN=ghp_1234567890abcdefghijklmnopqrstuvwxyzAB",
@@ -202,7 +202,7 @@ const sinMascara = fromTrivySecretsMisconfig({
 ok(sinMascara.length === 1 && !JSON.stringify(sinMascara).includes("ghp_1234"),
    "un Match sin enmascarar no llega a la evidencia");
 
-const controlDesconocido = fromTrivySecretsMisconfig({
+const controlDesconocido = desdeSecretosYConfig({
   Results: [{ Target: "demo:1", __image: "demo:1", Misconfigurations: [{
     ID: "DS-9999", Severity: "MEDIUM", Title: "Some new check", Status: "FAIL",
     Resolution: "Do the thing", PrimaryURL: "https://avd.aquasec.com/misconfig/ds-9999",
@@ -211,7 +211,7 @@ const controlDesconocido = fromTrivySecretsMisconfig({
 ok(controlDesconocido.length === 1 && /Do the thing/.test(controlDesconocido[0].fix),
    "un control sin ficha en castellano sale con la resolución de Trivy");
 
-const parcial = fromTrivySecretsMisconfig({
+const parcial = desdeSecretosYConfig({
   Results: [],
   scan: { mode: "fs-by-children", target: "/home/ana", children: {
     scanned: [], skipped: [
@@ -225,7 +225,7 @@ ok(parcial.length === 1 && parcial[0].id === "HOST-SEC-PARTIAL" && /Proyectos/.t
 console.log("\n── 4 · Pasada omitida: comprobación no realizada ─────────────────\n");
 
 for (const kind of ["disabled", "not-installed", "timeout", "error"]) {
-  const f = normalizeHost({ trivySecrets: { skipped: true, kind, reason: `motivo ${kind}` } }, { platform: "linux" });
+  const f = normalizarHost({ trivySecrets: { skipped: true, kind, reason: `motivo ${kind}` } }, { platform: "linux" });
   ok(f.length === 1 && f[0].id === "HOST-SEC-SKIP" && f[0].skipped === true && f[0].kind === kind,
      `${kind} → HOST-SEC-SKIP con kind ${kind}`, JSON.stringify(f.map((x) => [x.id, x.kind])));
 }
@@ -237,9 +237,9 @@ console.log("\n── 5 · Las órdenes llevan los escáneres pedidos ───�
   const execReal = require(EXEC_PATH);
   const ordenes = [];
   require.cache[EXEC_PATH].exports = Object.assign({}, execReal, {
-    commandExists: async () => "/usr/bin/trivy",
-    execToFile: async (build) => { ordenes.push(build("/tmp/salida.json")); return { Results: [] }; },
-    execCommand: async (cmd) => {
+    existeComando: async () => "/usr/bin/trivy",
+    ejecutarAFichero: async (build) => { ordenes.push(build("/tmp/salida.json")); return { Results: [] }; },
+    ejecutar: async (cmd) => {
       ordenes.push(cmd);
       if (/--version/.test(cmd)) return "Version: 0.69.3";
       return JSON.stringify({ ArtifactName: "demo:1", Results: [] });
@@ -248,12 +248,12 @@ console.log("\n── 5 · Las órdenes llevan los escáneres pedidos ───�
   for (const m of ["../../nodes/audit-host/modules/trivy-fs", "../../nodes/audit-image/modules/cve-checker"]) {
     delete require.cache[require.resolve(m)];
   }
-  const { runTrivyFs, runTrivySecrets } = require("../../nodes/audit-host/modules/trivy-fs");
-  const { runTrivyImage } = require("../../nodes/audit-image/modules/cve-checker");
+  const { ejecutarTrivyFs, ejecutarTrivySecretos } = require("../../nodes/audit-host/modules/trivy-fs");
+  const { ejecutarTrivyImagen } = require("../../nodes/audit-image/modules/cve-checker");
 
-  await runTrivyFs({ target: "/tmp" });
-  await runTrivySecrets({ target: "/tmp" });
-  await runTrivyImage([{ id: "demo:1", repository: "", tag: "" }]);
+  await ejecutarTrivyFs({ target: "/tmp" });
+  await ejecutarTrivySecretos({ target: "/tmp" });
+  await ejecutarTrivyImagen([{ id: "demo:1", repository: "", tag: "" }]);
 
   const fsVuln = ordenes.find((o) => Array.isArray(o) && o.includes("vuln"));
   const fsSec = ordenes.find((o) => Array.isArray(o) && o.includes("secret,misconfig"));
@@ -274,7 +274,7 @@ console.log("\n── 5 · Las órdenes llevan los escáneres pedidos ───�
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "lca-home-"));
   for (const d of ["Desktop/proyecto", "Desktop/enorme", "Documents"]) fs.mkdirSync(path.join(tmpHome, d), { recursive: true });
   const vistos = [];
-  require.cache[EXEC_PATH].exports.execToFile = async (build) => {
+  require.cache[EXEC_PATH].exports.ejecutarAFichero = async (build) => {
     const args = build("/tmp/salida.json");
     const target = args[args.length - 1];
     vistos.push(path.relative(tmpHome, target));
@@ -282,7 +282,7 @@ console.log("\n── 5 · Las órdenes llevan los escáneres pedidos ───�
     return { Results: [{ Target: ".env", Secrets: [] }] };
   };
   delete require.cache[require.resolve("../../nodes/audit-host/modules/trivy-fs")];
-  const { runTrivySecrets: secretosDe } = require("../../nodes/audit-host/modules/trivy-fs");
+  const { ejecutarTrivySecretos: secretosDe } = require("../../nodes/audit-host/modules/trivy-fs");
   const homeAntes = process.env.HOME;
   process.env.HOME = tmpHome;
   const res = await secretosDe({});

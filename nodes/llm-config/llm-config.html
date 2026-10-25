@@ -24,34 +24,34 @@
             // La última URL consultada, para no repetir la petición en cada blur.
             var lastUrl = null;
 
-            /** "qwen3" y "qwen3:latest" son el mismo modelo, como en checkModel(). */
-            function normModel(m) {
+            /** "qwen3" y "qwen3:latest" son el mismo modelo, como en comprobarModelo(). */
+            function normalizarModelo(m) {
                 return String(m || "").trim().toLowerCase().replace(/:latest$/, "");
             }
 
             /** URL utilizable: no vacía y con esquema http(s). */
-            function urlLooksValid(u) {
+            function urlValida(u) {
                 return /^https?:\/\/[^\s/]+/i.test(String(u || "").trim());
             }
 
-            function setMsg(color, html) {
+            function mostrarMensaje(color, html) {
                 $msg.html('<span style="color:' + color + ';">' + html + "</span>");
             }
 
             /** Sin lista, campo de texto: con Ollama apagado también hay que poder guardar un modelo. */
-            function useFallback() {
+            function usarCampoTexto() {
                 $select.hide().prop("disabled", true);
                 $fbRow.show();
             }
 
             /** Modo NORMAL: manda el desplegable y el texto libre desaparece. */
-            function useSelect() {
+            function usarDesplegable() {
                 $fbRow.hide();
                 $select.show().prop("disabled", false);
             }
 
             /** Un modelo guardado que ya no está instalado se muestra marcado, sin cambiar la configuración en silencio. */
-            function renderModels(models) {
+            function pintarModelos(models) {
                 var current = $model.val();
                 $select.empty();
 
@@ -60,7 +60,7 @@
                 });
 
                 var match = models.filter(function (m) {
-                    return normModel(m) === normModel(current);
+                    return normalizarModelo(m) === normalizarModelo(current);
                 })[0];
 
                 if (match) {
@@ -74,21 +74,23 @@
 
                 // El <select> solo pilota; lo que se guarda es el input.
                 $model.val($select.val());
-                useSelect();
+                usarDesplegable();
 
-                setMsg("#3a7d3a", "✓ " + models.length + " modelo(s) disponible(s) en Ollama.");
+                mostrarMensaje("#3a7d3a", "✓ " + models.length + " modelo(s) disponible(s) en Ollama.");
             }
 
             /** Lista los modelos de la URL del formulario; si falla, modo respaldo con aviso. */
-            function loadModels(force) {
+            function cargarModelos(force) {
                 var url = ($url.val() || "").trim();
 
-                if (!urlLooksValid(url)) {
+                if (!urlValida(url)) {
                     lastUrl = null;
-                    useFallback();
-                    setMsg("#a33", url
-                        ? "URL no válida. Debe empezar por http:// o https://. Escribe el modelo a mano mientras tanto."
-                        : "Escribe la URL de Ollama para ver los modelos instalados.");
+                    usarCampoTexto();
+                    if (url) {
+                        mostrarMensaje("#a33", "URL no válida. Debe empezar por http:// o https://. Escribe el modelo a mano mientras tanto.");
+                    } else {
+                        mostrarMensaje("#a33", "Escribe la URL de Ollama para ver los modelos instalados.");
+                    }
                     return;
                 }
 
@@ -96,31 +98,31 @@
                 if (!force && url === lastUrl) return;
                 lastUrl = url;
 
-                setMsg("#888", '<i class="fa fa-spinner fa-spin"></i> Consultando modelos en ' + $("<div>").text(url).html() + "…");
+                mostrarMensaje("#888", '<i class="fa fa-spinner fa-spin"></i> Consultando modelos en ' + $("<div>").text(url).html() + "…");
 
                 $.getJSON("locoaudit/llm/models", { url: url })
                     .done(function (r) {
                         if (!r || !r.ok) {
-                            useFallback();
-                            // r.error es texto ajeno y setMsg pinta HTML: se escapa.
-                            setMsg("#a33", "✗ " + $("<div>").text((r && r.error) || "No se pudo obtener la lista de modelos.").html() +
+                            usarCampoTexto();
+                            // r.error es texto ajeno y mostrarMensaje pinta HTML: se escapa.
+                            mostrarMensaje("#a33", "✗ " + $("<div>").text((r && r.error) || "No se pudo obtener la lista de modelos.").html() +
                                 "<br>Puedes escribir el modelo a mano para guardar la configuración.");
                             return;
                         }
                         if (!r.models || r.models.length === 0) {
                             // Ollama responde pero no tiene modelos: no es un fallo de conexión.
-                            useFallback();
-                            setMsg("#b5651d",
+                            usarCampoTexto();
+                            mostrarMensaje("#b5651d",
                                 "Ollama responde, pero no hay ningún modelo instalado. " +
                                 "Instala uno desde la terminal, por ejemplo: <code>ollama pull qwen3:8b</code>, " +
                                 "y pulsa ↻. Mientras tanto puedes escribir el nombre a mano.");
                             return;
                         }
-                        renderModels(r.models);
+                        pintarModelos(r.models);
                     })
                     .fail(function () {
-                        useFallback();
-                        setMsg("#a33", "✗ No se pudo consultar el listado desde el editor de Node-RED." +
+                        usarCampoTexto();
+                        mostrarMensaje("#a33", "✗ No se pudo consultar el listado desde el editor de Node-RED." +
                             "<br>Puedes escribir el modelo a mano para guardar la configuración.");
                     });
             }
@@ -132,13 +134,13 @@
             });
 
 
-            loadModels(true);
+            cargarModelos(true);
 
             // El botón reconsulta aunque la URL no cambie: es el caso de venir de un `ollama pull`.
-            $reload.on("click", function () { loadModels(true); });
+            $reload.on("click", function () { cargarModelos(true); });
 
             // Cambiar de servidor lista los modelos de ese servidor.
-            $url.on("change blur", function () { loadModels(false); });
+            $url.on("change blur", function () { cargarModelos(false); });
 
             // Contra /api/tags, para ver si el modelo elegido sigue instalado.
             $btn.on("click", function () {
@@ -147,7 +149,7 @@
                 $out.css("color", "#888").html('<i class="fa fa-spinner fa-spin"></i> Comprobando…');
 
                 // Probar conexión refresca también la lista.
-                loadModels(true);
+                cargarModelos(true);
 
                 $.getJSON("locoaudit/llm/check", { url: url, model: model })
                     .done(function (r) {

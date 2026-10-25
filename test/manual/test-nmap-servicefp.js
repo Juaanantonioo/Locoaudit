@@ -9,7 +9,7 @@
 const fs   = require("fs");
 const path = require("path");
 
-const { parseNmapXml } = require("../../nodes/audit-network/modules/nmap-wrapper");
+const { leerXmlNmap } = require("../../nodes/audit-network/modules/nmap-wrapper");
 
 let failed = 0;
 let passed = 0;
@@ -25,7 +25,7 @@ console.log("\n── Un servicefp con barras no puede tapar el nombre del servi
 
 // Captura real de nmap 7.99; el 5000 (AirTunes) no se identifica y emite la huella entera.
 const xml    = fixture("scan-ports-open.xml");
-const p5000  = parseNmapXml(xml).find((p) => p.port === 5000);
+const p5000  = leerXmlNmap(xml).find((p) => p.port === 5000);
 
 ok(p5000, "el puerto con servicefp sigue apareciendo: el bug nunca perdió puertos");
 ok(/servicefp="[^"]*\//.test(xml), "y el fixture trae de verdad una huella con barras dentro");
@@ -40,7 +40,7 @@ ok(bloque.match(/<service\b([^>]*?)\/?>/) !== null,
    "el actual sí, porque corta en '>' y nmap escapa cualquier '>' interno como &gt;");
 
 // Lo que NO puede cambiar al arreglarlo: los puertos sin servicefp se leen igual que siempre.
-const p22 = parseNmapXml(xml).find((p) => p.port === 22);
+const p22 = leerXmlNmap(xml).find((p) => p.port === 22);
 ok(p22 && p22.service === "ssh", "un puerto normal se sigue leyendo igual", p22 && p22.service);
 
 console.log(`\n${failed === 0 ? "OK" : "FALLOS"}: ${passed} pasadas, ${failed} fallidas\n`);

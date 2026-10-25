@@ -57,8 +57,8 @@
       </defs></svg>
 
       <!-- ══ HEADER ══ -->
-      <!-- La barra toma el color del riesgo real; riskClass es la misma que pinta el badge. -->
-      <div class="header-card" :class="riskClass">
+      <!-- La barra toma el color del riesgo real; claseRiesgo es la misma que pinta el badge. -->
+      <div class="header-card" :class="claseRiesgo">
         <div class="header-main">
           <div class="header-eyebrow">LoCoAudit · Auditoría de host</div>
           <div class="host-name">
@@ -66,12 +66,12 @@
             <span class="host-name-text">{{ auditData.host && auditData.host.hostname }}</span>
           </div>
           <div class="header-idline">
-            <span class="risk-badge" :class="riskClass">
+            <span class="risk-badge" :class="claseRiesgo">
               <span class="risk-badge-dot"></span>
-              {{ riskLabel }}
+              {{ etiquetaRiesgo }}
             </span>
             <!-- Mismo recuento que la sección de hallazgos, adelantado a la cabecera. -->
-            <span class="risk-note">{{ act.total > 0 ? act.total + ' requieren tu atención' : 'Nada que arreglar' }}</span>
+            <span class="risk-note"><template v-if="aRevisar.total > 0">{{ aRevisar.total + ' requieren tu atención' }}</template><template v-else>Nada que arreglar</template></span>
           </div>
 
           <!-- Rejilla clave/valor: etiqueta pequeña sobre valor. -->
@@ -86,31 +86,31 @@
             </div>
             <div class="meta-item">
               <span class="meta-key">Activo</span>
-              <span class="meta-val">{{ uptimeHuman }}</span>
+              <span class="meta-val">{{ tiempoActivo }}</span>
             </div>
             <div class="meta-item">
               <span class="meta-key">Análisis</span>
-              <span class="meta-val">{{ scanTime }}</span>
+              <span class="meta-val">{{ horaEscaneo }}</span>
             </div>
             <div class="meta-item" v-if="auditData.scanMeta && auditData.scanMeta.durationMs">
               <span class="meta-key">Duración</span>
-              <span class="meta-val">{{ fmtDuration(auditData.scanMeta.durationMs) }}</span>
+              <span class="meta-val">{{ formatearDuracion(auditData.scanMeta.durationMs) }}</span>
             </div>
-            <div class="meta-item" v-if="modulesLabel">
+            <div class="meta-item" v-if="etiquetaModulos">
               <span class="meta-key">Módulos</span>
-              <span class="meta-val">{{ modulesLabel }}</span>
+              <span class="meta-val">{{ etiquetaModulos }}</span>
             </div>
-            <div class="meta-item" v-if="lynisTests">
+            <div class="meta-item" v-if="controlesLynis">
               <span class="meta-key">Controles</span>
-              <span class="meta-val">{{ lynisTests }}</span>
+              <span class="meta-val">{{ controlesLynis }}</span>
             </div>
             <div class="meta-item meta-item-actions">
               <span class="meta-key">Exportar</span>
               <span class="dl-group">
-                <button class="dl-btn" @click="downloadHtml" title="Descargar informe HTML (imprimible a PDF)">
+                <button class="dl-btn" @click="descargarHtml" title="Descargar informe HTML (imprimible a PDF)">
                   <svg class="icon icon-sm"><use href="#lca-i-download"></use></svg> HTML
                 </button>
-                <button class="dl-btn" @click="downloadJson" title="Descargar datos JSON">
+                <button class="dl-btn" @click="descargarJson" title="Descargar datos JSON">
                   <svg class="icon icon-sm"><use href="#lca-i-download"></use></svg> JSON
                 </button>
               </span>
@@ -119,12 +119,12 @@
         </div>
 
         <!-- Gauge circular Lynis, separado por una línea vertical fina (border-left) -->
-        <div class="header-aside" v-if="lynisIdx !== null">
+        <div class="header-aside" v-if="indiceLynis !== null">
           <span class="gauge-label-top">Hardening Index</span>
           <svg class="gauge-svg" viewBox="0 0 110 110">
             <defs>
               <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" :stop-color="lynisColor"></stop>
+                <stop offset="0%" :stop-color="colorLynis"></stop>
                 <stop offset="100%" :stop-color="tok.high"></stop>
               </linearGradient>
             </defs>
@@ -135,15 +135,15 @@
             <!-- fill -->
             <circle cx="55" cy="55" r="44" fill="none" stroke="url(#gaugeGrad)"
                     stroke-width="10"
-                    :stroke-dasharray="gaugeStroke + ' ' + (276 - gaugeStroke)"
+                    :stroke-dasharray="trazoIndicador + ' ' + (276 - trazoIndicador)"
                     stroke-dashoffset="-27.5" stroke-linecap="round"></circle>
-            <text x="55" y="51" text-anchor="middle" class="gauge-score">{{ lynisIdx }}</text>
+            <text x="55" y="51" text-anchor="middle" class="gauge-score">{{ indiceLynis }}</text>
             <text x="55" y="63" text-anchor="middle" class="gauge-sub">de 100</text>
           </svg>
           <span class="gauge-verdict">
-            Lynis · {{ lynisIdx >= 55 ? 'Aceptable' : lynisIdx >= 30 ? 'Mejorable' : 'Deficiente' }}
+            Lynis · <template v-if="indiceLynis >= 55">Aceptable</template><template v-else-if="indiceLynis >= 30">Mejorable</template><template v-else>Deficiente</template>
           </span>
-          <span v-if="lynisMetaLine" class="gauge-meta">{{ lynisMetaLine }}</span>
+          <span v-if="lineaMetaLynis" class="gauge-meta">{{ lineaMetaLynis }}</span>
         </div>
       </div>
 
@@ -153,59 +153,59 @@
       <div class="sev-block">
         <div class="sev-strip">
           <div class="sev-cell critical" role="button" tabindex="0"
-               :aria-pressed="filterSev === 'critical' ? 'true' : 'false'"
-               :class="{ 'active': filterSev === 'critical', 'zero': !act.counts.critical }"
-               @click="toggleSevFilter('critical')" @keydown.enter.prevent="toggleSevFilter('critical')"
-               @keydown.space.prevent="toggleSevFilter('critical')"
+               :aria-pressed="pulsado('critical')"
+               :class="{ 'active': filterSev === 'critical', 'zero': !aRevisar.counts.critical }"
+               @click="alternarFiltroSeveridad('critical')" @keydown.enter.prevent="alternarFiltroSeveridad('critical')"
+               @keydown.space.prevent="alternarFiltroSeveridad('critical')"
                title="Filtrar por severidad Crítico">
             <span class="sev-cell-label">Crítico</span>
-            <span class="sev-cell-num">{{ act.counts.critical || 0 }}</span>
+            <span class="sev-cell-num">{{ aRevisar.counts.critical || 0 }}</span>
             <span class="sev-cell-sub">Acción inmediata</span>
           </div>
           <div class="sev-cell high" role="button" tabindex="0"
-               :aria-pressed="filterSev === 'high' ? 'true' : 'false'"
-               :class="{ 'active': filterSev === 'high', 'zero': !act.counts.high }"
-               @click="toggleSevFilter('high')" @keydown.enter.prevent="toggleSevFilter('high')"
-               @keydown.space.prevent="toggleSevFilter('high')"
+               :aria-pressed="pulsado('high')"
+               :class="{ 'active': filterSev === 'high', 'zero': !aRevisar.counts.high }"
+               @click="alternarFiltroSeveridad('high')" @keydown.enter.prevent="alternarFiltroSeveridad('high')"
+               @keydown.space.prevent="alternarFiltroSeveridad('high')"
                title="Filtrar por severidad Alto">
             <span class="sev-cell-label">Alto</span>
-            <span class="sev-cell-num">{{ act.counts.high || 0 }}</span>
+            <span class="sev-cell-num">{{ aRevisar.counts.high || 0 }}</span>
             <span class="sev-cell-sub">Resolver esta semana</span>
           </div>
           <div class="sev-cell medium" role="button" tabindex="0"
-               :aria-pressed="filterSev === 'medium' ? 'true' : 'false'"
-               :class="{ 'active': filterSev === 'medium', 'zero': !act.counts.medium }"
-               @click="toggleSevFilter('medium')" @keydown.enter.prevent="toggleSevFilter('medium')"
-               @keydown.space.prevent="toggleSevFilter('medium')"
+               :aria-pressed="pulsado('medium')"
+               :class="{ 'active': filterSev === 'medium', 'zero': !aRevisar.counts.medium }"
+               @click="alternarFiltroSeveridad('medium')" @keydown.enter.prevent="alternarFiltroSeveridad('medium')"
+               @keydown.space.prevent="alternarFiltroSeveridad('medium')"
                title="Filtrar por severidad Medio">
             <span class="sev-cell-label">Medio</span>
-            <span class="sev-cell-num">{{ act.counts.medium || 0 }}</span>
+            <span class="sev-cell-num">{{ aRevisar.counts.medium || 0 }}</span>
             <span class="sev-cell-sub">Cuando puedas</span>
           </div>
           <div class="sev-cell low" role="button" tabindex="0"
-               :aria-pressed="filterSev === 'low' ? 'true' : 'false'"
-               :class="{ 'active': filterSev === 'low', 'zero': !act.counts.low }"
-               @click="toggleSevFilter('low')" @keydown.enter.prevent="toggleSevFilter('low')"
-               @keydown.space.prevent="toggleSevFilter('low')"
+               :aria-pressed="pulsado('low')"
+               :class="{ 'active': filterSev === 'low', 'zero': !aRevisar.counts.low }"
+               @click="alternarFiltroSeveridad('low')" @keydown.enter.prevent="alternarFiltroSeveridad('low')"
+               @keydown.space.prevent="alternarFiltroSeveridad('low')"
                title="Filtrar por severidad Bajo">
             <span class="sev-cell-label">Bajo</span>
-            <span class="sev-cell-num">{{ act.counts.low || 0 }}</span>
+            <span class="sev-cell-num">{{ aRevisar.counts.low || 0 }}</span>
             <span class="sev-cell-sub">Opcional</span>
           </div>
           <!-- Sin role="button": no filtra, no es interactiva. -->
-          <div class="sev-cell informative" v-if="inf.total > 0"
+          <div class="sev-cell informative" v-if="informativos.total > 0"
                title="Hallazgos que no requieren ninguna acción por tu parte">
             <span class="sev-cell-label">Informativos</span>
-            <span class="sev-cell-num">{{ inf.total }}</span>
+            <span class="sev-cell-num">{{ informativos.total }}</span>
             <span class="sev-cell-sub">Solo para tu información</span>
           </div>
         </div>
         <!-- Dentro de la misma caja que los recuentos: un cero solo tranquiliza si consta que se miró. -->
-        <div class="sev-gap" v-if="failedCheckFindings.length > 0">
+        <div class="sev-gap" v-if="comprobacionesFallidas.length > 0">
           <svg class="icon icon-sm"><use href="#lca-i-alert"></use></svg>
           <span>
-            <strong>{{ failedCheckFindings.length }}</strong>
-            {{ failedCheckFindings.length === 1 ? 'comprobación no se ha completado' : 'comprobaciones no se han completado' }}:
+            <strong>{{ comprobacionesFallidas.length }}</strong>
+            <template v-if="comprobacionesFallidas.length === 1"> comprobación no se ha completado</template><template v-else> comprobaciones no se han completado</template>:
             estos recuentos no cubren todo tu equipo.
           </span>
         </div>
@@ -216,41 +216,41 @@
 
       <!-- ── Nivel 1 · VEREDICTO: solo cuando no hay nada accionable.
            'clean' en verde; 'partial' en ámbar porque hay comprobaciones que fallaron. -->
-      <div class="lca-notice lvl-1 is-ok" v-if="nothingState === 'clean'">
+      <div class="lca-notice lvl-1 is-ok" v-if="estadoSinHallazgos === 'clean'">
         <svg class="icon lca-notice-icon"><use href="#lca-i-check-circle"></use></svg>
         <div class="lca-notice-main">
           <div class="lca-notice-title">No hay nada que tengas que arreglar en tu equipo</div>
-          <div class="lca-notice-body" v-for="(frase, i) in nothingBuckets" :key="i" v-html="frase"></div>
+          <div class="lca-notice-body" v-for="(frase, i) in motivosSinHallazgos" :key="i" v-html="frase"></div>
           <!-- Un módulo apagado es decisión del usuario: se menciona en tono sobrio, sin alarma. -->
-          <div class="lca-notice-foot" v-if="disabledNote">
-            {{ disabledNote }}
-            <span class="lca-notice-foot-list">{{ modulesNotRequested.map(function(m){ return m.label; }).join(' · ') }}</span>
+          <div class="lca-notice-foot" v-if="notaDesactivados">
+            {{ notaDesactivados }}
+            <span class="lca-notice-foot-list">{{ modulosNoSolicitados.map(function(m){ return m.label; }).join(' · ') }}</span>
           </div>
         </div>
       </div>
 
-      <div class="lca-notice lvl-1 is-warn" v-if="nothingState === 'partial'">
+      <div class="lca-notice lvl-1 is-warn" v-if="estadoSinHallazgos === 'partial'">
         <svg class="icon lca-notice-icon"><use href="#lca-i-alert"></use></svg>
         <div class="lca-notice-main">
           <div class="lca-notice-title">No hay nada que arreglar <u>entre lo que sí se ha podido comprobar</u></div>
           <div class="lca-notice-body">
-            <strong>{{ failedCheckFindings.length }}</strong>
-            {{ failedCheckFindings.length === 1 ? 'comprobación se ha intentado y no ha podido completarse' : 'comprobaciones se han intentado y no han podido completarse' }},
+            <strong>{{ comprobacionesFallidas.length }}</strong>
+            <template v-if="comprobacionesFallidas.length === 1"> comprobación se ha intentado y no ha podido completarse</template><template v-else> comprobaciones se han intentado y no han podido completarse</template>,
             así que esta conclusión no cubre todo tu equipo.
           </div>
           <ul class="lca-notice-list">
-            <li v-for="f in failedCheckFindings" :key="f.id">{{ f.title }}</li>
+            <li v-for="f in comprobacionesFallidas" :key="f.id">{{ f.title }}</li>
           </ul>
-          <div class="lca-notice-body" v-for="(frase, i) in nothingBuckets" :key="'b' + i" v-html="frase"></div>
+          <div class="lca-notice-body" v-for="(frase, i) in motivosSinHallazgos" :key="'b' + i" v-html="frase"></div>
           <div class="lca-notice-body">
             <strong>Revisa el alcance del análisis</strong> aquí debajo: dice exactamente qué se ha
             mirado y qué no. Cero hallazgos en una comprobación que no se ejecutó no significa que
             esa parte esté limpia, significa que nadie la ha mirado.
           </div>
           <!-- Apagado y caído van en listas separadas aunque coincidan. -->
-          <div class="lca-notice-foot" v-if="disabledNote">
-            {{ disabledNote }}
-            <span class="lca-notice-foot-list">{{ modulesNotRequested.map(function(m){ return m.label; }).join(' · ') }}</span>
+          <div class="lca-notice-foot" v-if="notaDesactivados">
+            {{ notaDesactivados }}
+            <span class="lca-notice-foot-list">{{ modulosNoSolicitados.map(function(m){ return m.label; }).join(' · ') }}</span>
           </div>
         </div>
       </div>
@@ -258,22 +258,19 @@
       <!-- ── Nivel 2 · COBERTURA: qué no se miró en esta ejecución. -->
 
       <!-- Un solo bloque para todas las comprobaciones no realizadas.
-           El recuento viene de buildSkippedChecksSummary(); cada línea lleva su propio estado. -->
-      <div class="lca-notice lvl-2" v-if="checksSkipped"
-           :class="checksSkipped.failed > 0 ? 'is-warn' : 'is-neutral'">
-        <svg class="icon lca-notice-icon"><use :href="checksSkipped.failed > 0 ? '#lca-i-alert' : '#lca-i-info'"></use></svg>
+           El recuento viene de resumenOmitidas(); cada línea lleva su propio estado. -->
+      <div class="lca-notice lvl-2" v-if="omitidas"
+           :class="claseAviso()">
+        <svg class="icon lca-notice-icon"><use :href="iconoAviso()"></use></svg>
         <div class="lca-notice-main">
-          <div class="lca-notice-title">{{ checksSkipped.title }}</div>
-          <div class="lca-notice-body" v-for="(frase, i) in checksSkipped.evidence.split('\n\n')" :key="i">
+          <div class="lca-notice-title">{{ omitidas.title }}</div>
+          <div class="lca-notice-body" v-for="(frase, i) in omitidas.evidence.split('\n\n')" :key="i">
             {{ frase }}
           </div>
           <!-- Una línea por módulo, con el estado delante. -->
           <ul class="lca-notice-list is-stated">
-            <li v-for="it in checksSkipped.items" :key="it.id" :class="'chk-' + it.estado">
-              <span class="lca-notice-state">{{
-                it.estado === 'failed' ? 'no se pudo'
-                : it.estado === 'not-applicable' ? 'no aplica'
-                : 'desactivada' }}</span>
+            <li v-for="it in omitidas.items" :key="it.id" :class="'chk-' + it.estado">
+              <span class="lca-notice-state"><template v-if="it.estado === 'failed'">no se pudo</template><template v-else-if="it.estado === 'not-applicable'">no aplica</template><template v-else>desactivada</template></span>
               <span class="lca-notice-name">{{ it.title }}</span>
             </li>
           </ul>
@@ -281,149 +278,148 @@
       </div>
 
       <!-- Una parte del home sin leer es un hueco del informe: no encontrar nada no es que no haya nada. -->
-      <div class="lca-notice lvl-2 is-warn" v-if="skippedByError.length">
+      <div class="lca-notice lvl-2 is-warn" v-if="excluidasPorError.length">
         <svg class="icon lca-notice-icon"><use href="#lca-i-alert"></use></svg>
         <div class="lca-notice-main">
           <div class="lca-notice-title">Una parte de tu carpeta personal no se ha podido analizar</div>
           <div class="lca-notice-body">
             Que no aparezca ningún hallazgo de
-            <strong>{{ skippedByError.map(function(s){ return s.name; }).join(', ') }}</strong>
+            <strong>{{ excluidasPorError.map(function(s){ return s.name; }).join(', ') }}</strong>
             no quiere decir que esté limpia: quiere decir que no se ha podido comprobar.
           </div>
         </div>
       </div>
 
-      <!-- Paquetes del sistema: el mismo computed sirve al nivel 2 y al 3; decide sysPkgNoticeLevel. -->
-      <div class="lca-notice lvl-2" :class="'is-' + sysPkgNotice.tone"
-           v-if="sysPkgNotice && sysPkgNoticeLevel === 2">
-        <svg class="icon lca-notice-icon"><use :href="'#lca-i-' + sysPkgNotice.ico"></use></svg>
+      <!-- Paquetes del sistema: el mismo computed sirve al nivel 2 y al 3; decide nivelAvisoPaquetes. -->
+      <div class="lca-notice lvl-2" :class="'is-' + avisoPaquetes.tone"
+           v-if="avisoPaquetes && nivelAvisoPaquetes === 2">
+        <svg class="icon lca-notice-icon"><use :href="'#lca-i-' + avisoPaquetes.ico"></use></svg>
         <div class="lca-notice-main">
-          <div class="lca-notice-title">{{ sysPkgNotice.title }}</div>
-          <div class="lca-notice-lead" v-if="sysPkgNotice.lead">{{ sysPkgNotice.lead }}</div>
-          <div class="lca-notice-body">{{ sysPkgNotice.body }}</div>
+          <div class="lca-notice-title">{{ avisoPaquetes.title }}</div>
+          <div class="lca-notice-lead" v-if="avisoPaquetes.lead">{{ avisoPaquetes.lead }}</div>
+          <div class="lca-notice-body">{{ avisoPaquetes.body }}</div>
           <!-- Evita que "no se ha comprobado" se lea como "está limpio". -->
-          <div class="lca-notice-body is-strong" v-if="sysPkgNotice.warning">{{ sysPkgNotice.warning }}</div>
-          <div class="lca-notice-hint" v-if="sysPkgNotice.hint">{{ sysPkgNotice.hint }}</div>
+          <div class="lca-notice-body is-strong" v-if="avisoPaquetes.warning">{{ avisoPaquetes.warning }}</div>
+          <div class="lca-notice-hint" v-if="avisoPaquetes.hint">{{ avisoPaquetes.hint }}</div>
         </div>
       </div>
 
       <!-- ── Nivel 3 · CONTEXTO: cómo es este equipo siempre; no lleva ámbar. -->
-      <div class="lca-notice lvl-3" :class="'is-' + sysPkgNotice.tone"
-           v-if="sysPkgNotice && sysPkgNoticeLevel === 3">
-        <svg class="icon lca-notice-icon"><use :href="'#lca-i-' + sysPkgNotice.ico"></use></svg>
+      <div class="lca-notice lvl-3" :class="'is-' + avisoPaquetes.tone"
+           v-if="avisoPaquetes && nivelAvisoPaquetes === 3">
+        <svg class="icon lca-notice-icon"><use :href="'#lca-i-' + avisoPaquetes.ico"></use></svg>
         <div class="lca-notice-main">
-          <div class="lca-notice-title">{{ sysPkgNotice.title }}</div>
-          <div class="lca-notice-lead" v-if="sysPkgNotice.lead">{{ sysPkgNotice.lead }}</div>
-          <div class="lca-notice-body">{{ sysPkgNotice.body }}</div>
-          <div class="lca-notice-body is-strong" v-if="sysPkgNotice.warning">{{ sysPkgNotice.warning }}</div>
-          <div class="lca-notice-hint" v-if="sysPkgNotice.hint">{{ sysPkgNotice.hint }}</div>
+          <div class="lca-notice-title">{{ avisoPaquetes.title }}</div>
+          <div class="lca-notice-lead" v-if="avisoPaquetes.lead">{{ avisoPaquetes.lead }}</div>
+          <div class="lca-notice-body">{{ avisoPaquetes.body }}</div>
+          <div class="lca-notice-body is-strong" v-if="avisoPaquetes.warning">{{ avisoPaquetes.warning }}</div>
+          <div class="lca-notice-hint" v-if="avisoPaquetes.hint">{{ avisoPaquetes.hint }}</div>
         </div>
       </div>
 
       <!-- ══ ALCANCE DEL ESCANEO ══ -->
       <!-- Qué se ha mirado antes de qué se ha encontrado, para no confundir falta de datos con resultado. -->
-      <div class="scope-card" v-if="trivyScan || sysPkgNotice || modules.length">
+      <div class="scope-card" v-if="escaneoTrivy || avisoPaquetes || modulos.length">
         <div class="scope-header">
           <svg class="icon"><use href="#lca-i-search"></use></svg>
           <span class="scope-title">Alcance del análisis</span>
-          <button class="scope-toggle" v-if="trivyScan" @click="scopeOpen = !scopeOpen">
-            {{ scopeOpen ? 'Ocultar detalle' : 'Ver detalle' }}
+          <button class="scope-toggle" v-if="escaneoTrivy" @click="scopeOpen = !scopeOpen">
+            <template v-if="scopeOpen">Ocultar detalle</template><template v-else>Ver detalle</template>
           </button>
         </div>
 
-        <div class="scope-grid" v-if="trivyScan">
+        <div class="scope-grid" v-if="escaneoTrivy">
           <div class="scope-item">
             <span class="scope-key">Carpeta</span>
-            <span class="scope-val"><code>{{ trivyScan.target }}</code></span>
+            <span class="scope-val"><code>{{ escaneoTrivy.target }}</code></span>
           </div>
-          <div class="scope-item" v-if="scannedChildren.length">
+          <div class="scope-item" v-if="carpetasAnalizadas.length">
             <span class="scope-key">Subcarpetas analizadas</span>
-            <span class="scope-val">{{ scannedChildren.length }}</span>
+            <span class="scope-val">{{ carpetasAnalizadas.length }}</span>
           </div>
-          <div class="scope-item" v-if="skippedByChoice.length">
+          <div class="scope-item" v-if="excluidasAProposito.length">
             <span class="scope-key">Excluidas</span>
-            <span class="scope-val">{{ skippedByChoice.length }}</span>
+            <span class="scope-val">{{ excluidasAProposito.length }}</span>
           </div>
-          <div class="scope-item scope-item-warn" v-if="skippedByError.length">
+          <div class="scope-item scope-item-warn" v-if="excluidasPorError.length">
             <span class="scope-key">Sin analizar</span>
-            <span class="scope-val">{{ skippedByError.length }}</span>
+            <span class="scope-val">{{ excluidasPorError.length }}</span>
           </div>
-          <div class="scope-item" v-if="trivyScan.durationMs">
+          <div class="scope-item" v-if="escaneoTrivy.durationMs">
             <!-- Hay dos duraciones (carpeta y paquetes), de ahí la etiqueta. -->
-            <span class="scope-key">{{ sysPkgs && sysPkgs.durationMs ? 'Duración carpeta' : 'Duración' }}</span>
-            <span class="scope-val">{{ fmtDuration(trivyScan.durationMs) }}</span>
+            <span class="scope-key"><template v-if="paquetesSistema && paquetesSistema.durationMs">Duración carpeta</template><template v-else>Duración</template></span>
+            <span class="scope-val">{{ formatearDuracion(escaneoTrivy.durationMs) }}</span>
           </div>
           <!-- Cifra y fuente: sw-inventory cuenta otra cosa con otra herramienta y no se cuadran. -->
-          <div class="scope-item" v-if="sysPkgs" :class="sysPkgs.status === 'scanned' ? '' : 'scope-item-warn'">
+          <div class="scope-item" v-if="paquetesSistema" :class="{ 'scope-item-warn': paquetesSistema.status !== 'scanned' }">
             <span class="scope-key">Paquetes del sistema</span>
             <span class="scope-val">
-              <template v-if="sysPkgs.status === 'scanned'">
-                {{ sysPkgs.packages != null ? sysPkgs.packages + ' analizados' : 'analizados' }}
-                <template v-if="sysPkgs.osFamily"> · {{ sysPkgs.osFamily }}{{ sysPkgs.osName ? ' ' + sysPkgs.osName : '' }}</template>
-                <template v-if="sysPkgs.trivyVersion"> · Trivy {{ sysPkgs.trivyVersion }}</template>
+              <template v-if="paquetesSistema.status === 'scanned'">
+                <template v-if="paquetesSistema.packages != null">{{ paquetesSistema.packages + ' analizados' }}</template><template v-else>analizados</template> <template v-if="paquetesSistema.osFamily"> · {{ paquetesSistema.osFamily }}<template v-if="paquetesSistema.osName">{{ ' ' + paquetesSistema.osName }}</template><template v-else></template></template>
+                <template v-if="paquetesSistema.trivyVersion"> · Trivy {{ paquetesSistema.trivyVersion }}</template>
               </template>
               <template v-else>no analizados</template>
             </span>
           </div>
           <!-- Inventario de sw-inventory, con su propia fuente. -->
-          <div class="scope-item" v-if="swPkgs && swPkgs.packages != null">
+          <div class="scope-item" v-if="paquetesSoftware && paquetesSoftware.packages != null">
             <span class="scope-key">Inventario de software</span>
-            <span class="scope-val">{{ swPkgs.packages }} paquetes<template v-if="swPkgs.source"> · según {{ swPkgs.source }}</template></span>
+            <span class="scope-val">{{ paquetesSoftware.packages }} paquetes<template v-if="paquetesSoftware.source"> · según {{ paquetesSoftware.source }}</template></span>
           </div>
-          <div class="scope-item" v-if="sysPkgs && sysPkgs.durationMs">
+          <div class="scope-item" v-if="paquetesSistema && paquetesSistema.durationMs">
             <span class="scope-key">Duración sistema</span>
-            <span class="scope-val">{{ fmtDuration(sysPkgs.durationMs) }}</span>
+            <span class="scope-val">{{ formatearDuracion(paquetesSistema.durationMs) }}</span>
           </div>
-          <div class="scope-item" v-if="trivyScan.trivyVersion">
+          <div class="scope-item" v-if="escaneoTrivy.trivyVersion">
             <span class="scope-key">Trivy</span>
-            <span class="scope-val meta-val-mono">{{ trivyScan.trivyVersion }}</span>
+            <span class="scope-val meta-val-mono">{{ escaneoTrivy.trivyVersion }}</span>
           </div>
         </div>
 
         <!-- Los siete módulos, para saber después si una ausencia fue decisión o fallo. -->
-        <div class="scope-modules" v-if="modules.length">
+        <div class="scope-modules" v-if="modulos.length">
           <div class="scope-detail-title">Módulos del análisis</div>
           <div class="scope-modules-grid">
-            <span class="scope-module" v-for="m in modules" :key="m.id" :class="'mod-' + m.status">
-              <svg class="icon icon-sm scope-module-ico"><use :href="m.status === 'ok' ? '#lca-i-check' : m.status === 'failed' ? '#lca-i-alert' : '#lca-i-minus'"></use></svg>
+            <span class="scope-module" v-for="m in modulos" :key="m.id" :class="'mod-' + m.status">
+              <svg class="icon icon-sm scope-module-ico"><use :href="iconoModulo(m)"></use></svg>
               {{ m.label }}
-              <span class="scope-module-state">{{ m.status === 'ok' ? 'analizado' : m.status === 'failed' ? 'no se pudo' : 'no solicitado' }}</span>
+              <span class="scope-module-state"><template v-if="m.status === 'ok'">analizado</template><template v-else-if="m.status === 'failed'">no se pudo</template><template v-else>no solicitado</template></span>
             </span>
           </div>
         </div>
 
         <!-- Excluidas a propósito (decisión) y fallidas (hueco del informe), por separado. -->
-        <div class="scope-detail" v-show="scopeOpen && trivyScan">
-          <div class="scope-detail-block" v-if="skippedByChoice.length">
-            <div class="scope-detail-title">Excluidas a propósito ({{ skippedByChoice.length }})</div>
-            <div class="scope-detail-item" v-for="(s, i) in skippedByChoice" :key="'c-' + i">
+        <div class="scope-detail" v-show="scopeOpen && escaneoTrivy">
+          <div class="scope-detail-block" v-if="excluidasAProposito.length">
+            <div class="scope-detail-title">Excluidas a propósito ({{ excluidasAProposito.length }})</div>
+            <div class="scope-detail-item" v-for="(s, i) in excluidasAProposito" :key="'c-' + i">
               <code>{{ s.name }}</code> — {{ s.reason }}
             </div>
             <div class="scope-detail-note">
               Solo contienen ficheros temporales o descargados. No hay nada que actualizar en ellas.
             </div>
           </div>
-          <div class="scope-detail-block" v-if="skippedByError.length">
-            <div class="scope-detail-title warn">No se han podido analizar ({{ skippedByError.length }})</div>
-            <div class="scope-detail-item" v-for="(s, i) in skippedByError" :key="'e-' + i">
-              <code>{{ s.name }}</code> — {{ shortReason(s.reason) }}
-              <span v-if="s.durationMs"> (tras {{ fmtDuration(s.durationMs) }})</span>
+          <div class="scope-detail-block" v-if="excluidasPorError.length">
+            <div class="scope-detail-title warn">No se han podido analizar ({{ excluidasPorError.length }})</div>
+            <div class="scope-detail-item" v-for="(s, i) in excluidasPorError" :key="'e-' + i">
+              <code>{{ s.name }}</code> — {{ motivoCorto(s.reason) }}
+              <span v-if="s.durationMs"> (tras {{ formatearDuracion(s.durationMs) }})</span>
             </div>
             <div class="scope-detail-note warn">
               Su contenido NO está incluido en este informe.
             </div>
           </div>
-          <div class="scope-detail-block" v-if="scannedChildren.length">
-            <div class="scope-detail-title">Analizadas ({{ scannedChildren.length }})</div>
+          <div class="scope-detail-block" v-if="carpetasAnalizadas.length">
+            <div class="scope-detail-title">Analizadas ({{ carpetasAnalizadas.length }})</div>
             <div class="scope-detail-item scope-detail-flow">
-              <code v-for="(s, i) in scannedChildren" :key="'s-' + i">{{ s.name }}</code>
+              <code v-for="(s, i) in carpetasAnalizadas" :key="'s-' + i">{{ s.name }}</code>
             </div>
           </div>
         </div>
       </div>
 
       <!-- ══ CHARTS ══ -->
-      <div class="charts-row" v-if="totalFindings > 0">
+      <div class="charts-row" v-if="totalHallazgos > 0">
 
         <!-- Donut SVG puro -->
         <div class="chart-card">
@@ -433,19 +429,19 @@
               <!-- track -->
               <circle cx="70" cy="70" r="54" fill="none" :stroke="tok.surface" stroke-width="18"></circle>
               <!-- segmentos calculados -->
-              <circle v-for="seg in donutSegments" :key="seg.key"
+              <circle v-for="seg in segmentosDonut" :key="seg.key"
                       cx="70" cy="70" r="54" fill="none"
                       :stroke="seg.color" stroke-width="18"
                       :stroke-dasharray="seg.dasharray"
                       :stroke-dashoffset="seg.dashoffset"></circle>
               <!-- El anillo mezcla todas las severidades; el número central cuenta solo los accionables. -->
-              <text x="70" y="65" text-anchor="middle" class="donut-total">{{ act.total }}</text>
-              <text x="70" y="79" text-anchor="middle" class="donut-sub">de {{ totalFindings }} · a revisar</text>
+              <text x="70" y="65" text-anchor="middle" class="donut-total">{{ aRevisar.total }}</text>
+              <text x="70" y="79" text-anchor="middle" class="donut-sub">de {{ totalHallazgos }} · a revisar</text>
             </svg>
             <div class="donut-legend">
-              <div class="legend-item" v-for="seg in donutSegments" :key="'leg-'+seg.key">
+              <div class="legend-item" v-for="seg in segmentosDonut" :key="'leg-'+seg.key">
                 <span class="legend-dot" :style="{background: seg.color}"></span>
-                <span class="legend-name">{{ sevLabel(seg.key) }}</span>
+                <span class="legend-name">{{ etiquetaSeveridad(seg.key) }}</span>
                 <span class="legend-val">{{ seg.count }}</span>
               </div>
             </div>
@@ -456,7 +452,7 @@
         <div class="chart-card">
           <div class="chart-title">Hallazgos por Categoría</div>
           <div class="hbar-list">
-            <div class="hbar-item" v-for="bar in catBars" :key="bar.key">
+            <div class="hbar-item" v-for="bar in barrasCategoria" :key="bar.key">
               <span class="hbar-label">{{ bar.label }}</span>
               <div class="hbar-track">
                 <div class="hbar-fill" :style="{width: bar.pct + '%', background: bar.color}"></div>
@@ -473,74 +469,74 @@
       <div class="metrics-row">
 
         <!-- RAM -->
-        <div class="metric-card" v-if="ramData">
+        <div class="metric-card" v-if="datosRam">
           <div class="metric-header">
             <span class="metric-title">Memoria RAM</span>
-            <svg class="icon"><use :href="ramData.platform === 'darwin' ? '#lca-i-apple' : '#lca-i-memory'"></use></svg>
+            <svg class="icon"><use :href="iconoRam()"></use></svg>
           </div>
-          <div class="ram-macos-note" v-if="ramData.platform === 'darwin'">
+          <div class="ram-macos-note" v-if="datosRam.platform === 'darwin'">
             <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
             Gestión unificada macOS — memoria compartida
           </div>
           <div class="metric-bar-section">
             <div class="metric-figure">
-              {{ ramData.usedGiB }}<span class="metric-figure-unit">GiB</span>
+              {{ datosRam.usedGiB }}<span class="metric-figure-unit">GiB</span>
             </div>
-            <div class="progress-bar" v-if="ramData.pct !== null">
-              <div class="progress-fill" :style="{width: ramData.pct + '%', background: ramBarStyle(ramData.pct)}"></div>
+            <div class="progress-bar" v-if="datosRam.pct !== null">
+              <div class="progress-fill" :style="{width: datosRam.pct + '%', background: estiloBarraRam(datosRam.pct)}"></div>
             </div>
             <div class="metric-foot">
-              <div class="metric-foot-item" v-if="ramData.pct !== null">
+              <div class="metric-foot-item" v-if="datosRam.pct !== null">
                 <span class="metric-foot-key">En uso</span>
-                <span class="metric-foot-val">{{ ramData.pct }}%</span>
+                <span class="metric-foot-val">{{ datosRam.pct }}%</span>
               </div>
               <div class="metric-foot-item">
                 <span class="metric-foot-key">Total</span>
-                <span class="metric-foot-val">{{ ramData.totalGiB }} GiB</span>
+                <span class="metric-foot-val">{{ datosRam.totalGiB }} GiB</span>
               </div>
             </div>
           </div>
         </div>
 
         <!-- CPU -->
-        <div class="metric-card" v-if="cpuData">
+        <div class="metric-card" v-if="datosCpu">
           <div class="metric-header">
             <span class="metric-title">Carga de CPU</span>
             <svg class="icon"><use href="#lca-i-cpu"></use></svg>
           </div>
           <div class="metric-bar-section">
-            <div class="metric-figure" v-if="cpuData.loadAvg">
-              ~{{ Math.min(100, Math.round(cpuData.loadAvg[0] / cpuData.cores * 100)) }}<span class="metric-figure-unit">%</span>
+            <div class="metric-figure" v-if="datosCpu.loadAvg">
+              ~{{ Math.min(100, Math.round(datosCpu.loadAvg[0] / datosCpu.cores * 100)) }}<span class="metric-figure-unit">%</span>
             </div>
             <div class="metric-figure metric-figure-na" v-else>—</div>
-            <div class="progress-bar" v-if="cpuData.loadAvg">
+            <div class="progress-bar" v-if="datosCpu.loadAvg">
               <div class="progress-fill" :style="{
-                width: Math.min(100, cpuData.loadAvg[0] / cpuData.cores * 100).toFixed(0) + '%',
-                background: cpuBarColor(cpuData.loadAvg[0] / cpuData.cores)
+                width: Math.min(100, datosCpu.loadAvg[0] / datosCpu.cores * 100).toFixed(0) + '%',
+                background: colorBarraCpu(datosCpu.loadAvg[0] / datosCpu.cores)
               }"></div>
             </div>
             <div class="metric-foot">
               <div class="metric-foot-item">
                 <span class="metric-foot-key">Estimación</span>
-                <span class="metric-foot-val" v-if="cpuData.loadAvg">load avg 1m vs. {{ cpuData.cores }} núcleos</span>
+                <span class="metric-foot-val" v-if="datosCpu.loadAvg">load avg 1m vs. {{ datosCpu.cores }} núcleos</span>
                 <span class="metric-foot-val" v-else>Load avg no disponible</span>
               </div>
               <div class="metric-foot-item">
                 <span class="metric-foot-key">Procesador</span>
-                <span class="metric-foot-val">{{ cpuData.cores }} núcleos · {{ cpuData.model }}</span>
+                <span class="metric-foot-val">{{ datosCpu.cores }} núcleos · {{ datosCpu.model }}</span>
               </div>
             </div>
-            <div class="cpu-loads" v-if="cpuData.loadAvg">
+            <div class="cpu-loads" v-if="datosCpu.loadAvg">
               <div class="load-pill">
-                <span class="load-val">{{ cpuData.loadAvg[0] != null ? cpuData.loadAvg[0].toFixed(2) : '—' }}</span>
+                <span class="load-val"><template v-if="datosCpu.loadAvg[0] != null">{{ datosCpu.loadAvg[0].toFixed(2) }}</template><template v-else>—</template></span>
                 <span class="load-period">1 min</span>
               </div>
               <div class="load-pill">
-                <span class="load-val">{{ cpuData.loadAvg[1] != null ? cpuData.loadAvg[1].toFixed(2) : '—' }}</span>
+                <span class="load-val"><template v-if="datosCpu.loadAvg[1] != null">{{ datosCpu.loadAvg[1].toFixed(2) }}</template><template v-else>—</template></span>
                 <span class="load-period">5 min</span>
               </div>
               <div class="load-pill">
-                <span class="load-val">{{ cpuData.loadAvg[2] != null ? cpuData.loadAvg[2].toFixed(2) : '—' }}</span>
+                <span class="load-val"><template v-if="datosCpu.loadAvg[2] != null">{{ datosCpu.loadAvg[2].toFixed(2) }}</template><template v-else>—</template></span>
                 <span class="load-period">15 min</span>
               </div>
             </div>
@@ -548,13 +544,13 @@
         </div>
 
         <!-- Disco: la misma anatomía, repetida por partición. -->
-        <div class="metric-card" v-if="diskData && diskData.length > 0">
+        <div class="metric-card" v-if="datosDisco && datosDisco.length > 0">
           <div class="metric-header">
             <span class="metric-title">Almacenamiento</span>
             <svg class="icon"><use href="#lca-i-disk"></use></svg>
           </div>
           <div class="disk-parts-container">
-            <div class="disk-part" v-for="(p, i) in diskData" :key="i">
+            <div class="disk-part" v-for="(p, i) in datosDisco" :key="i">
               <div class="disk-part-header">
                 <span class="disk-mount">{{ p.mount }}</span>
               </div>
@@ -585,37 +581,37 @@
           <span class="section-title">Hallazgos de Seguridad</span>
           <!-- Accionables e informativos por separado; las cifras las decide el backend (summary). -->
           <span class="section-pills">
-            <span class="pill pill-action" v-if="act.total > 0">{{ act.total }} requieren tu atención</span>
+            <span class="pill pill-action" v-if="aRevisar.total > 0">{{ aRevisar.total }} requieren tu atención</span>
             <span class="pill pill-calm" v-else>Nada que arreglar</span>
-            <span class="pill" v-if="inf.total > 0">{{ inf.total }} informativos</span>
-            <span class="pill">{{ activeGroups }} categorías</span>
+            <span class="pill" v-if="informativos.total > 0">{{ informativos.total }} informativos</span>
+            <span class="pill">{{ gruposActivos }} categorías</span>
           </span>
         </div>
 
-        <template v-for="g in groups" :key="g.key">
+        <template v-for="g in grupos" :key="g.key">
           <div class="findings-group" v-if="g.items.length > 0">
-            <div class="group-header" @click="toggleGroup(g.key)">
+            <div class="group-header" @click="alternarGrupo(g.key)">
               <svg class="icon group-icon"><use :href="'#lca-i-' + g.icon"></use></svg>
               <span class="group-name">{{ g.label }}</span>
               <!-- g.items viene ordenado por severidad descendente, así que [0] es el máximo. -->
-              <span class="sev-badge group-sev" :class="sevClass(g.items[0].severity)">{{ sevLabel(g.items[0].severity) }}</span>
+              <span class="sev-badge group-sev" :class="claseSeveridad(g.items[0].severity)">{{ etiquetaSeveridad(g.items[0].severity) }}</span>
               <span class="group-count">{{ g.items.length }}</span>
               <svg class="icon group-chevron" :class="{open: openGroups[g.key]}"><use href="#lca-i-chevron"></use></svg>
             </div>
             <div class="group-findings" v-show="openGroups[g.key]">
               <div v-for="(f, fi) in g.items" :key="g.key + '-' + fi">
-                <div class="finding-row" @click="toggleFinding(g.key + '-' + fi)">
+                <div class="finding-row" @click="alternarHallazgo(g.key + '-' + fi)">
                   <!-- Declarado: el CVSS no describe este equipo, así que no se pinta su severidad en la fila. -->
-                  <span v-if="isDeclared(f)" class="origin-badge declared"
+                  <span v-if="esDeclarado(f)" class="origin-badge declared"
                         title="Versión anotada en un fichero de dependencias. No hay software instalado con esa versión en tu equipo.">Declarado</span>
                   <template v-else>
-                    <span class="sev-badge" :class="sevClass(f.severity)">{{ sevLabel(f.severity) }}</span>
+                    <span class="sev-badge" :class="claseSeveridad(f.severity)">{{ etiquetaSeveridad(f.severity) }}</span>
                     <!-- Sin píldora "Instalado": es el caso por defecto; solo se marca la excepción. -->
                   </template>
                   <!-- La subcategoría (grupo de control de Lynis) gana a la categoría cuando existe. -->
-                  <span class="cat-badge">{{ f.subcategory || catLabel(f.category) }}</span>
+                  <span class="cat-badge">{{ f.subcategory || etiquetaCategoria(f.category) }}</span>
                   <span class="finding-title">{{ f.title }}</span>
-                  <span v-if="isDeclared(f)" class="finding-note">anotado en un lockfile · nada que actualizar</span>
+                  <span v-if="esDeclarado(f)" class="finding-note">anotado en un lockfile · nada que actualizar</span>
                   <!-- La clase contiene "chevron" para que el toggle del export también gire la flecha. -->
                   <svg class="icon icon-sm finding-chevron" :class="{open: openFindings[g.key + '-' + fi]}"><use href="#lca-i-chevron"></use></svg>
                 </div>
@@ -624,10 +620,10 @@
                     <!-- La evidencia se muestra aunque no haya fix. -->
                     <div class="detail-col" v-if="f.evidence">
                       <div class="detail-col-title">Evidencia</div>
-                      <pre class="detail-evidence">{{ fmtEvidence(f.evidence) }}</pre>
+                      <pre class="detail-evidence">{{ formatearEvidencia(f.evidence) }}</pre>
 
                       <!-- Tira de metadatos: datos estructurados de Trivy (findings CVE) -->
-                      <div v-if="hasMeta(f)" class="meta-strip">
+                      <div v-if="tieneMeta(f)" class="meta-strip">
                         <div v-if="f.pkg" class="meta-cell">
                           <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-package"></use></svg> Paquete</span>
                           <span class="meta-value">{{ f.pkg }}</span>
@@ -648,7 +644,7 @@
                           <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-gauge"></use></svg> CVSS</span>
                           <span class="meta-value">
                             {{ f.cvss }}
-                            <span class="cvss-chip" :class="sevClass(f.severity)">{{ sevLabel(f.severity) }}</span>
+                            <span class="cvss-chip" :class="claseSeveridad(f.severity)">{{ etiquetaSeveridad(f.severity) }}</span>
                           </span>
                         </div>
                         <div v-if="f.cveCount > 1" class="meta-cell">
@@ -662,7 +658,7 @@
                         </div>
                         <div v-if="f.lynisType" class="meta-cell">
                           <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-alert"></use></svg> Tipo</span>
-                          <span class="meta-value">{{ lynisTypeLabel(f) }}</span>
+                          <span class="meta-value">{{ etiquetaTipoLynis(f) }}</span>
                         </div>
                         <div v-if="f.detail" class="meta-cell">
                           <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-search"></use></svg> Detalle</span>
@@ -677,13 +673,13 @@
                              title="Lynis no asigna severidad a sus controles. Este nivel lo establece LoCoAudit según el tipo de control (AUTH, FIRE, NETW…) y según si es un aviso o una sugerencia.">
                           <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-scale"></use></svg> Severidad</span>
                           <span class="meta-value">
-                            {{ sevLabel(f.severity) }}
+                            {{ etiquetaSeveridad(f.severity) }}
                             <span class="meta-muted">· criterio de LoCoAudit</span>
                           </span>
                         </div>
                         <div class="meta-cell">
                           <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-search"></use></svg> Fuente</span>
-                          <span class="meta-value">{{ originLabel(f.source) }}</span>
+                          <span class="meta-value">{{ etiquetaOrigen(f.source) }}</span>
                         </div>
                         <div class="meta-cell">
                           <span class="meta-label"><svg class="icon icon-sm"><use href="#lca-i-link"></use></svg> Advisory</span>
@@ -697,7 +693,7 @@
                       <!-- Una rama por alternativa excluyente; dentro de cada rama, pasos en orden (<ol>). -->
                       <template v-if="!f.isCommand">
                         <!-- v-for sobre un array de un elemento: parsea el fix una sola vez. -->
-                        <div class="fix-plan" v-for="(fx, xi) in [parseFixSteps(f.fix)]" :key="xi">
+                        <div class="fix-plan" v-for="(fx, xi) in [pasosDeSolucion(f.fix)]" :key="xi">
                           <!-- La intro describe el servicio y va sin numerar. -->
                           <p v-for="(ln, ii) in fx.intro" :key="'i' + ii" class="fix-intro">{{ ln }}</p>
                           <p v-for="(nt, ni) in fx.notes" :key="'n' + ni" class="fix-note-line">{{ nt }}</p>
@@ -710,10 +706,10 @@
                                 <!-- El comando va DENTRO del paso que lo usa, no como paso aparte. -->
                                 <span v-if="st.cmd" class="command-box command-inline">
                                   <code class="command-text">{{ st.cmd }}</code>
-                                  <button @click.stop="copyCommand(st.cmd)"
+                                  <button @click.stop="copiarComando(st.cmd)"
                                           :class="{ copied: copiedKey === st.cmd }"
                                           class="command-btn">
-                                    <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg>{{ copiedKey === st.cmd ? ' Copiado' : 'Copiar' }}
+                                    <svg class="icon icon-sm" v-if="copiedKey === st.cmd"><use href="#lca-i-check"></use></svg><template v-if="copiedKey === st.cmd"> Copiado</template><template v-else>Copiar</template>
                                   </button>
                                 </span>
                               </li>
@@ -723,21 +719,21 @@
                         </div>
                       </template>
                       <p v-if="f.isCommand" class="cmd-intro">
-                        Comando sugerido<span class="cmd-origin">{{ originLabel(f.source) }}</span>:
+                        Comando sugerido<span class="cmd-origin">{{ etiquetaOrigen(f.source) }}</span>:
                       </p>
                       <div v-if="f.isCommand" class="command-box">
                         <code class="command-text">{{ f.command || f.fix }}</code>
-                        <button @click.stop="copyCommand(f.command || f.fix)"
+                        <button @click.stop="copiarComando(f.command || f.fix)"
                                 :class="{ copied: copiedKey === (f.command || f.fix) }"
                                 class="command-btn">
-                          <svg class="icon icon-sm" v-if="copiedKey === (f.command || f.fix)"><use href="#lca-i-check"></use></svg>{{ copiedKey === (f.command || f.fix) ? ' Copiado' : 'Copiar' }}
+                          <svg class="icon icon-sm" v-if="copiedKey === (f.command || f.fix)"><use href="#lca-i-check"></use></svg><template v-if="copiedKey === (f.command || f.fix)"> Copiado</template><template v-else>Copiar</template>
                         </button>
                       </div>
-                      <p v-if="fixNote(f)" class="cmd-note">{{ fixNote(f) }}</p>
+                      <p v-if="notaSolucion(f)" class="cmd-note">{{ notaSolucion(f) }}</p>
                       <!-- Una sola nota neutra por ficha; el ámbar se reserva para la severidad Media. -->
-                      <div v-if="fixHasCmd(f)" class="cmd-note cmd-note-safety">
+                      <div v-if="solucionConComando(f)" class="cmd-note cmd-note-safety">
                         <svg class="icon icon-sm"><use href="#lca-i-shield"></use></svg>
-                        <span>LoCoAudit no ejecuta estos comandos: cópialos y revísalos antes de ejecutarlos.<template v-if="fixNeedsSudo(f)"> Requieren privilegios de administrador.</template></span>
+                        <span>LoCoAudit no ejecuta estos comandos: cópialos y revísalos antes de ejecutarlos.<template v-if="solucionConSudo(f)"> Requieren privilegios de administrador.</template></span>
                       </div>
                     </div>
                   </div>
@@ -758,11 +754,11 @@
 
                   <!-- ── Chat con IA ── -->
                   <div class="lca-chat-wrap" v-if="llmAvailable === true">
-                    <button class="ai-ask-btn" @click.stop="toggleChat(chatKey(f, g.key, fi), f)">
+                    <button class="ai-ask-btn" @click.stop="alternarChat(claveChat(f, g.key, fi), f)">
                       <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
-                      {{ chatOpen[chatKey(f, g.key, fi)] ? 'Cerrar asistente' : 'Preguntar a la IA' }}
+                      <template v-if="chatOpen[claveChat(f, g.key, fi)]"> Cerrar asistente</template><template v-else> Preguntar a la IA</template>
                     </button>
-                    <div class="lca-chat" v-if="chatOpen[chatKey(f, g.key, fi)]">
+                    <div class="lca-chat" v-if="chatOpen[claveChat(f, g.key, fi)]">
                       <!-- Cabecera con el modelo, para saber quién ha escrito la respuesta. -->
                       <div class="lca-chat-head">
                         <svg class="icon icon-sm"><use href="#lca-i-sparkles"></use></svg>
@@ -770,36 +766,36 @@
                         <span class="lca-chat-model" v-if="llmModel">{{ llmModel }}</span>
                       </div>
                       <div class="lca-chat-msgs">
-                        <div v-for="(cm, ci) in (chatMessages[chatKey(f, g.key, fi)] || [])" :key="ci"
-                             class="chat-msg" :class="cm.role === 'user' ? 'chat-user' : 'chat-ai'">
+                        <div v-for="(cm, ci) in (chatMessages[claveChat(f, g.key, fi)] || [])" :key="ci"
+                             class="chat-msg" :class="claseMensaje(cm)">
                           <div class="chat-bubble" :class="{ 'chat-error': cm.error }">
-                            <template v-for="(seg, si) in parseChatContent(cm.content)" :key="si">
+                            <template v-for="(seg, si) in trocearRespuesta(cm.content)" :key="si">
                               <div v-if="seg.type === 'text'" class="chat-text" v-html="seg.html"></div>
                               <div v-else class="command-box">
                                 <code class="command-text">{{ seg.code }}</code>
-                                <button @click.stop="copyCommand(seg.code)"
+                                <button @click.stop="copiarComando(seg.code)"
                                         :class="{ copied: copiedKey === seg.code }"
                                         class="command-btn">
-                                  <svg class="icon icon-sm" v-if="copiedKey === seg.code"><use href="#lca-i-check"></use></svg>{{ copiedKey === seg.code ? ' Copiado' : 'Copiar' }}
+                                  <svg class="icon icon-sm" v-if="copiedKey === seg.code"><use href="#lca-i-check"></use></svg><template v-if="copiedKey === seg.code"> Copiado</template><template v-else>Copiar</template>
                                 </button>
                               </div>
                             </template>
                           </div>
                         </div>
-                        <div v-if="chatLoading[chatKey(f, g.key, fi)]" class="chat-msg chat-ai">
+                        <div v-if="chatLoading[claveChat(f, g.key, fi)]" class="chat-msg chat-ai">
                           <div class="chat-bubble chat-loading">
                             <span class="chat-dot"></span><span class="chat-dot"></span><span class="chat-dot"></span>
                           </div>
                         </div>
                       </div>
                       <div class="lca-chat-input">
-                        <input type="text" v-model="chatInput[chatKey(f, g.key, fi)]"
+                        <input type="text" v-model="chatInput[claveChat(f, g.key, fi)]"
                                placeholder="Escribe tu pregunta…"
-                               :disabled="chatLoading[chatKey(f, g.key, fi)]"
-                               @keydown.enter.prevent="sendChat(chatKey(f, g.key, fi), f)">
+                               :disabled="chatLoading[claveChat(f, g.key, fi)]"
+                               @keydown.enter.prevent="enviarChat(claveChat(f, g.key, fi), f)">
                         <button class="chat-send-btn"
-                                :disabled="chatLoading[chatKey(f, g.key, fi)]"
-                                @click.stop="sendChat(chatKey(f, g.key, fi), f)">Enviar</button>
+                                :disabled="chatLoading[claveChat(f, g.key, fi)]"
+                                @click.stop="enviarChat(claveChat(f, g.key, fi), f)">Enviar</button>
                       </div>
                       <!-- El aviso va al pie y no en un modal: se lee después de la
                            respuesta, que es cuando el usuario decide si actuar. -->
@@ -815,12 +811,12 @@
               <!-- ── Subsección: eventos (solo grupo "Logs del sistema") ──────────── -->
               <!-- Dos tablas distintas: intentos de acceso (eventos que ocurrieron)
                    vs sesiones activas ahora mismo (estado presente). -->
-              <div v-if="g.key === 'system-logs' && secEvents" class="seclog">
+              <div v-if="g.key === 'system-logs' && eventosSeguridad" class="seclog">
 
                 <!-- (a) Intentos de acceso — SSH OK/fallido, sudo, su, logins -->
-                <div class="seclog-title">Intentos de acceso (últimas {{ secEvents.windowHours }} h)</div>
-                <div v-if="accessEvents.length === 0" class="seclog-empty">
-                  Sin intentos en la ventana analizada ({{ secEvents.windowHours }} h).
+                <div class="seclog-title">Intentos de acceso (últimas {{ eventosSeguridad.windowHours }} h)</div>
+                <div v-if="eventosAcceso.length === 0" class="seclog-empty">
+                  Sin intentos en la ventana analizada ({{ eventosSeguridad.windowHours }} h).
                 </div>
                 <div v-else>
                   <div class="seclog-table-wrap">
@@ -829,9 +825,9 @@
                         <tr><th>Hora</th><th>Tipo</th><th>Usuario</th><th>Origen</th><th>Detalle</th></tr>
                       </thead>
                       <tbody>
-                        <tr v-for="(ev, ei) in accessEvents" :key="'acc-' + ei">
+                        <tr v-for="(ev, ei) in eventosAcceso" :key="'acc-' + ei">
                           <td class="seclog-mono">{{ ev.ts || '—' }}</td>
-                          <td><span class="seclog-badge" :class="evBadgeClass(ev.type)">{{ evTypeLabel(ev.type) }}</span></td>
+                          <td><span class="seclog-badge" :class="claseEtiquetaEvento(ev.type)">{{ etiquetaTipoEvento(ev.type) }}</span></td>
                           <td>{{ ev.user || '—' }}</td>
                           <td class="seclog-mono">{{ ev.origin || '—' }}</td>
                           <td class="seclog-detail">{{ ev.detail || '—' }}</td>
@@ -839,15 +835,15 @@
                       </tbody>
                     </table>
                   </div>
-                  <div v-if="secEvents.truncated" class="seclog-truncated">
-                    Mostrando los {{ secEvents.events.length }} eventos más recientes.
+                  <div v-if="eventosSeguridad.truncated" class="seclog-truncated">
+                    Mostrando los {{ eventosSeguridad.events.length }} eventos más recientes.
                   </div>
                 </div>
 
                 <!-- (b) Sesiones activas ahora (`who`); la hora es la de inicio de sesión. -->
                 <div class="seclog-title seclog-title-sessions">Sesiones activas ahora</div>
-                <div v-if="sessionEvents.length === 0" class="seclog-empty">
-                  <template v-if="sessionsChecked">Sin sesiones remotas activas.</template>
+                <div v-if="eventosSesion.length === 0" class="seclog-empty">
+                  <template v-if="sesionesRevisadas">Sin sesiones remotas activas.</template>
                   <template v-else>
                     No se ha podido comprobar quién tiene la sesión abierta: este
                     equipo no dispone de la herramienta que lo consulta. La lista
@@ -860,9 +856,9 @@
                       <tr><th>Inicio de sesión</th><th>Tipo</th><th>Usuario</th><th>Origen</th><th>Detalle</th></tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(ev, ei) in sessionEvents" :key="'ses-' + ei">
+                      <tr v-for="(ev, ei) in eventosSesion" :key="'ses-' + ei">
                         <td class="seclog-mono">{{ ev.ts || '—' }}</td>
-                        <td><span class="seclog-badge" :class="evBadgeClass(ev.type)">{{ evTypeLabel(ev.type) }}</span></td>
+                        <td><span class="seclog-badge" :class="claseEtiquetaEvento(ev.type)">{{ etiquetaTipoEvento(ev.type) }}</span></td>
                         <td>{{ ev.user || '—' }}</td>
                         <td class="seclog-mono">{{ ev.origin || '—' }}</td>
                         <td class="seclog-detail">{{ ev.detail || '—' }}</td>
@@ -876,7 +872,7 @@
         </template>
 
         <!-- Sin hallazgos -->
-        <div v-if="groups.filter(function(g){ return g.items.length > 0; }).length === 0"
+        <div v-if="grupos.filter(function(g){ return g.items.length > 0; }).length === 0"
              class="lca-state-center lca-state-inline">
           <svg class="icon icon-xl lca-state-ico"><use href="#lca-i-check-circle"></use></svg>
           <h3 class="lca-state-title">¡Sin hallazgos!</h3>
@@ -890,9 +886,9 @@
           <span class="report-foot-key">Herramienta</span>
           <span class="report-foot-val">LoCoAudit · auditoría de host</span>
         </div>
-        <div class="report-foot-item" v-if="toolSources">
+        <div class="report-foot-item" v-if="herramientas">
           <span class="report-foot-key">Fuentes</span>
-          <span class="report-foot-val">{{ toolSources }}</span>
+          <span class="report-foot-val">{{ herramientas }}</span>
         </div>
         <div class="report-foot-item" v-if="(auditData.scanMeta.modulesRun || []).length">
           <span class="report-foot-key">Módulos</span>
@@ -900,7 +896,7 @@
         </div>
         <div class="report-foot-item">
           <span class="report-foot-key">Generado</span>
-          <span class="report-foot-val">{{ scanTime }}</span>
+          <span class="report-foot-val">{{ horaEscaneo }}</span>
         </div>
       </div>
 
@@ -930,7 +926,7 @@ export default {
       llmAvailable: null,  // null = sin comprobar; true/false tras comprobar
       llmModel: null,      // modelo que responde; /locoaudit/chat/status ya lo devuelve
 
-      // ── Tokens de color leídos del :root (ver readTokens) para atributos SVG y estilos en JS.
+      // ── Tokens de color leídos del :root (ver leerTokens) para atributos SVG y estilos en JS.
       // Vacíos hasta la primera lectura: sin constantes de respaldo que dupliquen el CSS.
       tok: {
         critical: '', high: '', medium: '', low: '', info: '',
@@ -941,11 +937,11 @@ export default {
   },
 
   computed: {
-    maxSev() {
+    severidadMaxima() {
       return ((this.auditData && this.auditData.summary && this.auditData.summary.maxSeverity) || 'info').toUpperCase();
     },
 
-    counts() {
+    conteos() {
       var c = (this.auditData && this.auditData.summary && this.auditData.summary.counts) || {};
       return {
         critical: c.critical || c.CRITICAL || 0,
@@ -956,127 +952,143 @@ export default {
       };
     },
 
-    totalFindings() {
-      var c = this.counts;
+    totalHallazgos() {
+      var c = this.conteos;
       return c.critical + c.high + c.medium + c.low + c.info;
     },
 
-    // ── Recuento segmentado: lo calcula el backend (summarize() en lib/severity-map.js).
+    // ── Recuento segmentado: lo calcula el backend (resumir() en lib/severity-map.js).
     // Payloads antiguos sin estos campos: todo cuenta como accionable.
-    act() {
+    aRevisar() {
       var s = this.auditData && this.auditData.summary;
       if (s && s.actionable) return s.actionable;
-      return { counts: this.counts, total: this.totalFindings, maxSeverity: this.maxSev.toLowerCase() };
+      return { counts: this.conteos, total: this.totalHallazgos, maxSeverity: this.severidadMaxima.toLowerCase() };
     },
 
-    inf() {
+    informativos() {
       var s = this.auditData && this.auditData.summary;
       if (s && s.informative) return s.informative;
       return { counts: { info: 0, low: 0, medium: 0, high: 0, critical: 0 }, total: 0 };
     },
 
-    activeGroups() {
-      return this.groups.filter(function(g) { return g.items.length > 0; }).length;
+    gruposActivos() {
+      return this.grupos.filter(function(g) { return g.items.length > 0; }).length;
     },
 
     // ── Partición por origen real del hallazgo, comprobado en el propio dato.
-    allFindings() {
+    todosLosHallazgos() {
       return (this.auditData && this.auditData.findings) || [];
     },
 
     // Comprobaciones no ejecutadas, según `f.skipped` (no el sufijo -SKIP del id).
-    // Ojo: skippedByChoice/skippedByError son subcarpetas del home, no módulos.
-    skippedFindings() {
-      return this.allFindings.filter(function(f) { return f.skipped === true; });
+    // Ojo: excluidasAProposito/excluidasPorError son subcarpetas del home, no módulos.
+    hallazgosOmitidos() {
+      return this.todosLosHallazgos.filter(function(f) { return f.skipped === true; });
     },
 
     // Módulo apagado por el usuario (kind === 'disabled'): no es una comprobación caída.
-    disabledFindings() {
-      return this.skippedFindings.filter(function(f) { return f.kind === 'disabled'; });
+    hallazgosDesactivados() {
+      return this.hallazgosOmitidos.filter(function(f) { return f.kind === 'disabled'; });
     },
 
     // Límites de la plataforma (p. ej. Trivy sin paquetes de macOS): alcance real, no un hueco.
-    // El flag lo pone createFinding() desde SKIP_KINDS_NO_APLICA.
-    notApplicableFindings() {
-      return this.skippedFindings.filter(function(f) { return f.notApplicable === true; });
+    // El flag lo pone crearHallazgo() desde SKIP_KINDS_NO_APLICA.
+    hallazgosNoAplican() {
+      return this.hallazgosOmitidos.filter(function(f) { return f.notApplicable === true; });
     },
 
     // Hueco real del informe; por exclusión de los otros dos, así las tres partes suman el total.
-    failedCheckFindings() {
-      var fuera = this.disabledFindings.concat(this.notApplicableFindings);
-      return this.skippedFindings.filter(function(f) { return fuera.indexOf(f) === -1; });
+    comprobacionesFallidas() {
+      var fuera = this.hallazgosDesactivados.concat(this.hallazgosNoAplican);
+      return this.hallazgosOmitidos.filter(function(f) { return fuera.indexOf(f) === -1; });
     },
 
-    // Resumen de buildSkippedChecksSummary(); no se recompone aquí para no tener dos recuentos.
-    checksSkipped() {
+    // Resumen de resumenOmitidas(); no se recompone aquí para no tener dos recuentos.
+    omitidas() {
       var m = this.auditData && this.auditData.scanMeta;
       return (m && m.checksSkipped) || null;
     },
 
     // ── Los siete módulos desde scanMeta: solo Lynis y Trivy dejan finding al omitirse.
     // Payloads antiguos sin el campo: lista vacía.
-    modules() {
+    modulos() {
       var m = this.auditData && this.auditData.scanMeta;
       return (m && m.modules) || [];
     },
 
-    modulesNotRequested() {
-      return this.modules.filter(function(m) { return m.status === 'not-requested'; });
+    modulosNoSolicitados() {
+      return this.modulos.filter(function(m) { return m.status === 'not-requested'; });
     },
 
     // Resúmenes no accionables (HOST-CVE-DECLARED, HOST-OS-CVE-UNFIXED), marcados con `aggregate`.
-    aggregateFindings() {
-      return this.allFindings.filter(function(f) { return f.aggregate === true; });
+    hallazgosAgregados() {
+      return this.todosLosHallazgos.filter(function(f) { return f.aggregate === true; });
     },
 
     // Informativos normales: CPU, RAM, disco, inventario.
-    inventoryFindings() {
-      return this.allFindings.filter(function(f) {
+    hallazgosInventario() {
+      return this.todosLosHallazgos.filter(function(f) {
         return !f.skipped && !f.aggregate &&
                (f.severity || 'info').toLowerCase() === 'info';
       });
     },
 
     // Hallazgos accionables, calculados en el backend; un `declared` alto no cuenta.
-    actionableCount() {
-      return this.act.total;
+    numAccionables() {
+      return this.aRevisar.total;
     },
 
     // 'clean' sin nada pendiente ni caído; 'partial' con fallos; null si hay trabajo pendiente.
     // El ámbar lo deciden los fallos, no los módulos apagados.
-    nothingState() {
-      if (this.totalFindings === 0) return null;
-      if (this.actionableCount > 0) return null;
-      return this.failedCheckFindings.length > 0 ? 'partial' : 'clean';
+    estadoSinHallazgos() {
+      if (this.totalHallazgos === 0) return null;
+      if (this.numAccionables > 0) return null;
+      if (this.comprobacionesFallidas.length > 0) {
+        return 'partial';
+      } else {
+        return 'clean';
+      }
     },
 
     // Módulos apagados a mano, desde scanMeta.modules (los findings solo cubren dos de siete).
-    disabledNote() {
-      var n = this.modulesNotRequested.length;
+    notaDesactivados() {
+      var n = this.modulosNoSolicitados.length;
       if (!n) return null;
-      return n === 1
-        ? '1 comprobación no se ha ejecutado porque la desactivaste:'
-        : n + ' comprobaciones no se han ejecutado porque las desactivaste:';
+      if (n === 1) {
+        return '1 comprobación no se ha ejecutado porque la desactivaste:';
+      } else {
+        return n + ' comprobaciones no se han ejecutado porque las desactivaste:';
+      }
     },
 
     // Una frase por bucket que exista de verdad; los declarados se explican en su propia tarjeta.
-    nothingBuckets() {
+    motivosSinHallazgos() {
       var out = [];
-      var nAgg = this.aggregateFindings.length;
-      var nInv = this.inventoryFindings.length;
+      var nAgg = this.hallazgosAgregados.length;
+      var nInv = this.hallazgosInventario.length;
 
       if (nAgg > 0) {
+        let frase;
+        if (nAgg === 1) {
+          frase = 'Hay <strong>1 resumen</strong> de vulnerabilidades que no puedes accionar';
+        } else {
+          frase = 'Hay <strong>' + nAgg + ' resúmenes</strong> de vulnerabilidades que no puedes accionar';
+        }
         out.push(
-          (nAgg === 1 ? 'Hay <strong>1 resumen</strong> de vulnerabilidades que no puedes accionar'
-                      : 'Hay <strong>' + nAgg + ' resúmenes</strong> de vulnerabilidades que no puedes accionar') +
+          frase +
           '. Cada uno explica en su tarjeta de qué se trata y por qué no hay nada que hacer.'
         );
       }
 
       if (nInv > 0) {
+        let frase;
+        if (nInv === 1) {
+          frase = 'Hay <strong>1 hallazgo informativo</strong>';
+        } else {
+          frase = 'Hay <strong>' + nInv + ' hallazgos informativos</strong>';
+        }
         out.push(
-          (nInv === 1 ? 'Hay <strong>1 hallazgo informativo</strong>'
-                      : 'Hay <strong>' + nInv + ' hallazgos informativos</strong>') +
+          frase +
           ' sobre el estado de tu equipo (procesador, memoria, almacenamiento, software ' +
           'instalado). Son datos, no problemas.'
         );
@@ -1089,59 +1101,77 @@ export default {
     },
 
     // ── Alcance del escaneo: parsed.scan de trivy-fs.js tal cual.
-    trivyScan() {
+    escaneoTrivy() {
       var raw = this.auditData && this.auditData.raw;
       var t = raw && raw.trivy;
       return (t && !t.skipped && t.scan) || null;
     },
 
     // Subcarpetas excluidas a propósito: decisión, tono neutro.
-    skippedByChoice() {
-      var ch = this.trivyScan && this.trivyScan.children;
+    excluidasAProposito() {
+      var ch = this.escaneoTrivy && this.escaneoTrivy.children;
       return ((ch && ch.skipped) || []).filter(function(s) { return s.kind !== 'error'; });
     },
 
     // Subcarpetas que no se pudieron analizar: hueco del informe que el usuario debe ver.
-    skippedByError() {
-      var ch = this.trivyScan && this.trivyScan.children;
+    excluidasPorError() {
+      var ch = this.escaneoTrivy && this.escaneoTrivy.children;
       return ((ch && ch.skipped) || []).filter(function(s) { return s.kind === 'error'; });
     },
 
-    scannedChildren() {
-      var ch = this.trivyScan && this.trivyScan.children;
+    carpetasAnalizadas() {
+      var ch = this.escaneoTrivy && this.escaneoTrivy.children;
       return (ch && ch.scanned) || [];
     },
 
-    sysPkgs() {
+    paquetesSistema() {
       var m = this.auditData && this.auditData.scanMeta;
       return (m && m.systemPackages) || null;
     },
 
-    // Inventario de sw-inventory: otra herramienta y otra cifra, no se mezcla con sysPkgs.
-    swPkgs() {
+    // Inventario de sw-inventory: otra herramienta y otra cifra, no se mezcla con paquetesSistema.
+    paquetesSoftware() {
       var m = this.auditData && this.auditData.scanMeta;
       return (m && m.swInventory) || null;
     },
 
-    // Texto por estado y gestor; el estado lo da systemPackagesSupport() en trivy-fs.js.
-    sysPkgNotice() {
-      var sp = this.sysPkgs;
+    // Texto por estado y gestor; el estado lo da soportePaquetesSistema() en trivy-fs.js.
+    avisoPaquetes() {
+      var sp = this.paquetesSistema;
       if (!sp) return null;
       var mgr = sp.managerLabel || sp.manager || 'tu gestor de paquetes';
       var plat = (this.auditData && this.auditData.host && this.auditData.host.platform) || '';
 
       if (sp.status === 'unsupported-manager') {
+        // `requested` distingue "nadie lo pidió" de "lo pediste y no se pudo".
+        let entrada;
+        if (sp.requested) {
+          entrada = 'Lo has activado en la configuración del nodo, pero no ha podido hacerse.';
+        } else {
+          entrada = null;
+        }
+        let gestor;
+        if (sp.manager) {
+          gestor = ' (tu distribución usa ' + mgr + ')';
+        } else {
+          gestor = '';
+        }
+        let consejo;
+        if (sp.manager === 'pacman') {
+          consejo = 'Mantenlos al día por tu cuenta con: sudo pacman -Syu';
+        } else {
+          consejo = null;
+        }
         return {
           tone: 'warn', ico: 'alert',
           title: 'Los paquetes del sistema no se han analizado',
-          // `requested` distingue "nadie lo pidió" de "lo pediste y no se pudo".
-          lead: sp.requested ? 'Lo has activado en la configuración del nodo, pero no ha podido hacerse.' : null,
+          lead: entrada,
           body: 'Trivy ha analizado este equipo y no ha reconocido su base de datos de paquetes' +
-                (sp.manager ? ' (tu distribución usa ' + mgr + ')' : '') + '. ' +
+                gestor + '. ' +
                 'Tu carpeta personal sí se ha analizado y los hallazgos de abajo la cubren, pero todo el ' +
                 'software instalado por el sistema ha quedado fuera.',
           warning: 'Esto no quiere decir que esos paquetes estén libres de vulnerabilidades: quiere decir que no se han podido comprobar.',
-          hint: sp.manager === 'pacman' ? 'Mantenlos al día por tu cuenta con: sudo pacman -Syu' : null
+          hint: consejo
         };
       }
       if (sp.status === 'supported-not-run') {
@@ -1160,21 +1190,41 @@ export default {
       }
       if (sp.status === 'scanned') {
         // Cada mitad sale de su fuente (trivy-fs y trivy-rootfs); sin dato, no se escribe la frase.
-        var carpeta = this.trivyScan && this.trivyScan.target;
-        var nSub = this.scannedChildren.length;
-        var sistema = sp.packages != null
-          ? sp.packages + ' paquetes del sistema (' + (sp.osFamily || 'el sistema') +
-            (sp.osName ? ' ' + sp.osName : '') + ', según Trivy)'
-          : 'el software instalado por el sistema operativo';
+        var carpeta = this.escaneoTrivy && this.escaneoTrivy.target;
+        var nSub = this.carpetasAnalizadas.length;
+        var sistema;
+        if (sp.packages != null) {
+          let version;
+          if (sp.osName) {
+            version = ' ' + sp.osName;
+          } else {
+            version = '';
+          }
+          sistema = sp.packages + ' paquetes del sistema (' + (sp.osFamily || 'el sistema') +
+              version + ', según Trivy)';
+        } else {
+          sistema = 'el software instalado por el sistema operativo';
+        }
+        let titulo;
+        let cobertura;
+        if (carpeta) {
+          titulo = 'Se ha analizado tu carpeta personal y los paquetes del sistema';
+          let subcarpetas;
+          if (nSub) {
+            subcarpetas = ' (' + nSub + ' subcarpetas)';
+          } else {
+            subcarpetas = '';
+          }
+          cobertura = 'El informe cubre ' + carpeta + subcarpetas + ' y ';
+        } else {
+          titulo = 'Se han analizado los paquetes del sistema';
+          cobertura = 'El informe cubre ';
+        }
         return {
           tone: 'ok', ico: 'check',
-          title: carpeta
-            ? 'Se ha analizado tu carpeta personal y los paquetes del sistema'
-            : 'Se han analizado los paquetes del sistema',
+          title: titulo,
           lead: null,
-          body: (carpeta
-                  ? 'El informe cubre ' + carpeta + (nSub ? ' (' + nSub + ' subcarpetas)' : '') + ' y '
-                  : 'El informe cubre ') +
+          body: cobertura +
                 sistema + '. ' +
                 'Es la cobertura más completa que LoCoAudit puede ofrecer en este equipo.',
           warning: null, hint: null
@@ -1214,37 +1264,41 @@ export default {
     },
 
     // Nivel 2 si el hueco se cierra reintentando o instalando; 3 si es un límite fijo de la plataforma.
-    // Sale de sysPkgs.status, la misma fuente que sysPkgNotice().
-    sysPkgNoticeLevel() {
-      var st = this.sysPkgs && this.sysPkgs.status;
-      return (st === 'unsupported-manager' || st === 'supported-not-run' || st === 'failed') ? 2 : 3;
+    // Sale de paquetesSistema.status, la misma fuente que avisoPaquetes().
+    nivelAvisoPaquetes() {
+      var st = this.paquetesSistema && this.paquetesSistema.status;
+      if (st === 'unsupported-manager' || st === 'supported-not-run' || st === 'failed') {
+        return 2;
+      } else {
+        return 3;
+      }
     },
 
-    riskLabel() {
+    etiquetaRiesgo() {
       var MAP = {
         INFO: 'Todo en orden', LOW: 'Riesgo Bajo',
         MEDIUM: 'Riesgo Moderado', HIGH: 'Riesgo Alto', CRITICAL: 'Riesgo Crítico'
       };
-      return MAP[this.maxSev] || this.maxSev;
+      return MAP[this.severidadMaxima] || this.severidadMaxima;
     },
 
-    riskClass() {
+    claseRiesgo() {
       var MAP = { CRITICAL: 'critical', HIGH: 'high', MEDIUM: 'medium', LOW: 'low', INFO: 'info' };
-      return MAP[this.maxSev] || 'info';
+      return MAP[this.severidadMaxima] || 'info';
     },
 
-    uptimeHuman() {
-      return this.fmtUptime(this.auditData && this.auditData.host && this.auditData.host.uptimeSec);
+    tiempoActivo() {
+      return this.formatearTiempoActivo(this.auditData && this.auditData.host && this.auditData.host.uptimeSec);
     },
 
-    scanTime() {
+    horaEscaneo() {
       var ts = this.auditData && this.auditData.timestamp;
       if (!ts) return '—';
       return new Date(ts).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
     },
 
     // El índice llega como métrica en scanMeta.lynis; la rama de findings es para payloads antiguos.
-    lynisIdx() {
+    indiceLynis() {
       var meta = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.lynis;
       if (meta && meta.hardeningIndex != null) return meta.hardeningIndex;
 
@@ -1256,11 +1310,15 @@ export default {
       }
       if (!f) return null;
       var m = (f.evidence || '').match(/(\d+)\/100/);
-      return m ? parseInt(m[1], 10) : null;
+      if (m) {
+        return parseInt(m[1], 10);
+      } else {
+        return null;
+      }
     },
 
     // Subtítulo del gauge: "167 controles · Lynis 3.1.6" cuando el payload lo trae.
-    lynisMetaLine() {
+    lineaMetaLynis() {
       var meta = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.lynis;
       if (!meta) return '';
       var parts = [];
@@ -1270,47 +1328,55 @@ export default {
     },
 
     // Presentacionales: solo reformatean valores que ya se muestran en el informe.
-    modulesLabel() {
-      var m = this.modules;
+    etiquetaModulos() {
+      var m = this.modulos;
       if (!m.length) return null;
       var run = m.filter(function(x) { return x.status === 'ok'; }).length;
       return run + ' de ' + m.length;
     },
 
-    lynisTests() {
+    controlesLynis() {
       var meta = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.lynis;
       return (meta && meta.testsDone) || null;
     },
 
     // Herramientas con su versión, de donde ya se muestran; si una no consta, no se inventa.
-    toolSources() {
+    herramientas() {
       var out = [];
-      var t = (this.trivyScan && this.trivyScan.trivyVersion) ||
-              (this.sysPkgs && this.sysPkgs.trivyVersion);
+      var t = (this.escaneoTrivy && this.escaneoTrivy.trivyVersion) ||
+              (this.paquetesSistema && this.paquetesSistema.trivyVersion);
       if (t) out.push('Trivy ' + t);
       var lm = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.lynis;
       if (lm && lm.version) out.push('Lynis ' + lm.version);
-      return out.length ? out.join(' · ') : null;
+      if (out.length) {
+        return out.join(' · ');
+      } else {
+        return null;
+      }
     },
 
-    lynisColor() {
-      if (this.lynisIdx === null) return this.tok.textSecondary;
-      if (this.lynisIdx < 30) return this.tok.critical;
-      if (this.lynisIdx < 55) return this.tok.high;
+    colorLynis() {
+      if (this.indiceLynis === null) return this.tok.textSecondary;
+      if (this.indiceLynis < 30) return this.tok.critical;
+      if (this.indiceLynis < 55) return this.tok.high;
       return this.tok.low;
     },
 
-    // arc length = lynisIdx% of the visible 221-unit arc; total circumference r=44 ≈ 276
-    gaugeStroke() {
-      if (this.lynisIdx === null) return 0;
-      return Math.round(this.lynisIdx / 100 * 221);
+    // arc length = indiceLynis% of the visible 221-unit arc; total circumference r=44 ≈ 276
+    trazoIndicador() {
+      if (this.indiceLynis === null) return 0;
+      return Math.round(this.indiceLynis / 100 * 221);
     },
 
-    ramData() {
+    datosRam() {
       var cm = this.auditData && this.auditData.raw && this.auditData.raw.cpuMemory;
       if (!cm || !cm.memory) return null;
-      var pct = (cm.memory.usedGiB && cm.memory.totalGiB)
-        ? Math.round(cm.memory.usedGiB / cm.memory.totalGiB * 100) : null;
+      var pct;
+      if (cm.memory.usedGiB && cm.memory.totalGiB) {
+        pct = Math.round(cm.memory.usedGiB / cm.memory.totalGiB * 100);
+      } else {
+        pct = null;
+      }
       return {
         totalGiB: cm.memory.totalGiB,
         usedGiB:  cm.memory.usedGiB,
@@ -1319,17 +1385,23 @@ export default {
       };
     },
 
-    cpuData() {
+    datosCpu() {
       var cm = this.auditData && this.auditData.raw && this.auditData.raw.cpuMemory;
       if (!cm || !cm.cpu) return null;
+      let carga;
+      if (Array.isArray(cm.cpu.loadAvg)) {
+        carga = cm.cpu.loadAvg;
+      } else {
+        carga = null;
+      }
       return {
         model:   cm.cpu.model  || '—',
         cores:   cm.cpu.cores  || 1,
-        loadAvg: Array.isArray(cm.cpu.loadAvg) ? cm.cpu.loadAvg : null
+        loadAvg: carga
       };
     },
 
-    diskData() {
+    datosDisco() {
       var disk = this.auditData && this.auditData.raw && this.auditData.raw.disk;
       if (!Array.isArray(disk) || disk.length === 0) return [];
       var platform = this.auditData.host && this.auditData.host.platform;
@@ -1339,18 +1411,34 @@ export default {
         return !(platform === 'darwin' && d.mount === '/');
       }).map(function(d) {
         var pct = d.usedPercent || 0;
+        let libre;
+        if (d.freeGB != null) {
+          libre = d.freeGB;
+        } else {
+          libre = Math.round((d.totalGB - d.usedGB) * 100) / 100;
+        }
+        let color;
+        if (pct >= 90) {
+          color = T.critical;
+        } else if (pct >= 75) {
+          color = T.high;
+        } else if (pct >= 60) {
+          color = T.medium;
+        } else {
+          color = T.low;
+        }
         return {
           mount:       d.mount,
           usedPercent: pct,
           usedGB:      d.usedGB,
           totalGB:     d.totalGB,
-          freeGB:      d.freeGB != null ? d.freeGB : Math.round((d.totalGB - d.usedGB) * 100) / 100,
-          sevColor:    pct >= 90 ? T.critical : pct >= 75 ? T.high : pct >= 60 ? T.medium : T.low
+          freeGB:      libre,
+          sevColor:    color
         };
       });
     },
 
-    groups() {
+    grupos() {
       var findings = this.auditData && this.auditData.findings;
       if (!findings) return [];
       var fsev = this.filterSev;   // filtro por severidad (tarjetas clicables)
@@ -1375,7 +1463,12 @@ export default {
         if (f.skipped === true) return;
         if (fsev !== 'all' && (f.severity || '').toLowerCase() !== fsev) return;
         var c = (f.category || 'other').toLowerCase();
-        var key = CATS[c] ? c : 'other';
+        var key;
+        if (CATS[c]) {
+          key = c;
+        } else {
+          key = 'other';
+        }
         if (!catMap[key]) catMap[key] = [];
         catMap[key].push(f);
       });
@@ -1394,37 +1487,37 @@ export default {
       }).sort(function(a, b) { return a.order - b.order; });
     },
 
-    secEvents() {
+    eventosSeguridad() {
       // payload.securityEvents = { windowHours, events: [{ts,type,user,origin,detail}], truncated }
       return (this.auditData && this.auditData.securityEvents) || null;
     },
 
     // Intentos de acceso (eventos ocurridos); todo menos las sesiones activas.
-    accessEvents() {
-      var evs = (this.secEvents && this.secEvents.events) || [];
+    eventosAcceso() {
+      var evs = (this.eventosSeguridad && this.eventosSeguridad.events) || [];
       return evs.filter(function(e) { return e.type !== 'session'; });
     },
 
     // Sesiones activas AHORA MISMO (estado presente, salida de `who`): type 'session'.
-    sessionEvents() {
-      var evs = (this.secEvents && this.secEvents.events) || [];
+    eventosSesion() {
+      var evs = (this.eventosSeguridad && this.eventosSeguridad.events) || [];
       return evs.filter(function(e) { return e.type === 'session'; });
     },
 
     // Si no se consultó (p. ej. Windows Home sin qwinsta), una lista vacía no significa nada.
     // Payloads antiguos sin el campo: se asume consultado.
-    sessionsChecked() {
-      var m = this.secEvents;
+    sesionesRevisadas() {
+      var m = this.eventosSeguridad;
       return !m || m.sessionsChecked !== false;
     },
 
-    catBars() {
+    barrasCategoria() {
       var SEV_ORDER = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 };
       var T = this.tok;
       // `color` rellena la barra; `textColor` (tono 700) pinta la cifra con contraste suficiente.
       var SEV_COLOR = { CRITICAL: T.critical, HIGH: T.high, MEDIUM: T.medium, LOW: T.low, INFO: T.info };
       var SEV_TEXT  = { CRITICAL: T.criticalText, HIGH: T.highText, MEDIUM: T.mediumText, LOW: T.lowText, INFO: T.infoText };
-      var nonEmpty = this.groups.filter(function(g) { return g.items.length > 0; });
+      var nonEmpty = this.grupos.filter(function(g) { return g.items.length > 0; });
       if (!nonEmpty.length) return [];
       var maxCount = Math.max.apply(null, nonEmpty.map(function(g) { return g.items.length; }));
       return nonEmpty.map(function(g) {
@@ -1433,20 +1526,26 @@ export default {
           var s = (f.severity || '').toUpperCase();
           if ((SEV_ORDER[s] || 0) > (SEV_ORDER[maxSev] || 0)) maxSev = s;
         });
+        let porcentaje;
+        if (maxCount > 0) {
+          porcentaje = Math.round(g.items.length / maxCount * 100);
+        } else {
+          porcentaje = 0;
+        }
         return {
           key:   g.key,
           label: g.label,
           count: g.items.length,
-          pct:   maxCount > 0 ? Math.round(g.items.length / maxCount * 100) : 0,
+          pct:   porcentaje,
           color: SEV_COLOR[maxSev] || T.textMuted,
           textColor: SEV_TEXT[maxSev] || T.textSecondary
         };
       });
     },
 
-    donutSegments() {
+    segmentosDonut() {
       var C = 339.3; // circumference r=54
-      var c = this.counts;
+      var c = this.conteos;
       var T = this.tok;   // atributo :stroke del <circle>: fuera del alcance de var()
       var total = c.critical + c.high + c.medium + c.low + c.info;
       if (total === 0) return [];
@@ -1485,18 +1584,68 @@ export default {
         }
         this.auditData    = newMsg.payload;
         this.state        = 'done';
-        this.readTokens();   // síncrono: el primer pintado de los resultados ya va con color
+        this.leerTokens();   // síncrono: el primer pintado de los resultados ya va con color
         this.openGroups   = {};
         this.openFindings = {};
-        this.resetChats();
+        this.reiniciarChats();
       }
     }
   },
 
   methods: {
+    pulsado(sev) {
+      if (this.filterSev === sev) {
+        return 'true';
+      } else {
+        return 'false';
+      }
+    },
+
+    claseAviso() {
+      if (this.omitidas.failed > 0) {
+        return 'is-warn';
+      } else {
+        return 'is-neutral';
+      }
+    },
+
+    iconoAviso() {
+      if (this.omitidas.failed > 0) {
+        return '#lca-i-alert';
+      } else {
+        return '#lca-i-info';
+      }
+    },
+
+    iconoModulo(m) {
+      if (m.status === 'ok') {
+        return '#lca-i-check';
+      } else if (m.status === 'failed') {
+        return '#lca-i-alert';
+      } else {
+        return '#lca-i-minus';
+      }
+    },
+
+    iconoRam() {
+      if (this.datosRam.platform === 'darwin') {
+        return '#lca-i-apple';
+      } else {
+        return '#lca-i-memory';
+      }
+    },
+
+    claseMensaje(cm) {
+      if (cm.role === 'user') {
+        return 'chat-user';
+      } else {
+        return 'chat-ai';
+      }
+    },
+
     // ── Lee los tokens del :root para atributos SVG y estilos en JS, donde no llega var().
     // Si una lectura vuelve vacía se conserva la anterior.
-    readTokens() {
+    leerTokens() {
       var cs;
       try { cs = getComputedStyle(document.documentElement); } catch (e) { return; }
       var NAMES = {
@@ -1515,19 +1664,23 @@ export default {
       if (got) this.tok = next;
     },
 
-    toggleGroup(key) {
+    alternarGrupo(key) {
       this.openGroups = Object.assign({}, this.openGroups, { [key]: !this.openGroups[key] });
     },
-    toggleFinding(key) {
+    alternarHallazgo(key) {
       this.openFindings = Object.assign({}, this.openFindings, { [key]: !this.openFindings[key] });
     },
     // Filtro por severidad: clic en la tarjeta activa/desactiva ese filtro.
-    toggleSevFilter(sev) {
-      this.filterSev = this.filterSev === sev ? 'all' : sev;
+    alternarFiltroSeveridad(sev) {
+      if (this.filterSev === sev) {
+        this.filterSev = 'all';
+      } else {
+        this.filterSev = sev;
+      }
     },
 
     // Origen del comando: lo genera LoCoAudit a partir del análisis de la herramienta.
-    originLabel(source) {
+    etiquetaOrigen(source) {
       // Sin "· " delante: el separador lo pone quien compone la línea.
       var M = {
         trivy: 'a partir del análisis de Trivy',
@@ -1539,20 +1692,26 @@ export default {
     },
 
     // ── Descarga de reporte (HTML imprimible + JSON) ──────────────────────────
-    _escHtml(s) {
-      return String(s == null ? '' : s)
+    escaparHtml(s) {
+      let valor;
+      if (s == null) {
+        valor = '';
+      } else {
+        valor = s;
+      }
+      return String(valor)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
     },
-    _reportBasename(ext) {
+    nombreInforme(ext) {
       var d = new Date();
-      var p = function(n) { return String(n).padStart(2, '0'); };
-      var stamp = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
-                  '_' + p(d.getHours()) + p(d.getMinutes());
+      var dosCifras = function(n) { return String(n).padStart(2, '0'); };
+      var stamp = d.getFullYear() + '-' + dosCifras(d.getMonth() + 1) + '-' + dosCifras(d.getDate()) +
+                  '_' + dosCifras(d.getHours()) + dosCifras(d.getMinutes());
       var type = (this.auditData && this.auditData.auditType) || 'audit';
       return 'locoaudit-' + type + '-' + stamp + '.' + ext;
     },
-    _triggerDownload(filename, content, mime) {
+    descargar(filename, content, mime) {
       var blob = new Blob([content], { type: mime });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
@@ -1561,17 +1720,17 @@ export default {
       document.body.removeChild(a);
       setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
     },
-    downloadJson() {
+    descargarJson() {
       if (!this.auditData) return;
-      this._triggerDownload(this._reportBasename('json'),
+      this.descargar(this.nombreInforme('json'),
         JSON.stringify(this.auditData, null, 2), 'application/json');
     },
-    downloadHtml() {
+    descargarHtml() {
       if (!this.auditData) return;
-      this._triggerDownload(this._reportBasename('html'),
-        this._buildHtmlReport(), 'text/html;charset=utf-8');
+      this.descargar(this.nombreInforme('html'),
+        this.construirInforme(), 'text/html;charset=utf-8');
     },
-    _buildHtmlReport() {
+    construirInforme() {
       try {
         // LCA:SNAPSHOT:START — única fuente: lib/snapshot-body.txt (build-dashboards.js). NO EDITAR.
       // El export es una foto del DOM ya renderizado, así no puede divergir del dashboard.
@@ -1606,23 +1765,31 @@ export default {
         + '.scope-detail{display:block!important}'
         + '[data-lca-acc]{cursor:pointer}.command-btn,.ia-copy-btn{cursor:pointer}'
         + '@media print{[class*="finding-detail"],[class*="finding-body"],[class*="group-body"],[class*="group-findings"]{display:block!important;max-height:none!important;opacity:1!important;overflow:visible!important}}';
-      var toggleJs = "(function(){document.addEventListener('click',function(e){var cb=e.target.closest('.command-btn,.ia-copy-btn');if(cb){var box=cb.parentElement,c=box&&box.querySelector('code');var t=c?c.textContent:'';try{navigator.clipboard.writeText(t);}catch(_){}var o=cb.textContent;cb.textContent='\\u2713 Copiado';setTimeout(function(){cb.textContent=o;},1500);return;}var h=e.target.closest('[data-lca-acc]');if(!h)return;var b=h.nextElementSibling;if(!b)return;var willOpen=b.getAttribute('data-lca-open')==='0';b.style.display=willOpen?'':'none';b.classList.toggle('open',willOpen);b.setAttribute('data-lca-open',willOpen?'1':'0');var cv=h.querySelector('[class*=chevron]');if(cv)cv.classList.toggle('open',willOpen);});})();";
-      var esc = function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+      var toggleJs = "(function(){document.addEventListener('click',function(e){var cb=e.target.closest('.command-btn,.ia-copy-btn');if(cb){var box=cb.parentElement,c=box&&box.querySelector('code');var t='';if(c){t=c.textContent;}try{navigator.clipboard.writeText(t);}catch(_){}var o=cb.textContent;cb.textContent='\\u2713 Copiado';setTimeout(function(){cb.textContent=o;},1500);return;}var h=e.target.closest('[data-lca-acc]');if(!h)return;var b=h.nextElementSibling;if(!b)return;var willOpen=b.getAttribute('data-lca-open')==='0';if(willOpen){b.style.display='';}else{b.style.display='none';}b.classList.toggle('open',willOpen);if(willOpen){b.setAttribute('data-lca-open','1');}else{b.setAttribute('data-lca-open','0');}var cv=h.querySelector('[class*=chevron]');if(cv)cv.classList.toggle('open',willOpen);});})();";
+      var escapar = function (s) {
+        var texto;
+        if (s == null) {
+          texto = '';
+        } else {
+          texto = s;
+        }
+        return String(texto).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      };
       var titleMap = { image: 'Imagen', host: 'Host', network: 'Red' };
       var hn = (payload.host && payload.host.hostname) || '';
       return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">'
         + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        + '<title>LoCoAudit — ' + esc(titleMap[auditType] || 'Auditoria') + ' — ' + esc(hn) + '</title>'
+        + '<title>LoCoAudit — ' + escapar(titleMap[auditType] || 'Auditoria') + ' — ' + escapar(hn) + '</title>'
         + '<style>' + css + '\n' + extra + '</style></head><body><div class="lca-export">'
         + clone.innerHTML + '</div><script>' + toggleJs + '<\/script></body></html>';
         // LCA:SNAPSHOT:END
       } catch (e) {
         console.error('[LoCoAudit] export snapshot fallo, uso tabla de respaldo:', e);
-        return this._buildHtmlReportFallback();
+        return this.construirInformeSencillo();
       }
     },
-    _buildHtmlReportFallback() {
-      var esc = this._escHtml;
+    construirInformeSencillo() {
+      var escapar = this.escaparHtml;
       var a = this.auditData || {};
       var host = a.host || {};
       var counts = (a.summary && a.summary.counts) || {};
@@ -1632,22 +1799,32 @@ export default {
       var sevLabelMap = { critical: 'Crítico', high: 'Alto', medium: 'Medio', low: 'Bajo', info: 'Info' };
       var sevColor = { critical: '#B91C1C', high: '#C2410C', medium: '#A16207', low: '#15803D', info: '#0369A1' };
 
-      var rank = function(f) {
+      var rangoDe = function(f) {
         var r = sevOrder[(f.severity || 'info').toLowerCase()];
-        return r === undefined ? 9 : r;
+        if (r === undefined) {
+          return 9;
+        } else {
+          return r;
+        }
       };
-      var sorted = findings.slice().sort(function(x, y) { return rank(x) - rank(y); });
+      var sorted = findings.slice().sort(function(x, y) { return rangoDe(x) - rangoDe(y); });
 
       var rows = sorted.map(function(f) {
         var sev = (f.severity || 'info').toLowerCase();
         var origen = f.image || f.category || '—';
+        let arreglo;
+        if (f.fix) {
+          arreglo = '<code>' + escapar(f.fix) + '</code>';
+        } else {
+          arreglo = '—';
+        }
         return '<tr>' +
-          '<td><span class="sev" style="background:' + sevColor[sev] + '">' + esc(sevLabelMap[sev] || sev) + '</span></td>' +
-          '<td class="mono">' + esc(f.id) + '</td>' +
-          '<td class="mono">' + esc(origen) + '</td>' +
-          '<td>' + esc(f.title) + '</td>' +
-          '<td>' + esc(f.evidence) + '</td>' +
-          '<td>' + (f.fix ? '<code>' + esc(f.fix) + '</code>' : '—') + '</td>' +
+          '<td><span class="sev" style="background:' + sevColor[sev] + '">' + escapar(sevLabelMap[sev] || sev) + '</span></td>' +
+          '<td class="mono">' + escapar(f.id) + '</td>' +
+          '<td class="mono">' + escapar(origen) + '</td>' +
+          '<td>' + escapar(f.title) + '</td>' +
+          '<td>' + escapar(f.evidence) + '</td>' +
+          '<td>' + arreglo + '</td>' +
           '</tr>';
       }).join('');
 
@@ -1656,12 +1833,17 @@ export default {
           (sevLabelMap[s]) + ': <b>' + (counts[s] || 0) + '</b></span>';
       }).join(' ');
 
-      var dur = meta.durationMs ? (meta.durationMs / 1000).toFixed(1) + ' s' : '—';
+      var dur;
+      if (meta.durationMs) {
+        dur = (meta.durationMs / 1000).toFixed(1) + ' s';
+      } else {
+        dur = '—';
+      }
       var titleMap = { image: 'Imagen', host: 'Host', network: 'Red' };
       var auditTitle = titleMap[a.auditType] || 'Auditoría';
 
       return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">' +
-        '<title>LoCoAudit — ' + esc(auditTitle) + ' — ' + esc(host.hostname || '') + '</title>' +
+        '<title>LoCoAudit — ' + escapar(auditTitle) + ' — ' + escapar(host.hostname || '') + '</title>' +
         '<style>' +
         'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e1b2e;margin:32px;background:#fff}' +
         'h1{color:#7C3AED;margin:0 0 4px}.sub{color:#666;margin:0 0 20px}' +
@@ -1674,20 +1856,20 @@ export default {
         'code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f6f4fc;padding:1px 4px;border-radius:4px}' +
         'footer{margin-top:24px;color:#999;font-size:11px}@media print{body{margin:0}}' +
         '</style></head><body>' +
-        '<h1>LoCoAudit · Auditoría de ' + esc(auditTitle) + '</h1>' +
-        '<p class="sub">' + esc(host.hostname || '') + ' · ' + esc(host.platform || '') + '</p>' +
-        '<div class="meta">Fecha: <b>' + esc(this.scanTime || new Date().toLocaleString()) + '</b> · ' +
-        'Duración: <b>' + esc(dur) + '</b> · Hallazgos: <b>' + findings.length + '</b></div>' +
+        '<h1>LoCoAudit · Auditoría de ' + escapar(auditTitle) + '</h1>' +
+        '<p class="sub">' + escapar(host.hostname || '') + ' · ' + escapar(host.platform || '') + '</p>' +
+        '<div class="meta">Fecha: <b>' + escapar(this.horaEscaneo || new Date().toLocaleString()) + '</b> · ' +
+        'Duración: <b>' + escapar(dur) + '</b> · Hallazgos: <b>' + findings.length + '</b></div>' +
         '<div class="chips">' + sumChips + '</div>' +
         '<table><thead><tr><th>Severidad</th><th>ID</th><th>Origen</th><th>Título</th><th>Evidencia</th><th>Recomendación</th></tr></thead>' +
         '<tbody>' + (rows || '<tr><td colspan="6">Sin hallazgos.</td></tr>') + '</tbody></table>' +
-        '<footer>Generado por LoCoAudit · ' + esc(new Date().toISOString()) + '</footer>' +
+        '<footer>Generado por LoCoAudit · ' + escapar(new Date().toISOString()) + '</footer>' +
         '</body></html>';
     },
 
     // Gramática de `fix` (marcadores puestos en lib/normalizer.js):
     // "## " abre rama, "$ " comando del último paso, "> " nota sin numerar, resto paso nuevo.
-    parseFixSteps(fix) {
+    pasosDeSolucion(fix) {
       var res = { intro: [], notes: [], branches: [] };
       if (!fix) return res;
       var lineas = String(fix).split('\n')
@@ -1704,7 +1886,13 @@ export default {
         if (s.indexOf('> ') === 0) {
           var nota = s.slice(2).trim();
           // Antes de la primera rama la nota cuelga del bloque introductorio.
-          if (nota) (actual ? actual.notes : res.notes).push(nota);
+          if (nota) {
+            if (actual) {
+              actual.notes.push(nota);
+            } else {
+              res.notes.push(nota);
+            }
+          }
           return;
         }
         if (s.indexOf('$ ') === 0) {
@@ -1728,74 +1916,91 @@ export default {
     },
 
     // El botón copia solo el comando; la nota se muestra aparte.
-    fixNote(f) {
+    notaSolucion(f) {
       if (!f || !f.command || !f.fix) return "";
       return String(f.fix).split("\n").slice(1).join("\n").trim();
     },
     // Todos los comandos de la ficha: `command` y los pasos con "$ ".
-    fixCommands(f) {
+    comandosSolucion(f) {
       if (!f || !f.fix) return [];
-      var cmds = f.command ? [String(f.command)] : [];
+      var cmds;
+      if (f.command) {
+        cmds = [String(f.command)];
+      } else {
+        cmds = [];
+      }
       try {
-        this.parseFixSteps(f.fix).branches.forEach(function (r) {
+        this.pasosDeSolucion(f.fix).branches.forEach(function (r) {
           r.steps.forEach(function (st) { if (st.cmd) cmds.push(st.cmd); });
         });
       } catch (e) { /* fix ilegible: queda el comando directo, si lo hay */ }
       return cmds;
     },
     // ¿El paso de resolución contiene algún comando (directo o dentro de un paso)?
-    fixHasCmd(f) {
-      return this.fixCommands(f).length > 0;
+    solucionConComando(f) {
+      return this.comandosSolucion(f).length > 0;
     },
     // Se mira el comando, no la prosa, para decidir el aviso de sudo.
-    fixNeedsSudo(f) {
-      return this.fixCommands(f).some(function (c) { return /^sudo(\s|$)/.test(String(c).trim()); });
+    solucionConSudo(f) {
+      return this.comandosSolucion(f).some(function (c) { return /^sudo(\s|$)/.test(String(c).trim()); });
     },
 
-    sevClass(sev) {
+    claseSeveridad(sev) {
       return (sev || 'info').toLowerCase();
     },
 
-    // Versión solo anotada en un fichero de dependencias; replica isActionable() del backend.
+    // Versión solo anotada en un fichero de dependencias; replica esAccionable() del backend.
     // '!== image' mantiene el comportamiento en payloads sin scope.
-    isDeclared(f) {
+    esDeclarado(f) {
       return f && f.origin === 'declared' && f.scope !== 'image';
     },
 
     // El reason arrastra la traza de Trivy: se corta por "Detalle:".
-    shortReason(r) {
+    motivoCorto(r) {
       if (!r) return 'motivo no disponible';
       var t = String(r).split('Detalle:')[0].trim();
       // Solo la primera frase; el resto ya está en el aviso.
       var p = t.indexOf('. ');
       if (p > 40) t = t.slice(0, p + 1);
-      return t.length > 200 ? t.slice(0, 197) + '…' : t;
+      if (t.length > 200) {
+        return t.slice(0, 197) + '…';
+      } else {
+        return t;
+      }
     },
 
     // Abrevia el home a "~".
-    shortPath(p) {
-      var t = this.trivyScan && this.trivyScan.target;
+    rutaCorta(p) {
+      var t = this.escaneoTrivy && this.escaneoTrivy.target;
       if (!p) return '—';
-      return (t && p.indexOf(t) === 0) ? '~' + p.slice(t.length) : p;
+      if (t && p.indexOf(t) === 0) {
+        return '~' + p.slice(t.length);
+      } else {
+        return p;
+      }
     },
 
     // ¿El finding trae metadatos estructurados de Trivy para la tira de detalles?
-    hasMeta(f) {
+    tieneMeta(f) {
       return !!(f.pkg || f.installedVersion || f.fixedVersion ||
                 (f.cvss != null) || f.cveCount || f.primaryUrl ||
                 f.control || f.detail || f.severitySource);
     },
 
-    lynisTypeLabel(f) {
-      return f.lynisType === 'warning' ? 'Aviso de Lynis' : 'Sugerencia de Lynis';
+    etiquetaTipoLynis(f) {
+      if (f.lynisType === 'warning') {
+        return 'Aviso de Lynis';
+      } else {
+        return 'Sugerencia de Lynis';
+      }
     },
 
-    sevLabel(sev) {
+    etiquetaSeveridad(sev) {
       var MAP = { critical: 'Crítico', high: 'Alto', medium: 'Medio', low: 'Bajo', info: 'Info' };
       return MAP[(sev || '').toLowerCase()] || (sev || '').toUpperCase();
     },
 
-    catLabel(cat) {
+    etiquetaCategoria(cat) {
       var MAP = {
         vulnerability: 'Vulnerab.', cpu: 'CPU', memory: 'RAM',
         system: 'Sistema', network: 'Red', disk: 'Disco',
@@ -1804,7 +2009,7 @@ export default {
       return MAP[(cat || '').toLowerCase()] || cat || '?';
     },
 
-    evTypeLabel(type) {
+    etiquetaTipoEvento(type) {
       var MAP = {
         'ssh-accepted': 'SSH OK', 'ssh-failed': 'SSH fallido',
         'sudo': 'sudo', 'sudo-failed': 'sudo fallido',
@@ -1815,23 +2020,27 @@ export default {
       return MAP[type] || type || '?';
     },
 
-    evBadgeClass(type) {
+    claseEtiquetaEvento(type) {
       var FAILED = ['ssh-failed', 'sudo-failed', 'logon-failed'];
       if (FAILED.indexOf(type) === -1) return 'ev-ok'; // verde: logins/sudo correctos y sesiones
       // Ráfaga (>= 10 fallos, mismo umbral que severity-map) en rojo; aislados en amarillo.
-      var evs = (this.secEvents && this.secEvents.events) || [];
+      var evs = (this.eventosSeguridad && this.eventosSeguridad.events) || [];
       var fails = evs.filter(function(e) { return FAILED.indexOf(e.type) !== -1; }).length;
-      return fails >= 10 ? 'ev-burst' : 'ev-fail';
+      if (fails >= 10) {
+        return 'ev-burst';
+      } else {
+        return 'ev-fail';
+      }
     },
 
-    fmtEvidence(ev) {
+    formatearEvidencia(ev) {
       if (typeof ev === 'object' && ev !== null) {
         try { return JSON.stringify(ev, null, 2); } catch(e) { return String(ev); }
       }
       return String(ev || '');
     },
 
-    fmtUptime(sec) {
+    formatearTiempoActivo(sec) {
       if (!sec) return '—';
       var d = Math.floor(sec / 86400);
       var h = Math.floor((sec % 86400) / 3600);
@@ -1843,28 +2052,32 @@ export default {
       return r.trim();
     },
 
-    fmtDuration(ms) {
+    formatearDuracion(ms) {
       if (!ms) return '—';
       var s = Math.floor(ms / 1000);
       var m = Math.floor(s / 60);
-      return m > 0 ? m + ' min ' + (s % 60) + ' s' : s + ' s';
+      if (m > 0) {
+        return m + ' min ' + (s % 60) + ' s';
+      } else {
+        return s + ' s';
+      }
     },
 
-    // Colores leídos con readTokens(): en una cadena de estilo no llega var().
-    cpuBarColor(ratio) {
+    // Colores leídos con leerTokens(): en una cadena de estilo no llega var().
+    colorBarraCpu(ratio) {
       if (ratio >= 0.80) return this.tok.critical;
       if (ratio >= 0.50) return this.tok.medium;
       return this.tok.low;
     },
 
-    ramBarStyle(pct) {
+    estiloBarraRam(pct) {
       var T = this.tok;
       if (pct >= 95) return 'linear-gradient(90deg,' + T.low + ',' + T.medium + ' 70%,' + T.high + ')';
       if (pct >= 85) return T.medium;
       return T.low;
     },
 
-    async copyCommand(text) {
+    async copiarComando(text) {
       try {
         await navigator.clipboard.writeText(text);
         this.copiedKey = text;
@@ -1884,12 +2097,16 @@ export default {
     // ── Chat con LLM ──────────────────────────────────────────
 
     // Clave por finding.id, no por posición (cambia al filtrar).
-    chatKey(f, groupKey, fi) {
-      return (f && f.id) ? 'id:' + f.id : 'idx:' + groupKey + '-' + fi;
+    claveChat(f, groupKey, fi) {
+      if (f && f.id) {
+        return 'id:' + f.id;
+      } else {
+        return 'idx:' + groupKey + '-' + fi;
+      }
     },
 
     // Escaneo nuevo: se borran las conversaciones de hallazgos que ya no existen.
-    resetChats() {
+    reiniciarChats() {
       this.chatEpoch++;
       this.chatOpen     = {};
       this.chatMessages = {};
@@ -1898,19 +2115,22 @@ export default {
     },
 
     // La primera vez lanza una pregunta automática; cerrar conserva el historial.
-    toggleChat(findingKey, finding) {
+    alternarChat(findingKey, finding) {
       var willOpen = !this.chatOpen[findingKey];
       this.chatOpen = Object.assign({}, this.chatOpen, { [findingKey]: willOpen });
       if (willOpen && !(this.chatMessages[findingKey] && this.chatMessages[findingKey].length)) {
-        this.sendChat(findingKey, finding,
+        this.enviarChat(findingKey, finding,
           'Explícame este hallazgo de forma sencilla: qué significa, por qué importa y cómo lo soluciono.');
       }
     },
 
-    async sendChat(findingKey, finding, presetQuestion) {
-      var question = presetQuestion != null
-        ? presetQuestion
-        : (this.chatInput[findingKey] || '').trim();
+    async enviarChat(findingKey, finding, presetQuestion) {
+      var question;
+      if (presetQuestion != null) {
+        question = presetQuestion;
+      } else {
+        question = (this.chatInput[findingKey] || '').trim();
+      }
       if (!question || this.chatLoading[findingKey]) return;
 
       var epoch = this.chatEpoch;
@@ -1937,9 +2157,11 @@ export default {
           })
         });
         var data = await res.json();
-        reply = (data && data.ok)
-          ? { role: 'assistant', content: data.content }
-          : { role: 'assistant', content: (data && data.error) || 'Error desconocido del asistente.', error: true };
+        if (data && data.ok) {
+          reply = { role: 'assistant', content: data.content };
+        } else {
+          reply = { role: 'assistant', content: (data && data.error) || 'Error desconocido del asistente.', error: true };
+        }
       } catch (e) {
         reply = { role: 'assistant', content: 'No se pudo contactar con el asistente: ' + (e.message || e), error: true };
       }
@@ -1953,7 +2175,7 @@ export default {
     },
 
     // Divide la respuesta en segmentos de texto y bloques de código (```).
-    parseChatContent(content) {
+    trocearRespuesta(content) {
       var text = String(content || '');
       var segments = [];
       var regex = /```[a-zA-Z0-9_-]*\n?([\s\S]*?)```/g;
@@ -1961,20 +2183,20 @@ export default {
       var m;
       while ((m = regex.exec(text)) !== null) {
         if (m.index > lastIndex) {
-          segments.push({ type: 'text', html: this.mdInline(text.slice(lastIndex, m.index)) });
+          segments.push({ type: 'text', html: this.markdownEnLinea(text.slice(lastIndex, m.index)) });
         }
         segments.push({ type: 'code', code: m[1].replace(/\n$/, '') });
         lastIndex = regex.lastIndex;
       }
       if (lastIndex < text.length) {
-        segments.push({ type: 'text', html: this.mdInline(text.slice(lastIndex)) });
+        segments.push({ type: 'text', html: this.markdownEnLinea(text.slice(lastIndex)) });
       }
       if (segments.length === 0) segments.push({ type: 'text', html: '' });
       return segments;
     },
 
     // Markdown mínimo y seguro: escapa HTML, `código`, **negrita** y saltos de línea.
-    mdInline(str) {
+    markdownEnLinea(str) {
       var esc = String(str)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       esc = esc.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
@@ -1984,9 +2206,9 @@ export default {
   },
 
   mounted() {
-    this.readTokens();
+    this.leerTokens();
     // Segunda lectura por si la hoja aún no estaba en el head al montar.
-    this.$nextTick(this.readTokens);
+    this.$nextTick(this.leerTokens);
 
     // Comprueba si hay un llm-config desplegado y qué modelo responde.
     var self = this;
@@ -2007,7 +2229,7 @@ export default {
 
   /* ═══ TOKENS ═══ Un hex igual a un token usa var(); los tonos profundos se quedan literales. */
   :root {
-    /* Severidad: referencia de diseño; también la lee readTokens() para el SVG. */
+    /* Severidad: referencia de diseño; también la lee leerTokens() para el SVG. */
     --critical: #DC2626;
     --critical-bg: #FEF2F2;
     --critical-border: #FECACA;

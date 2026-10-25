@@ -17,9 +17,9 @@
 
 const fs = require("fs");
 const path = require("path");
-const { parseLynisReport } = require("../../nodes/audit-host/modules/lynis");
-const { fromLynisRaw } = require("../../lib/normalizer");
-const { summarize, isActionable, lynisSeverity } = require("../../lib/severity-map");
+const { leerInformeLynis } = require("../../nodes/audit-host/modules/lynis");
+const { desdeLynis } = require("../../lib/normalizer");
+const { resumir, esAccionable, severidadLynis } = require("../../lib/severity-map");
 
 const FIXTURES = path.join(__dirname, "..", "fixtures", "lynis");
 
@@ -36,7 +36,7 @@ function ok(cond, label, detail) {
 function loadFixture(name) {
   const file = path.join(FIXTURES, name);
   if (!fs.existsSync(file)) return null;
-  return parseLynisReport(fs.readFileSync(file, "utf8"));
+  return leerInformeLynis(fs.readFileSync(file, "utf8"));
 }
 
 function byControl(findings, control) {
@@ -54,7 +54,7 @@ if (!macRaw) {
   skipped++;
 } else {
   const entries = macRaw.warnings.length + macRaw.suggestions.length;
-  const mac = fromLynisRaw(macRaw, "darwin", "brew");
+  const mac = desdeLynis(macRaw, "darwin", "brew");
 
   ok(macRaw.warnings.length === 2 && macRaw.suggestions.length === 16,
      `el .dat trae 2 avisos y 16 sugerencias`,
@@ -125,10 +125,10 @@ if (!macRaw) {
      "pero su campo 3 sí llega a la evidencia", file7524 && file7524.evidence);
 
   // Severidad y volumen.
-  const s = summarize(mac);
+  const s = resumir(mac);
   ok(s.actionable.total === 2,
      `accionables = 2 (AUTH-9262 y FIRE-4590)`, `salieron ${s.actionable.total}`);
-  const acc = mac.filter(isActionable).map((f) => f.control).sort();
+  const acc = mac.filter(esAccionable).map((f) => f.control).sort();
   ok(JSON.stringify(acc) === JSON.stringify(["AUTH-9262", "FIRE-4590"]),
      "y son exactamente esos dos", acc.join(", "));
   ok(mac.every((f) => f.severitySource === "locoaudit"),
@@ -148,7 +148,7 @@ if (!archRaw) {
   console.log("        --log-file /tmp/lynis.log --report-file /tmp/locoaudit-lynis-report.dat");
   skipped++;
 } else {
-  const arch = fromLynisRaw(archRaw, "linux", "pacman");
+  const arch = desdeLynis(archRaw, "linux", "pacman");
 
   const auth9286 = byControl(arch, "AUTH-9286");
   ok(auth9286.length >= 2,
@@ -203,7 +203,7 @@ if (!archRaw) {
      "ningún control cae en el cajón 'Otros controles de Lynis'",
      sinEtiqueta.map((f) => f.control).join(", "));
 
-  const s = summarize(arch);
+  const s = resumir(arch);
   console.log(`      volumen CachyOS: ${arch.length} findings · ` +
               `${s.actionable.total} accionables · ${s.informative.total} informativos`);
 }
@@ -212,23 +212,23 @@ if (!archRaw) {
 
 console.log("\n── 3 · La severidad es criterio de LoCoAudit, no valor por defecto ─\n");
 
-ok(lynisSeverity("FIRE-9999", "warning") === "high",
+ok(severidadLynis("FIRE-9999", "warning") === "high",
    "tramo A · aviso → alto (prefijo desconocido en la tabla por ID)");
-ok(lynisSeverity("FIRE-9999", "suggestion") === "low",
+ok(severidadLynis("FIRE-9999", "suggestion") === "low",
    "tramo A · sugerencia → bajo");
-ok(lynisSeverity("KRNL-5830", "warning") === "medium",
-   "tramo B · aviso → medio", lynisSeverity("KRNL-5830", "warning"));
-ok(lynisSeverity("KRNL-9999", "suggestion") === "info",
+ok(severidadLynis("KRNL-5830", "warning") === "medium",
+   "tramo B · aviso → medio", severidadLynis("KRNL-5830", "warning"));
+ok(severidadLynis("KRNL-9999", "suggestion") === "info",
    "tramo B · sugerencia → info");
-ok(lynisSeverity("TOOL-5002", "suggestion") === "info",
+ok(severidadLynis("TOOL-5002", "suggestion") === "info",
    "tramo C · sugerencia → info aunque el mapa por ID diga 'low'");
-ok(lynisSeverity("NETW-2704", "warning") === "info",
+ok(severidadLynis("NETW-2704", "warning") === "info",
    "el override por ID gana en avisos (falso positivo de ISP doméstico)");
-ok(lynisSeverity("ZZZZ-0000", "warning") === "medium",
+ok(severidadLynis("ZZZZ-0000", "warning") === "medium",
    "prefijo desconocido → tramo intermedio, no 'low' por defecto");
 
-const sevA = lynisSeverity("AUTH-0000", "warning");
-const sevB = lynisSeverity("AUTH-0000", "suggestion");
+const sevA = severidadLynis("AUTH-0000", "warning");
+const sevB = severidadLynis("AUTH-0000", "suggestion");
 ok(sevA !== sevB, "un aviso nunca pesa lo mismo que una sugerencia del mismo tramo",
    `${sevA} vs ${sevB}`);
 

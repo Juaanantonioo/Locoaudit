@@ -31,8 +31,8 @@ for (const [node, rel] of Object.entries(TEMPLATES)) {
   ok(t.includes("LCA-STYLE-DASH:" + node), `[${node}] falta sentinel LCA-STYLE-DASH:${node}`);
   ok(t.includes("lca-report-root"), `[${node}] falta clase lca-report-root`);
   ok(t.includes("LCA:SNAPSHOT:START"), `[${node}] falta el cuerpo snapshot`);
-  ok(t.includes("_buildHtmlReportFallback"), `[${node}] falta el fallback`);
-  ok(t.indexOf("LCA:SNAPSHOT:START") < t.indexOf("_buildHtmlReportFallback"), `[${node}] snapshot no es primario`);
+  ok(t.includes("construirInformeSencillo"), `[${node}] falta el fallback`);
+  ok(t.indexOf("LCA:SNAPSHOT:START") < t.indexOf("construirInformeSencillo"), `[${node}] snapshot no es primario`);
   // Dashboard 2.0 no admite código a nivel superior: el <script> arranca en export default.
   ok(/<script>\nexport default \{/.test(t), `[${node}] el <script> no arranca en export default`);
   ok(!t.includes("window.LCA_EXPORT") && !t.includes("LCA:EXPORT-LIB"), `[${node}] hay código global (rompe Dashboard 2.0)`);

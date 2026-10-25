@@ -23,8 +23,8 @@ const IS_WIN = process.platform === "win32";
 const executor = require(path.join(ROOT, "lib/executor"));
 const execReal = { ...executor };
 let esc = null;   // { exists(cmd), exec(cmd, timeout, opts) }
-executor.commandExists = async (cmd) => (esc && esc.exists ? esc.exists(cmd) : execReal.commandExists(cmd));
-executor.execCommand = async (cmd, t, opts) => (esc && esc.exec ? esc.exec(cmd, t, opts) : execReal.execCommand(cmd, t, opts));
+executor.existeComando = async (cmd) => (esc && esc.exists ? esc.exists(cmd) : execReal.existeComando(cmd));
+executor.ejecutar = async (cmd, t, opts) => (esc && esc.exec ? esc.exec(cmd, t, opts) : execReal.ejecutar(cmd, t, opts));
 
 function falla(msg, extra) {
   return Object.assign(new Error(msg), { stdout: "", stderr: "", code: 1 }, extra || {});
@@ -64,11 +64,11 @@ function stub(rel, fnName) {
 {
   const p = require.resolve(path.join(ROOT, "nodes/audit-host/modules/cpu-memory"));
   const real = require(p);
-  require.cache[p].exports = { ...real, runSystemModule: () => { if (lanza.runSystemModule) throw new Error("os.cpus reventó"); return real.runSystemModule(); } };
+  require.cache[p].exports = { ...real, ejecutarModuloSistema: () => { if (lanza.ejecutarModuloSistema) throw new Error("os.cpus reventó"); return real.ejecutarModuloSistema(); } };
 }
-stub("nodes/audit-host/modules/disk-storage", "getDiskInfo");
-stub("nodes/audit-host/modules/trivy-fs", "runTrivyFs");
-stub("nodes/audit-host/modules/security-events", "runSecurityEvents");
+stub("nodes/audit-host/modules/disk-storage", "infoDisco");
+stub("nodes/audit-host/modules/trivy-fs", "ejecutarTrivyFs");
+stub("nodes/audit-host/modules/security-events", "ejecutarEventos");
 
 function ejecutarNodo(config) {
   const nodePath = require.resolve(path.join(ROOT, "nodes/audit-host/audit-host"));
@@ -101,7 +101,7 @@ const JOURNAL_OK = {
     if (cmd.startsWith("journalctl")) return opts && opts.withStderr ? { stdout: "", stderr: "" } : "";
     if (cmd === "who") return "ana tty1 2026-10-24 09:00\n";
     if (cmd.startsWith("df")) return "Filesystem Type 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 ext4 1000 100 900 10% /\n";
-    return execReal.execCommand(cmd, _t, opts);
+    return execReal.ejecutar(cmd, _t, opts);
   },
 };
 
@@ -119,7 +119,7 @@ const JOURNAL_OK = {
        JSON.stringify(r.msg.payload.findings.filter((f) => f.skipped).map((f) => [f.id, f.kind])));
 
     // Rechazos asíncronos solos: antes salían como ejecutados y en verde.
-    lanza.getDiskInfo = lanza.runSecurityEvents = true;
+    lanza.infoDisco = lanza.ejecutarEventos = true;
     r = await ejecutarNodo(BASE);
     const m2 = Object.fromEntries(r.msg.payload.scanMeta.modules.map((m) => [m.id, m.status]));
     ok(m2["disk-storage"] === "failed" && m2["security-events"] === "failed" && m2["cpu-memory"] === "ok",
@@ -127,7 +127,7 @@ const JOURNAL_OK = {
     ok(r.status.fill !== "green" && r.status.shape === "ring" && /2 módulos sin completar/.test(r.status.text),
        "y el nodo se marca como incompleto, no en verde", JSON.stringify(r.status));
 
-    lanza.runSystemModule = lanza.getDiskInfo = lanza.runSecurityEvents = true;
+    lanza.ejecutarModuloSistema = lanza.infoDisco = lanza.ejecutarEventos = true;
     r = await ejecutarNodo(BASE);
     ok(r.msg !== null, "con módulos que lanzan el nodo emite payload", r.err && r.err.message);
     const mods = Object.fromEntries(r.msg.payload.scanMeta.modules.map((m) => [m.id, m]));
@@ -145,14 +145,14 @@ const JOURNAL_OK = {
        "los tres fallos llegan a checksSkipped", JSON.stringify(r.msg.payload.scanMeta.checksSkipped && r.msg.payload.scanMeta.checksSkipped.failed));
     ok(r.status.fill !== "green" && r.status.shape === "ring" && /3 módulos sin completar/.test(r.status.text),
        "con módulos fallidos el nodo queda en anillo y lo dice, no en verde", JSON.stringify(r.status));
-    lanza.runSystemModule = lanza.getDiskInfo = lanza.runSecurityEvents = false;
+    lanza.ejecutarModuloSistema = lanza.infoDisco = lanza.ejecutarEventos = false;
 
-    lanza.runTrivyFs = true;
+    lanza.ejecutarTrivyFs = true;
     r = await ejecutarNodo({ ...BASE, enableTrivy: true });
     const modT = r.msg && r.msg.payload.scanMeta.modules.find((m) => m.id === "trivy-fs");
     ok(r.err === null && modT && modT.status === "failed" && r.status.shape === "ring",
        "trivy-fs que lanza → módulo fallido, el resto del informe sale", JSON.stringify([r.err && r.err.message, modT, r.status]));
-    lanza.runTrivyFs = false;
+    lanza.ejecutarTrivyFs = false;
     esc = null;
   }));
 
@@ -185,39 +185,39 @@ const JOURNAL_OK = {
     delete process.env.SUDO_USER;
 
     fs.writeFileSync(modo, "a,b");
-    let res = await trivyFs.runTrivyFs({});
+    let res = await trivyFs.ejecutarTrivyFs({});
     ok(res.skipped === true && res.kind === "error", "fallan todas las carpetas → skipped kind error",
        JSON.stringify({ skipped: res.skipped, kind: res.kind, children: res.scan && res.scan.children }));
-    let f = normalizer.normalizeHost({ trivy: res }, { platform: "linux" });
+    let f = normalizer.normalizarHost({ trivy: res }, { platform: "linux" });
     ok(f.some((x) => x.id === "HOST-CVE-SKIP" && x.skipped === true), "y sale HOST-CVE-SKIP", JSON.stringify(f.map((x) => x.id)));
 
     fs.writeFileSync(modo, "b");
-    res = await trivyFs.runTrivyFs({});
+    res = await trivyFs.ejecutarTrivyFs({});
     ok(!res.skipped && res.scan.children.scanned.length === 1, "falla una de dos → el escaneo sigue", JSON.stringify(res.scan && res.scan.children));
-    f = normalizer.normalizeHost({ trivy: res }, { platform: "linux" });
+    f = normalizer.normalizarHost({ trivy: res }, { platform: "linux" });
     const par = f.find((x) => x.id === "HOST-CVE-PARTIAL");
     ok(par && par.skipped === true && par.kind === "error" && /~\/b/.test(par.evidence),
        "y sale HOST-CVE-PARTIAL (skipped, kind error) nombrando la carpeta", JSON.stringify(f.map((x) => [x.id, x.skipped, x.kind])));
 
     fs.writeFileSync(modo, "");
-    res = await trivyFs.runTrivyFs({});
-    f = normalizer.normalizeHost({ trivy: res }, { platform: "linux" });
+    res = await trivyFs.ejecutarTrivyFs({});
+    f = normalizer.normalizarHost({ trivy: res }, { platform: "linux" });
     ok(!res.skipped && !f.some((x) => x.skipped), "sin fallos ni skip ni PARTIAL", JSON.stringify(f.map((x) => x.id)));
 
     console.log("\n── 2b · trivy-fs: carpeta configurada que no existe o que es el home ─\n");
     fs.writeFileSync(modo, "");
-    res = await trivyFs.runTrivyFs({ target: "~/no-existe" });
+    res = await trivyFs.ejecutarTrivyFs({ target: "~/no-existe" });
     ok(res.skipped === true && res.kind === "error" && /no existe/.test(res.reason) && !/unidad de red/.test(res.reason),
        "carpeta configurada inexistente → skipped error que dice que no existe", JSON.stringify(res));
-    res = await trivyFs.runTrivyFs({ target: home });
+    res = await trivyFs.ejecutarTrivyFs({ target: home });
     ok(!res.skipped && res.scan && res.scan.mode === "fs-by-children",
        "el home escrito a mano se analiza carpeta a carpeta, como el de por defecto", JSON.stringify(res.scan && res.scan.mode));
-    res = await trivyFs.runTrivyFs({ target: "~" });
+    res = await trivyFs.ejecutarTrivyFs({ target: "~" });
     ok(!res.skipped && res.scan && res.scan.mode === "fs-by-children", "~ también va carpeta a carpeta");
-    res = await trivyFs.runTrivyFs({ target: path.join(home, "a") });
+    res = await trivyFs.ejecutarTrivyFs({ target: path.join(home, "a") });
     ok(!res.skipped && res.scan && res.scan.mode === "fs", "una subcarpeta concreta sigue yendo de una pasada");
     fs.writeFileSync(modo, "enoent");
-    res = await trivyFs.runTrivyFs({ target: path.join(home, "a") });
+    res = await trivyFs.ejecutarTrivyFs({ target: path.join(home, "a") });
     ok(res.skipped && res.walkError && /no existe/.test(res.reason) && !/unidad de red/.test(res.reason),
        "ruta inexistente durante el recorrido → no se culpa a una unidad de red", JSON.stringify(res.reason));
     fs.writeFileSync(modo, "");
@@ -227,7 +227,7 @@ const JOURNAL_OK = {
     const cwd = process.cwd();
     process.chdir(tmp);
     process.env.SUDO_USER = "nadie;touch SENTINEL";
-    trivyFs.resolveUserHome();
+    trivyFs.resolverHome();
     process.chdir(cwd);
     ok(!fs.existsSync(sentinel), "un SUDO_USER con ';' no ejecuta nada");
 
@@ -247,7 +247,7 @@ const JOURNAL_OK = {
     for (const c of CASOS) {
       for (const [tipo, out] of [["basura", c.basura], ["buena", c.buena]]) {
         esc = { exec: async () => { throw falla("exit 100", { stdout: out, stderr: "E: algo falló" }); } };
-        const r = await pending.getPendingUpdates({ pkgManager: c.mgr });
+        const r = await pending.actualizacionesPendientes({ pkgManager: c.mgr });
         if (tipo === "basura") {
           ok(r.skipped === true && r.kind === "error", `${c.mgr} falla sin paquetes legibles → skipped kind error`, JSON.stringify(r));
         } else {
@@ -255,7 +255,7 @@ const JOURNAL_OK = {
         }
       }
       esc = { exec: async () => c.buena };
-      const r = await pending.getPendingUpdates({ pkgManager: c.mgr });
+      const r = await pending.actualizacionesPendientes({ pkgManager: c.mgr });
       ok(!r.skipped && r.total === 1, `${c.mgr} sin error → igual que antes`);
     }
     esc = null;
@@ -271,21 +271,21 @@ const JOURNAL_OK = {
     });
 
     esc = linux(() => { throw falla("Command failed: journalctl", { stderr: "Failed to open journal" }); });
-    let r = await secEvents.runSecurityEvents(24);
+    let r = await secEvents.ejecutarEventos(24);
     ok(r.skipped === true && r.kind === "error", "fallan las tres consultas de journalctl → skipped kind error", JSON.stringify([r.skipped, r.kind, r.sources]));
-    let f = normalizer.fromSecurityEvents(r, "linux");
+    let f = normalizer.desdeEventos(r, "linux");
     ok(f.length === 1 && f[0].id === "HOST-EVT-SKIP" && !f.some((x) => x.id === "HOST-EVT-INF"),
        "→ HOST-EVT-SKIP, nunca \"Sin eventos de seguridad relevantes\"", JSON.stringify(f.map((x) => x.id)));
 
     esc = linux(() => { throw falla("Command failed", { stderr: "No journal files were opened due to insufficient permissions." }); });
-    r = await secEvents.runSecurityEvents(24);
+    r = await secEvents.ejecutarEventos(24);
     ok(r.skipped === true && r.kind === "no-permission", "fallan por permisos → kind no-permission", JSON.stringify([r.skipped, r.kind]));
 
     esc = linux((_c, opts) => {
       const stderr = "Hint: You are currently not seeing messages from other users and the system.";
       return opts && opts.withStderr ? { stdout: "-- No entries --\n", stderr } : "-- No entries --\n";
     });
-    r = await secEvents.runSecurityEvents(24);
+    r = await secEvents.ejecutarEventos(24);
     ok(r.skipped === true && r.kind === "no-permission",
        "journalctl sale con 0 pero avisa de que no ve el sistema → no-permission", JSON.stringify([r.skipped, r.kind, r.sources]));
 
@@ -294,14 +294,14 @@ const JOURNAL_OK = {
       if (n++ === 0) return opts && opts.withStderr ? { stdout: "", stderr: "" } : "";
       throw falla("Command failed: journalctl");
     });
-    r = await secEvents.runSecurityEvents(24);
-    f = normalizer.fromSecurityEvents(r, "linux");
+    r = await secEvents.ejecutarEventos(24);
+    f = normalizer.desdeEventos(r, "linux");
     ok(!r.skipped && r.sources.includes("journalctl") && f.some((x) => x.id === "HOST-EVT-SRC"),
        "una consulta funciona → journalctl cuenta, y las otras salen en HOST-EVT-SRC", JSON.stringify([r.skipped, r.sources, f.map((x) => x.id)]));
 
     esc = linux((_c, opts) => (opts && opts.withStderr ? { stdout: "", stderr: "" } : ""));
-    r = await secEvents.runSecurityEvents(24);
-    f = normalizer.fromSecurityEvents(r, "linux");
+    r = await secEvents.ejecutarEventos(24);
+    f = normalizer.desdeEventos(r, "linux");
     ok(!r.skipped && f.length === 1 && f[0].id === "HOST-EVT-INF" && f[0].skipped !== true,
        "journalctl sano sin eventos → HOST-EVT-INF, como antes", JSON.stringify(f.map((x) => [x.id, x.skipped])));
     esc = null;
@@ -312,19 +312,19 @@ const JOURNAL_OK = {
       exists: (c) => (["log", "who"].includes(c) ? "/usr/bin/" + c : null),
       exec: async (cmd) => { if (cmd === "who") return "ana console Oct 24 09:00\n"; throw falla("log: Cannot run while sandboxed"); },
     };
-    const r = await secEvents.runSecurityEvents(24);
+    const r = await secEvents.ejecutarEventos(24);
     ok(r.skipped === true && r.kind === "error", "macOS: fallan las tres `log show` → skipped kind error", JSON.stringify([r.skipped, r.kind, r.sources]));
     esc = null;
   }));
 
-  const skipF = normalizer.fromSecurityEvents({ skipped: true, reason: "x", windowHours: 24 }, "linux")[0];
+  const skipF = normalizer.desdeEventos({ skipped: true, reason: "x", windowHours: 24 }, "linux")[0];
   ok(skipF.skipped === true && skipF.kind === "error", "HOST-EVT-SKIP sin kind → skipped:true, kind error", JSON.stringify([skipF.skipped, skipF.kind]));
-  const permF = normalizer.fromSecurityEvents({ skipped: true, kind: "no-permission", reason: "x", windowHours: 24 }, "linux")[0];
+  const permF = normalizer.desdeEventos({ skipped: true, kind: "no-permission", reason: "x", windowHours: 24 }, "linux")[0];
   ok(permF.kind === "no-permission", "HOST-EVT-SKIP respeta el kind que llega");
 
   console.log("\n── 5 · Ids únicos: eventos y secretos omitidos a la vez ───────────\n");
 
-  const ambos = normalizer.normalizeHost({
+  const ambos = normalizer.normalizarHost({
     securityEvents: { skipped: true, kind: "error", reason: "x", windowHours: 24 },
     trivySecrets: { skipped: true, kind: "error", reason: "y" },
   }, { platform: "linux" });
@@ -351,15 +351,15 @@ const JOURNAL_OK = {
 
     await seccion("lynis", () => conPlataforma("linux", async () => {
       esc = lynis(async (cmd) => { fs.writeFileSync(repFile(cmd), A_MEDIAS); throw falla("killed", { killed: true, signal: "SIGTERM" }); });
-      let r = await lynisMod.runLynis({ reportFallback: fallback });
+      let r = await lynisMod.ejecutarLynis({ reportFallback: fallback });
       ok(r.skipped === true && r.kind === "timeout", "timeout con informe parcial escrito → kind timeout, se descarta", JSON.stringify(r));
 
       esc = lynis(async (cmd) => { fs.writeFileSync(repFile(cmd), A_MEDIAS); return ""; });
-      r = await lynisMod.runLynis({ reportFallback: fallback });
+      r = await lynisMod.ejecutarLynis({ reportFallback: fallback });
       ok(r.skipped === true && r.kind === "error", "informe sin fecha de fin ni índice → kind error", JSON.stringify(r));
 
       esc = lynis(async (cmd) => { fs.writeFileSync(repFile(cmd), COMPLETO); throw falla("exit 1"); });
-      r = await lynisMod.runLynis({ reportFallback: fallback });
+      r = await lynisMod.ejecutarLynis({ reportFallback: fallback });
       ok(!r.skipped && r.hardeningIndex === 67, "exit distinto de cero con informe completo → se usa, como antes", JSON.stringify(r.hardeningIndex));
 
       // Respaldo de una pasada anterior: una hora de antigüedad.
@@ -367,11 +367,11 @@ const JOURNAL_OK = {
       const viejo = (Date.now() - 3600 * 1000) / 1000;
       fs.utimesSync(fallback, viejo, viejo);
       esc = lynis(async () => "");
-      r = await lynisMod.runLynis({ reportFallback: fallback });
+      r = await lynisMod.ejecutarLynis({ reportFallback: fallback });
       ok(r.skipped === true && r.kind === "error", "respaldo con mtime anterior a la ejecución → no se usa", JSON.stringify(r));
 
       esc = lynis(async () => { fs.writeFileSync(fallback, COMPLETO); return ""; });
-      r = await lynisMod.runLynis({ reportFallback: fallback });
+      r = await lynisMod.ejecutarLynis({ reportFallback: fallback });
       ok(!r.skipped && r.hardeningIndex === 67, "respaldo escrito por esta ejecución → se usa", JSON.stringify(r.kind));
       esc = null;
     }));

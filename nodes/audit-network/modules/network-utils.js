@@ -1,11 +1,11 @@
 "use strict";
 
 // Las órdenes de parada salen de process-fix para no duplicarlas.
-const { systemdDisable, getFixForProcess, unitFor } = require("../../../lib/process-fix");
+const { desactivarSystemd, solucionProceso, unidadDe } = require("../../../lib/process-fix");
 const os = require("os");
 
 // "80,443,8000-8080" a números ordenados; null si viene vacía.
-function parsePortsList(input) {
+function leerPuertos(input) {
   const s = (input || "").trim();
   if (!s) return null;
 
@@ -31,7 +31,7 @@ function parsePortsList(input) {
 }
 
 // Objetivos separados por coma, punto y coma o salto de línea, sin duplicados.
-function parseTargets(input) {
+function leerObjetivos(input) {
   const raw = String(input || "")
     .split(/[\n,;]/)
     .map((x) => x.trim())
@@ -40,9 +40,15 @@ function parseTargets(input) {
 }
 
 // Valida la lista para -p (va a la línea de nmap): lo que no se entiende se rechaza, no se descarta.
-// Devuelve { ok, spec, count } o { ok: false, empty, reason }; count alimenta scanTimeoutMs().
-function validatePortSpec(input) {
-  const raw = String(input == null ? "" : input).trim();
+// Devuelve { ok, spec, count } o { ok: false, empty, reason }; count alimenta tiempoMaximoEscaneo().
+function validarPuertos(input) {
+  let valor;
+  if (input == null) {
+    valor = "";
+  } else {
+    valor = input;
+  }
+  const raw = String(valor).trim();
   if (!raw) return { ok: false, empty: true, reason: "No se ha indicado ningún puerto." };
 
   const items = raw.split(",").map((x) => x.trim());
@@ -57,7 +63,12 @@ function validatePortSpec(input) {
       };
     }
     const a = Number(m[1]);
-    const b = m[2] ? Number(m[2]) : a;
+    let b;
+    if (m[2]) {
+      b = Number(m[2]);
+    } else {
+      b = a;
+    }
     if (a > 65535 || b > 65535) {
       return { ok: false, empty: false, reason: `«${item}»: los puertos van del 1 al 65535.` };
     }
@@ -80,23 +91,40 @@ function validatePortSpec(input) {
   }
   if (curB !== null) count += curB - curA + 1;
 
-  const spec = ranges.map(([a, b]) => (a === b ? String(a) : `${a}-${b}`)).join(",");
+  const spec = ranges.map(([a, b]) => {
+    if (a === b) {
+      return String(a);
+    } else {
+      return `${a}-${b}`;
+    }
+  }).join(",");
   return { ok: true, spec, count };
 }
 
 // Tiempo máximo de nmap sin NSE: 62 ms por puerto, medido contra un equipo con cortafuegos.
 const MS_PER_PORT = 62;
-function scanTimeoutMs(scanMode, portCount) {
+function tiempoMaximoEscaneo(scanMode, portCount) {
   if (scanMode === "rapido")   return 90000;
   if (scanMode === "standard") return 240000;
-  const n = scanMode === "full" ? 65535 : (Number(portCount) || 0);
+  let n;
+  if (scanMode === "full") {
+    n = 65535;
+  } else {
+    n = Number(portCount) || 0;
+  }
   return Math.max(90000, n * MS_PER_PORT);
 }
 
 // Solo una IPv4 de un equipo de una red propia: el valor acaba en la línea de nmap y un rango mezclaría hosts.
 // Esta función decide; audit-network.html solo marca el campo. Sin ceros a la izquierda (nmap los lee en octal).
-function validateTarget(input, interfaces = os.networkInterfaces()) {
-  const raw = String(input == null ? "" : input).trim();
+function validarObjetivo(input, interfaces = os.networkInterfaces()) {
+  let valor;
+  if (input == null) {
+    valor = "";
+  } else {
+    valor = input;
+  }
+  const raw = String(valor).trim();
   if (!raw) {
     return { ok: false, reason: "No se ha indicado ninguna dirección IP." };
   }
@@ -131,17 +159,17 @@ function validateTarget(input, interfaces = os.networkInterfaces()) {
   }
 
   // /31 y /32 no tienen dirección de red ni de difusión (RFC 3021).
-  const toInt = (parts) => parts.reduce((acc, o) => ((acc << 8) | o) >>> 0, 0);
-  const target = toInt(n);
+  const aEntero = (parts) => parts.reduce((acc, o) => ((acc << 8) | o) >>> 0, 0);
+  const target = aEntero(n);
   let inOwnSubnet = false;
   for (const [name, addrs] of Object.entries(interfaces || {})) {
     for (const addr of addrs || []) {
       if (addr.family !== "IPv4" && addr.family !== 4) continue;
       if (addr.internal) continue;
-      const mask = toInt(addr.netmask.split(".").map(Number));
+      const mask = aEntero(addr.netmask.split(".").map(Number));
       // Máscara 0.0.0.0 haría de cualquier IP "su red".
       if (mask === 0) continue;
-      const network = (toInt(addr.address.split(".").map(Number)) & mask) >>> 0;
+      const network = (aEntero(addr.address.split(".").map(Number)) & mask) >>> 0;
       if (((target & mask) >>> 0) === network) inOwnSubnet = true;
       if (mask >= 0xFFFFFFFE) continue;
       const broadcast = (network | (~mask >>> 0)) >>> 0;
@@ -167,16 +195,27 @@ function validateTarget(input, interfaces = os.networkInterfaces()) {
 }
 
 // Si es este equipo se usa lsof y se omite el descubrimiento.
-function isLocalTarget(target) {
+function esObjetivoLocal(target) {
   const t = (target || "").trim().toLowerCase();
   return t === "127.0.0.1" || t === "localhost" || t === "::1";
 }
 
 // URL base, sin el puerto si es el del protocolo.
-function toBaseUrl(protocol, host, port) {
-  const defaultPort = protocol === "https" ? 443 : 80;
+function urlBase(protocol, host, port) {
+  let defaultPort;
+  if (protocol === "https") {
+    defaultPort = 443;
+  } else {
+    defaultPort = 80;
+  }
   const showPort = port !== defaultPort;
-  return `${protocol}://${host}${showPort ? ":" + port : ""}`;
+  let sufijo;
+  if (showPort) {
+    sufijo = ":" + port;
+  } else {
+    sufijo = "";
+  }
+  return `${protocol}://${host}${sufijo}`;
 }
 
 // Los textos de macOS de process-fix traen el comando en la primera línea y la nota detrás.
@@ -188,16 +227,16 @@ function comandoYNota(texto) {
 }
 
 // Fix por puerto y plataforma, o null. Gramática del dashboard: "## " rama, "$ " comando, "> " nota, resto pasos.
-// Los subtítulos llevan el servicio porque buildPortFix() los concatena tras sus propias ramas.
-function getFixForPort(port, platform, pkgManager) {
+// Los subtítulos llevan el servicio porque solucionDePuerto() los concatena tras sus propias ramas.
+function solucionPorPuerto(port, platform, pkgManager) {
   const plat = platform || process.platform;
   const m = pkgManager || null;
   // Las órdenes salen de process-fix.js, la misma tabla que el fix por proceso.
-  const lines = (texto) => String(texto).split("\n").map((l) => l.trim()).filter(Boolean);
+  const lineas = (texto) => String(texto).split("\n").map((l) => l.trim()).filter(Boolean);
   // "sudo …" es comando, "texto: sudo …" paso con comando, la primera línea el paso y el resto notas.
-  const cmdAndNotes = (texto) => {
+  const comandosYNotas = (texto) => {
     const out = [];
-    lines(texto).forEach((l, i) => {
+    lineas(texto).forEach((l, i) => {
       const conCmd = /^(.*?):\s+(sudo\s.+)$/.exec(l);
       if (/^sudo\s/.test(l)) out.push(`$ ${l}`);
       else if (conCmd) out.push(`${conCmd[1]}:`, `$ ${conCmd[2]}`);
@@ -226,17 +265,17 @@ function getFixForPort(port, platform, pkgManager) {
         return [
           "## SSH: si no necesitas el acceso remoto",
           "Desactiva la sesión remota:",
-          ...cmdAndNotes(getFixForProcess("sshd", "darwin")),
+          ...comandosYNotas(solucionProceso("sshd", "darwin")),
           "## SSH: si lo necesitas, asegúralo",
           ...harden,
           "Aplica los cambios desactivando y volviendo a activar «Sesión remota» en Ajustes del Sistema → General → Compartido.",
         ].join("\n");
       }
-      const { unit } = unitFor("ssh", m);
+      const { unit } = unidadDe("ssh", m);
       return [
         "## SSH: si no necesitas el acceso remoto",
         "Deshabilita el servicio:",
-        ...cmdAndNotes(getFixForProcess("sshd", "linux", m)),
+        ...comandosYNotas(solucionProceso("sshd", "linux", m)),
         "## SSH: si lo necesitas, asegúralo",
         ...harden,
         "Reinicia el servicio:",
@@ -253,18 +292,18 @@ function getFixForPort(port, platform, pkgManager) {
       }
       if (plat === "darwin") {
         // macOS no trae servidor FTP, así que no se conoce el label real.
-        return "## FTP: si no lo necesitas\n" + comandoYNota(getFixForProcess("vsftpd", "darwin"));
+        return "## FTP: si no lo necesitas\n" + comandoYNota(solucionProceso("vsftpd", "darwin"));
       }
       return "## FTP: si no lo necesitas\n" +
              "Deshabilita el servicio:\n" +
-             "$ " + systemdDisable("vsftpd") + "\n" +
+             "$ " + desactivarSystemd("vsftpd") + "\n" +
              "> Si tu servidor FTP es otro (proftpd, pure-ftpd), cambia vsftpd por su nombre en el comando.";
 
     case 23: // Telnet
       if (plat === "darwin") {
-        return "## Telnet: si no lo necesitas\n" + comandoYNota(getFixForProcess("telnetd", "darwin"));
+        return "## Telnet: si no lo necesitas\n" + comandoYNota(solucionProceso("telnetd", "darwin"));
       }
-      return ["## Telnet: si no lo necesitas", ...cmdAndNotes(getFixForProcess("telnetd", plat, m))].join("\n");
+      return ["## Telnet: si no lo necesitas", ...comandosYNotas(solucionProceso("telnetd", plat, m))].join("\n");
 
     case 80:  // HTTP
     case 443: // HTTPS
@@ -284,40 +323,46 @@ function getFixForPort(port, platform, pkgManager) {
           "Si es nginx instalado con Homebrew:\n" +
           "$ brew services stop nginx\n" +
           "Si es el Apache que trae macOS:\n" +
-          "$ " + getFixForProcess("apache", "darwin") + "\n" +
+          "$ " + solucionProceso("apache", "darwin") + "\n" +
           "## Servidor web: si lo necesitas\n" +
           "Asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
         );
       }
       {
-        const ap = unitFor("apache", m);
+        const ap = unidadDe("apache", m);
+        let cierre;
+        if (ap.note) {
+          cierre = ` (${ap.note.trim().replace(/^\(|\)$/g, "").replace(/\.$/, "")}).`;
+        } else {
+          cierre = ".";
+        }
         return (
           "## Servidor web: si no lo necesitas\n" +
           "Deshabilita el servidor web:\n" +
-          "$ " + systemdDisable("nginx") + "\n" +
+          "$ " + desactivarSystemd("nginx") + "\n" +
           `> Si el servidor es Apache, usa ${ap.unit} en vez de nginx en ese comando` +
-          (ap.note ? ` (${ap.note.trim().replace(/^\(|\)$/g, "").replace(/\.$/, "")}).` : ".") + "\n" +
+          cierre + "\n" +
           "## Servidor web: si lo necesitas\n" +
           "Asegúrate de tener certificado TLS válido y redirige todo HTTP a HTTPS."
         );
       }
 
     case 3306: // MySQL
-      return ["## MySQL: limita el acceso", ...cmdAndNotes(getFixForProcess("mysqld", plat, m))].join("\n");
+      return ["## MySQL: limita el acceso", ...comandosYNotas(solucionProceso("mysqld", plat, m))].join("\n");
 
     case 5432: // PostgreSQL
-      return ["## PostgreSQL: limita el acceso", ...cmdAndNotes(getFixForProcess("postgres", plat, m))].join("\n");
+      return ["## PostgreSQL: limita el acceso", ...comandosYNotas(solucionProceso("postgres", plat, m))].join("\n");
 
     case 6379: // Redis
-      return ["## Redis: limita el acceso", ...cmdAndNotes(getFixForProcess("redis", plat, m))].join("\n");
+      return ["## Redis: limita el acceso", ...comandosYNotas(solucionProceso("redis", plat, m))].join("\n");
 
     case 27017: // MongoDB
-      return ["## MongoDB: limita el acceso", ...cmdAndNotes(getFixForProcess("mongod", plat, m))].join("\n");
+      return ["## MongoDB: limita el acceso", ...comandosYNotas(solucionProceso("mongod", plat, m))].join("\n");
 
     default:
-      // La guía genérica la arma buildPortFix() con el bind y el proceso reales.
+      // La guía genérica la arma solucionDePuerto() con el bind y el proceso reales.
       return null;
   }
 }
 
-module.exports = { parsePortsList, parseTargets, validatePortSpec, scanTimeoutMs, validateTarget, isLocalTarget, toBaseUrl, getFixForPort };
+module.exports = { leerPuertos, leerObjetivos, validarPuertos, tiempoMaximoEscaneo, validarObjetivo, esObjetivoLocal, urlBase, solucionPorPuerto };

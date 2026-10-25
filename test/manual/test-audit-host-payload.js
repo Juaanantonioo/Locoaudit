@@ -19,34 +19,34 @@ function ok(cond, label, detail) {
 }
 
 // ── Sustitución de trivy-fs ──────────────────────────────────────────────────
-// Se inyecta en require.cache antes de cargar el nodo; systemPackagesSupport es el real.
+// Se inyecta en require.cache antes de cargar el nodo; soportePaquetesSistema es el real.
 const TRIVY_PATH = require.resolve("../../nodes/audit-host/modules/trivy-fs");
 const trivyReal = require(TRIVY_PATH);
 
 let trivyStubResult = null;
 let trivyStubOpts = null;      // últimas opciones recibidas: prueba qué se le pidió
 require.cache[TRIVY_PATH].exports = Object.assign({}, trivyReal, {
-  runTrivyFs: async (opts) => { trivyStubOpts = opts; return trivyStubResult; },
+  ejecutarTrivyFs: async (opts) => { trivyStubOpts = opts; return trivyStubResult; },
   // La pasada de secretos no es lo que se prueba aquí: sin stub ejecutaría el Trivy del equipo que corre el test.
-  runTrivySecrets: async () => ({ skipped: true, kind: "disabled", reason: "stub" }),
+  ejecutarTrivySecretos: async () => ({ skipped: true, kind: "disabled", reason: "stub" }),
 });
 
 // ── Sustitución de trivy-rootfs ──────────────────────────────────────────────
-// systemPackagesSupport() es el real: se prueba al mirar scanMeta.systemPackages.
+// soportePaquetesSistema() es el real: se prueba al mirar scanMeta.systemPackages.
 const ROOTFS_PATH = require.resolve("../../lib/trivy-rootfs");
 const rootfsReal = require(ROOTFS_PATH);
 
 let rootfsStubResult = null;
 let rootfsLlamado = false;
 require.cache[ROOTFS_PATH].exports = Object.assign({}, rootfsReal, {
-  runTrivyRootfs: async () => { rootfsLlamado = true; return rootfsStubResult; },
+  ejecutarTrivyRootfs: async () => { rootfsLlamado = true; return rootfsStubResult; },
 });
 
-// commandExists se fuerza a true para que decida el stub y no el equipo que ejecuta el test.
+// existeComando se fuerza a true para que decida el stub y no el equipo que ejecuta el test.
 const EXEC_PATH = require.resolve("../../lib/executor");
 const execReal = require(EXEC_PATH);
 require.cache[EXEC_PATH].exports = Object.assign({}, execReal, {
-  commandExists: async (cmd) => (cmd === "trivy" ? "/usr/bin/trivy" : execReal.commandExists(cmd)),
+  existeComando: async (cmd) => (cmd === "trivy" ? "/usr/bin/trivy" : execReal.existeComando(cmd)),
 });
 
 /** Rootfs con éxito, con la forma que devuelve lib/trivy-rootfs.js. */
@@ -348,7 +348,7 @@ const CONFIG_BASE = {
      JSON.stringify(skips.map((f) => f.kind)));
   // `skipped:true` solo dice que falta el dato; el motivo va aparte.
   ok(skips.every((f) => typeof f.kind === "string" && f.kind.length > 0),
-     "createFinding conserva el kind (antes se perdía y llegaba undefined)");
+     "crearHallazgo conserva el kind (antes se perdía y llegaba undefined)");
 
   // Y un fallo real sigue distinguiéndose.
   rootfsStubResult = {
@@ -412,7 +412,7 @@ const CONFIG_BASE = {
   console.log("\n── 10 · Windows: reinicio pendiente ≠ sistema al día ─────────────\n");
 
   // `IsInstalled=0` no incluye las actualizaciones pendientes de reinicio: no es "Sistema al día".
-  const { normalizeHost: nh } = require("../../lib/normalizer");
+  const { normalizarHost: nh } = require("../../lib/normalizer");
   const baseWin = {
     skipped: false, platform: "win32", source: "Microsoft.Update.Session",
     securityDetection: "full", securityCount: 0, unclassifiedCount: 0, total: 0, updates: [],

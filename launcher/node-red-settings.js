@@ -17,21 +17,26 @@ const userDir = process.env.LCAUDIT_NODE_RED_DIR || path.join(os.homedir(), ".no
 const userSettingsFile = path.join(userDir, "settings.js");
 
 // Sin settings.js propio Node-RED leería flows_<hostname>.json, y el launcher copia flows.json.
-const base = fs.existsSync(userSettingsFile) ? require(userSettingsFile) : { flowFile: "flows.json" };
+let base;
+if (fs.existsSync(userSettingsFile)) {
+  base = require(userSettingsFile);
+} else {
+  base = { flowFile: "flows.json" };
+}
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const uiHost = base.uiHost || "127.0.0.1";
 const listensOnLoopback = LOOPBACK_HOSTS.has(uiHost);
 
 /** "127.0.0.1:1880" → "127.0.0.1"; "[::1]:1880" → "::1". */
-function hostnameOf(hostHeader) {
+function nombreDeHost(hostHeader) {
   const h = String(hostHeader || "").trim().toLowerCase();
   if (h.startsWith("[")) return h.slice(1, h.indexOf("]"));
   return h.replace(/:\d+$/, "");
 }
 
-function sameOriginOnly(req, res, next) {
-  if (listensOnLoopback && !LOOPBACK_HOSTS.has(hostnameOf(req.headers.host))) {
+function soloMismoOrigen(req, res, next) {
+  if (listensOnLoopback && !LOOPBACK_HOSTS.has(nombreDeHost(req.headers.host))) {
     res.status(403).end();
     return;
   }
@@ -48,9 +53,9 @@ function sameOriginOnly(req, res, next) {
 }
 
 /** socket.io del dashboard: Host de loopback cuando se escucha en loopback. */
-function dashboardHostOnly(socket, next) {
+function soloHostDelDashboard(socket, next) {
   const host = socket.request && socket.request.headers && socket.request.headers.host;
-  if (listensOnLoopback && !LOOPBACK_HOSTS.has(hostnameOf(host))) {
+  if (listensOnLoopback && !LOOPBACK_HOSTS.has(nombreDeHost(host))) {
     next(new Error("Host no permitido"));
     return;
   }
@@ -58,7 +63,7 @@ function dashboardHostOnly(socket, next) {
 }
 
 /** Copia del middleware de fábrica del dashboard, que deja de montarse al definir ioMiddleware. */
-function dashboardDefault(socket, next) {
+function middlewareDeFabrica(socket, next) {
   if (socket.client.conn.request.url.indexOf("transport=websocket") !== -1) {
     socket.client.conn.close();
     return;
@@ -67,21 +72,35 @@ function dashboardDefault(socket, next) {
   socket.disconnect(true);
 }
 
-const asList = (v) => (v ? (Array.isArray(v) ? v : [v]) : []);
+function comoLista(v) {
+  if (!v) {
+    return [];
+  } else if (Array.isArray(v)) {
+    return v;
+  } else {
+    return [v];
+  }
+}
 
 // Los middlewares del usuario van detrás del guardián.
-const ownAdmin = asList(base.httpAdminMiddleware);
-const ownNode = asList(base.httpNodeMiddleware);
+const ownAdmin = comoLista(base.httpAdminMiddleware);
+const ownNode = comoLista(base.httpNodeMiddleware);
 
 // El dashboard lee base.dashboard (o base.ui). Un ioMiddleware del usuario sustituye al de fábrica.
 const baseDashboard = base.dashboard || base.ui || {};
-const ownIo = asList(baseDashboard.ioMiddleware);
+const ownIo = comoLista(baseDashboard.ioMiddleware);
+let ioDelUsuario;
+if (ownIo.length) {
+  ioDelUsuario = ownIo;
+} else {
+  ioDelUsuario = [middlewareDeFabrica];
+}
 
 module.exports = Object.assign({}, base, {
   uiHost,
-  httpAdminMiddleware: [sameOriginOnly, ...ownAdmin],
-  httpNodeMiddleware: [sameOriginOnly, ...ownNode],
+  httpAdminMiddleware: [soloMismoOrigen, ...ownAdmin],
+  httpNodeMiddleware: [soloMismoOrigen, ...ownNode],
   dashboard: Object.assign({}, baseDashboard, {
-    ioMiddleware: [dashboardHostOnly, ...(ownIo.length ? ownIo : [dashboardDefault])],
+    ioMiddleware: [soloHostDelDashboard, ...ioDelUsuario],
   }),
 });

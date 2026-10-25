@@ -2,7 +2,7 @@
 
 /**
  * test-dashboard-counts.js — Cabecera, donut y barras cuentan lo mismo.
- * Extrae groups()/catBars() del propio dashboard-host-template.html y los compara con summarize().
+ * Extrae grupos()/barrasCategoria() del propio dashboard-host-template.html y los compara con summarize().
  *
  * Uso:
  *   node test/manual/test-dashboard-counts.js
@@ -10,9 +10,9 @@
 
 const fs = require("fs");
 const path = require("path");
-const { parseDfOutput } = require("../../nodes/audit-host/modules/disk-storage");
-const { normalizeHost } = require("../../lib/normalizer");
-const { summarize } = require("../../lib/severity-map");
+const { leerDf } = require("../../nodes/audit-host/modules/disk-storage");
+const { normalizarHost } = require("../../lib/normalizer");
+const { resumir } = require("../../lib/severity-map");
 
 const ROOT = path.join(__dirname, "..", "..");
 const TEMPLATE = path.join(ROOT, "examples", "dashboard-host-template.html");
@@ -44,10 +44,10 @@ function extractMethod(src, name) {
 }
 
 const computed = new Function(
-  "return {" + extractMethod(tpl, "groups") + "," + extractMethod(tpl, "catBars") + "};"
+  "return {" + extractMethod(tpl, "grupos") + "," + extractMethod(tpl, "barrasCategoria") + "};"
 )();
 
-/** Lee los tokens del :root del template (sin DOM); catBars() los necesita aunque no se comprueben. */
+/** Lee los tokens del :root del template (sin DOM); barrasCategoria() los necesita aunque no se comprueben. */
 function tokensDelTemplate(src) {
   const NOMBRES = {
     critical: "--critical", high: "--high", medium: "--medium",
@@ -65,11 +65,11 @@ function tokensDelTemplate(src) {
 
 const TOK = tokensDelTemplate(tpl);
 
-/** Ejecuta groups()/catBars() del template sobre un payload. */
+/** Ejecuta grupos()/barrasCategoria() del template sobre un payload. */
 function barsFor(auditData) {
   const ctx = { auditData, filterSev: "all", tok: TOK };
-  ctx.groups = computed.groups.call(ctx);
-  return computed.catBars.call(ctx);
+  ctx.grupos = computed.grupos.call(ctx);
+  return computed.barrasCategoria.call(ctx);
 }
 
 const sum = (bars) => bars.reduce((a, b) => a + b.count, 0);
@@ -100,9 +100,9 @@ function otrosFindings(n) {
 function escenario(nombre, dfFile, hasType, nOtros) {
   console.log(`\n── ${nombre} ─────────────────────────────────────────\n`);
 
-  const disk = parseDfOutput(fs.readFileSync(path.join(FIX, dfFile), "utf8"), hasType);
-  const findings = normalizeHost({ disk }, "native").concat(otrosFindings(nOtros));
-  const s = summarize(findings);
+  const disk = leerDf(fs.readFileSync(path.join(FIX, dfFile), "utf8"), hasType);
+  const findings = normalizarHost({ disk }, "native").concat(otrosFindings(nOtros));
+  const s = resumir(findings);
   const auditData = { findings, summary: s };
 
   const bars = barsFor(auditData);

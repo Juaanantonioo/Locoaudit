@@ -16,8 +16,8 @@ const { TRIVY_TYPE_TO_MANAGER } = require("../../lib/pkg-manager");
 const { execFileSync } = require("child_process");
 
 const {
-  fromTrivyJson,
-  fromLynisRaw,
+  desdeTrivy,
+  desdeLynis,
   TRIVY_LANG_CMD,
   TRIVY_LANG_MANUAL,
   TRIVY_OS_TYPES,
@@ -101,7 +101,7 @@ function hostFindingForType(type, installed = true) {
       Vulnerabilities: [vuln],
     }],
   };
-  const out = fromTrivyJson(raw, "HOST-CVE", "vulnerability", "trivy", { platform: process.platform });
+  const out = desdeTrivy(raw, "HOST-CVE", "vulnerability", "trivy", { platform: process.platform });
   return out[0];
 }
 
@@ -172,7 +172,7 @@ function testLynisPkgs() {
 
   // ACCT-9626 (instalar sysstat) sí es un comando; se fuerza el gestor para que sea determinista.
   const raw = { hardeningIndex: null, warnings: [], suggestions: [{ id: "ACCT-9626", description: "Enable sysstat" }] };
-  const out = fromLynisRaw(raw, "linux", "apt");
+  const out = desdeLynis(raw, "linux", "apt");
   const f = out.find((x) => x.control === "ACCT-9626");
   if (!f) { fail("Lynis ACCT-9626: no generó finding individual"); return; }
   if (f.command !== "sudo apt update && sudo apt install -y sysstat") {
@@ -182,7 +182,7 @@ function testLynisPkgs() {
   }
 
   // Un control PKGS no recibe por prefijo el comando global de actualización.
-  const pkgs = fromLynisRaw(
+  const pkgs = desdeLynis(
     { hardeningIndex: null, warnings: [], suggestions: [
       { id: "PKGS-7420", description: "Install a package audit tool" },
       { id: "PKGS-7346", description: "Purge old packages" },
@@ -200,7 +200,7 @@ function testLynisPkgs() {
   }
 
   // Y ningún fix puede volver a ser el marcador de posición por prefijo.
-  const todos = fromLynisRaw(
+  const todos = desdeLynis(
     { hardeningIndex: null, warnings: [], suggestions: [
       { id: "BOOT-5122", description: "x" }, { id: "TOOL-5002", description: "x" },
       { id: "FIRE-4590", description: "x" }, { id: "ZZZZ-9999", description: "x" },
@@ -230,7 +230,7 @@ function testRealTrivy(target) {
     if (!json) { log(`  (omitido: ${err.message.split("\n")[0]})`); return; }
   }
 
-  const findings = fromTrivyJson(json, "HOST-CVE", "vulnerability", "trivy", { platform: process.platform });
+  const findings = desdeTrivy(json, "HOST-CVE", "vulnerability", "trivy", { platform: process.platform });
   log(`  Findings generados: ${findings.length}`);
   const types = [...new Set((json.Results || []).map((r) => r.Type).filter(Boolean))];
   log(`  Types reportados por Trivy: ${types.join(", ") || "(ninguno)"}`);

@@ -3,11 +3,11 @@
 /** Nodo de configuración de Ollama. Registra /locoaudit/chat en el servidor de Node-RED; el chat solo conversa, nunca ejecuta comandos. */
 
 const {
-  chatWithLLM,
-  checkModel,
-  listOllamaModels,
-  buildSystemPrompt,
-  buildFollowupSystemPrompt,
+  conversarConLlm,
+  comprobarModelo,
+  listarModelosOllama,
+  promptDeSistema,
+  promptDeSeguimiento,
 } = require("../../lib/llm-client");
 
 /** Timeout de una consulta al modelo. Interno: no se expone en la UI del nodo. */
@@ -19,7 +19,7 @@ const MAX_QUESTION_CHARS = 8000;
 const MAX_HISTORY_CHARS = 200000;
 
 module.exports = function (RED) {
-  function LlmConfigNode(config) {
+  function NodoConfigLlm(config) {
     RED.nodes.createNode(this, config);
     const node = this;
 
@@ -28,24 +28,24 @@ module.exports = function (RED) {
     node.model = (config.model || "qwen3:8b").trim();
     node.timeoutMs = CHAT_TIMEOUT_MS;
 
-    // null mientras validateModel() no haya terminado: sin comprobar, no "sin modelo".
+    // null mientras validarModelo() no haya terminado: sin comprobar, no "sin modelo".
     node.modelCheck = null;
 
-    // Como commandExists(): el modelo se comprueba al desplegar, no en el primer chat.
-    validateModel(node);
+    // Como existeComando(): el modelo se comprueba al desplegar, no en el primer chat.
+    validarModelo(node);
 
     // Una sola vez por proceso: cada deploy recrea los nodos y duplicaría la ruta.
-    registerChatEndpoint(RED);
+    registrarChat(RED);
   }
 
-  RED.nodes.registerType("llm-config", LlmConfigNode);
+  RED.nodes.registerType("llm-config", NodoConfigLlm);
 
   // Botón "Probar conexión" del editor, con permiso de lectura de flujos.
   RED.httpAdmin.get(
     "/locoaudit/llm/check",
     RED.auth.needsPermission("flows.read"),
     async function (req, res) {
-      const result = await checkModel({
+      const result = await comprobarModelo({
         ollamaUrl: (req.query.url || "").trim(),
         model: (req.query.model || "").trim(),
       });
@@ -58,15 +58,15 @@ module.exports = function (RED) {
     "/locoaudit/llm/models",
     RED.auth.needsPermission("flows.read"),
     async function (req, res) {
-      const result = await listOllamaModels({ ollamaUrl: (req.query.url || "").trim() });
+      const result = await listarModelosOllama({ ollamaUrl: (req.query.url || "").trim() });
       res.json(result);
     }
   );
 };
 
 /** Valida el modelo al desplegar. "Ollama no responde" y "el modelo no está" se avisan por separado. */
-async function validateModel(node) {
-  const result = await checkModel({ ollamaUrl: node.ollamaUrl, model: node.model });
+async function validarModelo(node) {
+  const result = await comprobarModelo({ ollamaUrl: node.ollamaUrl, model: node.model });
   node.modelCheck = result;
 
   if (result.ok) {
@@ -84,7 +84,7 @@ async function validateModel(node) {
 }
 
 /** Idempotente por un flag en RED: la ruta no se puede registrar dos veces. */
-function registerChatEndpoint(RED) {
+function registrarChat(RED) {
   if (RED.__locoauditChatEndpoint) {
     return;
   }
@@ -92,17 +92,29 @@ function registerChatEndpoint(RED) {
 
   // El frontend decide aquí si muestra el chat. `available` no depende del modelo: el fallo va aparte.
   RED.httpNode.get("/locoaudit/chat/status", function (req, res) {
-    const cfg = findLlmConfig(RED);
+    const cfg = buscarConfigLlm(RED);
     if (!cfg) {
       res.json({ available: false });
       return;
     }
     const check = cfg.modelCheck;
+    let estadoModelo;
+    if (check) {
+      estadoModelo = check.ok === true;
+    } else {
+      estadoModelo = null;
+    }
+    let errorModelo;
+    if (check && !check.ok) {
+      errorModelo = check.error;
+    } else {
+      errorModelo = null;
+    }
     res.json({
       available: true,
       model: cfg.model,
-      modelOk: check ? check.ok === true : null, // null mientras la validación sigue en curso
-      modelError: check && !check.ok ? check.error : null,
+      modelOk: estadoModelo, // null mientras la validación sigue en curso
+      modelError: errorModelo,
     });
   });
 
@@ -111,7 +123,12 @@ function registerChatEndpoint(RED) {
       const body = req.body || {};
       const finding = body.finding || {};
       const question = body.question;
-      const history = Array.isArray(body.history) ? body.history : [];
+      let history;
+      if (Array.isArray(body.history)) {
+        history = body.history;
+      } else {
+        history = [];
+      }
       // Tipo de auditoría y plataforma, para que el modelo no proponga soluciones que no valen.
       const context = { auditType: body.auditType, platform: body.platform };
 
@@ -120,7 +137,15 @@ function registerChatEndpoint(RED) {
         return;
       }
       const historyChars = history.reduce(
-        (n, m) => n + (m && typeof m.content === "string" ? m.content.length : 0), 0);
+        (n, m) => {
+          let longitud;
+          if (m && typeof m.content === "string") {
+            longitud = m.content.length;
+          } else {
+            longitud = 0;
+          }
+          return n + longitud;
+        }, 0);
       if (question.length > MAX_QUESTION_CHARS || history.length > MAX_HISTORY || historyChars > MAX_HISTORY_CHARS) {
         res.status(413).json({
           ok: false,
@@ -129,7 +154,7 @@ function registerChatEndpoint(RED) {
         return;
       }
 
-      const cfg = findLlmConfig(RED);
+      const cfg = buscarConfigLlm(RED);
       if (!cfg) {
         res.status(503).json({
           ok: false,
@@ -141,7 +166,7 @@ function registerChatEndpoint(RED) {
       }
 
       // Se revalida en cada turno: tras un `ollama pull` el chat funciona sin redesplegar.
-      const check = await checkModel({ ollamaUrl: cfg.ollamaUrl, model: cfg.model });
+      const check = await comprobarModelo({ ollamaUrl: cfg.ollamaUrl, model: cfg.model });
       if (!check.ok) {
         cfg.modelCheck = check;
         res.status(503).json({ ok: false, error: check.error });
@@ -151,18 +176,27 @@ function registerChatEndpoint(RED) {
 
       // Primer turno o seguimiento lo decide el servidor por el historial, no el cliente.
       const isFirstTurn = history.length === 0;
-      const systemPrompt = isFirstTurn
-        ? buildSystemPrompt(finding, context)
-        : buildFollowupSystemPrompt(finding, context);
+      let systemPrompt;
+      if (isFirstTurn) {
+        systemPrompt = promptDeSistema(finding, context);
+      } else {
+        systemPrompt = promptDeSeguimiento(finding, context);
+      }
       const messages = [...history, { role: "user", content: question }];
 
+      let turno;
+      if (isFirstTurn) {
+        turno = "1-apertura";
+      } else {
+        turno = "seguimiento";
+      }
       cfg.log(
-        `[locoaudit/chat] turno=${isFirstTurn ? "1-apertura" : "seguimiento"} ` +
+        `[locoaudit/chat] turno=${turno} ` +
           `history=${history.length} auditType=${context.auditType || "(derivado)"} ` +
           `platform=${context.platform || "?"} · system(1ª línea)="${systemPrompt.split("\n")[0]}"`
       );
 
-      const result = await chatWithLLM({
+      const result = await conversarConLlm({
         ollamaUrl: cfg.ollamaUrl,
         model: cfg.model,
         timeoutMs: cfg.timeoutMs,
@@ -181,7 +215,7 @@ function registerChatEndpoint(RED) {
 }
 
 /** El primer llm-config del runtime, o null. */
-function findLlmConfig(RED) {
+function buscarConfigLlm(RED) {
   let found = null;
   RED.nodes.eachNode(function (n) {
     if (found) return;

@@ -3,11 +3,11 @@
 /**
  * test-system-pkg-scope.js — Alcance del análisis de paquetes del sistema: ¿se analizaron, y si no, por qué?
  * El veredicto sale de `.Metadata.OS.Family` del informe de Trivy, no de una lista propia de gestores.
- * systemPackagesSupport() es pura y recibe la plataforma, así que cubre las tres desde una máquina.
+ * soportePaquetesSistema() es pura y recibe la plataforma, así que cubre las tres desde una máquina.
  * Uso: node test/manual/test-system-pkg-scope.js
  */
 
-const { systemPackagesSupport } = require("../../lib/trivy-rootfs");
+const { soportePaquetesSistema } = require("../../lib/trivy-rootfs");
 
 let failed = 0;
 let passed = 0;
@@ -17,7 +17,7 @@ function ok(cond, label, detail) {
   else { failed++; console.log(`  ✗ ${label}`); if (detail) console.log(`      ${detail}`); }
 }
 
-// Resultados posibles de runTrivyRootfs(); "SO no reconocido" se cuenta según la plataforma.
+// Resultados posibles de ejecutarTrivyRootfs(); "SO no reconocido" se cuenta según la plataforma.
 const NO_OS   = { skipped: true, kind: "os-unsupported", reason: "Trivy no ha detectado la familia del sistema operativo" };
 const FALLO   = { skipped: true, kind: "error", reason: "trivy failed: exit status 2" };
 const CORTADO = { skipped: true, kind: "output-too-large", reason: "la salida no cupo en el búfer" };
@@ -43,7 +43,7 @@ const MATRIZ = [
 ];
 
 for (const [platform, enabled, result, esperado, nota] of MATRIZ) {
-  const got = systemPackagesSupport(platform, result, { enabled });
+  const got = soportePaquetesSistema(platform, result, { enabled });
   const etiqueta = `${platform.padEnd(7)} ${enabled ? "on " : "off"} ` +
                    `${String(result && result.kind || (result ? "ok" : "—")).padEnd(17)} ` +
                    `→ ${esperado.padEnd(20)} (${nota})`;
@@ -55,19 +55,19 @@ console.log("\n── El veredicto NO depende del gestor de paquetes ───�
 // El mismo resultado de Trivy da el mismo estado con cualquier gestor; `manager` solo redacta.
 const GESTORES = ["apt", "dnf", "yum", "zypper", "apk", "pacman", "emerge", "xbps", null];
 const todosScanned = GESTORES.every(
-  () => systemPackagesSupport("linux", OK, { enabled: true, manager: "pacman" }) === "scanned"
+  () => soportePaquetesSistema("linux", OK, { enabled: true, manager: "pacman" }) === "scanned"
 );
 ok(todosScanned,
    `un informe con OS.Family da 'scanned' con cualquiera de los ${GESTORES.length} gestores`);
 
 // Un gestor conocido no convierte en 'scanned' un informe sin familia de SO.
-ok(systemPackagesSupport("linux", NO_OS, { enabled: true }) === "unsupported-manager",
+ok(soportePaquetesSistema("linux", NO_OS, { enabled: true }) === "unsupported-manager",
    "un informe SIN OS.Family no puede salir como analizado, aunque el gestor fuese apt");
 
 // Las derivadas de Arch, sin listarlas en ninguna parte.
 const derivadasArch = ["CachyOS", "Manjaro", "EndeavourOS", "Garuda", "Artix"];
 const todasIgual = derivadasArch.every(
-  () => systemPackagesSupport("linux", NO_OS, { enabled: true }) === "unsupported-manager"
+  () => soportePaquetesSistema("linux", NO_OS, { enabled: true }) === "unsupported-manager"
 );
 ok(todasIgual, `las ${derivadasArch.length} derivadas de Arch dan el mismo estado sin listarlas`);
 
@@ -76,7 +76,7 @@ console.log("\n── Un fallo NUNCA se cuenta como análisis limpio ───�
 // Fallo de la herramienta ≠ dato negativo: ningún kind de fallo acaba en 'scanned'.
 for (const r of [FALLO, CORTADO, SIN_BIN, NO_OS]) {
   for (const plat of ["linux", "darwin", "win32"]) {
-    const got = systemPackagesSupport(plat, r, { enabled: true });
+    const got = soportePaquetesSistema(plat, r, { enabled: true });
     ok(got !== "scanned", `${plat.padEnd(7)} + kind '${r.kind}' → "${got}", nunca 'scanned'`);
   }
 }
@@ -85,7 +85,7 @@ console.log("\n── Estados que el dashboard debe saber redactar ────�
 
 const ESTADOS = ["scanned", "supported-not-run", "unsupported-manager", "not-applicable", "failed"];
 const producidos = new Set(
-  MATRIZ.map(([p, e, r]) => systemPackagesSupport(p, r, { enabled: e }))
+  MATRIZ.map(([p, e, r]) => soportePaquetesSistema(p, r, { enabled: e }))
 );
 for (const est of ESTADOS) {
   ok(producidos.has(est), `la matriz cubre el estado "${est}"`);

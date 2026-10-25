@@ -4,7 +4,7 @@
  * test-network-target.js — Qué objetivo acepta audit-network, y qué pasa cuando no es válido.
  *
  * Bloques:
- *   1. validateTarget(): lo que se acepta y lo que no, incluida la red y la difusión propias.
+ *   1. validarObjetivo(): lo que se acepta y lo que no, incluida la red y la difusión propias.
  *   2. El nodo con un objetivo no válido: un NET-CFG-ERR y nmap SIN ejecutar (un nmap falso
  *      en el PATH deja un fichero testigo si alguien lo llama).
  *   3. El NET-CFG-ERR de la lista de puertos vacía sigue saliendo con el payload de antes.
@@ -38,10 +38,10 @@ if (!isWin) {
   process.env.PATH = `${tmp}${path.delimiter}${process.env.PATH}`;
 }
 
-const { validateTarget } = require("../../nodes/audit-network/modules/network-utils");
+const { validarObjetivo } = require("../../nodes/audit-network/modules/network-utils");
 
-// ── 1 · validateTarget ──────────────────────────────────────────────────────────────────────
-console.log("\n── 1 · validateTarget(): qué es la dirección de un equipo ────────\n");
+// ── 1 · validarObjetivo ──────────────────────────────────────────────────────────────────────
+console.log("\n── 1 · validarObjetivo(): qué es la dirección de un equipo ────────\n");
 
 // Interfaces fijas: el resultado no puede depender de la red de quien ejecuta el test.
 const IFACES = {
@@ -59,7 +59,7 @@ const VALIDAS = [
   ["10.8.0.3", "10.8.0.3"],            // en un /31 no hay red ni difusión
 ];
 for (const [entrada, esperada] of VALIDAS) {
-  const r = validateTarget(entrada, IFACES);
+  const r = validarObjetivo(entrada, IFACES);
   ok(r.ok && r.ip === esperada, `acepta ${JSON.stringify(entrada)} → ${esperada}`, JSON.stringify(r));
 }
 
@@ -96,22 +96,22 @@ const INVALIDAS = [
   ["100.64.0.1", "CGNAT"],
 ];
 for (const [entrada, que] of INVALIDAS) {
-  const r = validateTarget(entrada, IFACES);
+  const r = validarObjetivo(entrada, IFACES);
   ok(!r.ok && typeof r.reason === "string" && r.reason.length > 0,
      `rechaza ${que}: ${JSON.stringify(entrada)}`, JSON.stringify(r));
 }
 
-ok(/no está en la misma red/.test(validateTarget("8.8.8.8", IFACES).reason),
-   "el motivo de una dirección de otra red lo dice", validateTarget("8.8.8.8", IFACES).reason);
+ok(/no está en la misma red/.test(validarObjetivo("8.8.8.8", IFACES).reason),
+   "el motivo de una dirección de otra red lo dice", validarObjetivo("8.8.8.8", IFACES).reason);
 
 // El caso que motiva la regla: el equipo está en 10.10.10.0/24 y se pide una dirección de 192.168.1.0/24.
 const OTRA_RED = { en0: [{ family: "IPv4", internal: false, address: "10.10.10.5", netmask: "255.255.255.0", cidr: "10.10.10.5/24" }] };
-ok(!validateTarget("192.168.1.10", OTRA_RED).ok, "desde 10.10.10.0/24 rechaza 192.168.1.10, aunque sea privada");
-ok(validateTarget("10.10.10.20", OTRA_RED).ok, "desde 10.10.10.0/24 acepta 10.10.10.20");
+ok(!validarObjetivo("192.168.1.10", OTRA_RED).ok, "desde 10.10.10.0/24 rechaza 192.168.1.10, aunque sea privada");
+ok(validarObjetivo("10.10.10.20", OTRA_RED).ok, "desde 10.10.10.0/24 acepta 10.10.10.20");
 
-ok(/red 192\.168\.1\.34\/24/.test(validateTarget("192.168.1.0", IFACES).reason),
+ok(/red 192\.168\.1\.34\/24/.test(validarObjetivo("192.168.1.0", IFACES).reason),
    "el motivo de la dirección de red nombra la subred y la interfaz",
-   validateTarget("192.168.1.0", IFACES).reason);
+   validarObjetivo("192.168.1.0", IFACES).reason);
 
 // ── Un RED mínimo para cargar el nodo de verdad ─────────────────────────────────────────────
 function loadNode() {
@@ -197,9 +197,9 @@ async function main() {
     // ── 4 · Descubrimiento cortado por tiempo ───────────────────────────────────────────────
     console.log("\n── 4 · Descubrimiento con tiempo agotado ─────────────────────────\n");
     {
-      const { checkHostReachable } = require("../../nodes/audit-network/modules/host-discovery");
+      const { comprobarAlcance } = require("../../nodes/audit-network/modules/host-discovery");
       const t0 = Date.now();
-      const d = await checkHostReachable({ target: "10.10.10.5", isLocal: false, timeout: 1500 });
+      const d = await comprobarAlcance({ target: "10.10.10.5", isLocal: false, timeout: 1500 });
       const secs = (Date.now() - t0) / 1000;
       ok(d.reachable === null && d.method === "error", "resultado ambiguo, no 'no accesible'", JSON.stringify(d));
       ok(d.reason === "timeout", "reason = 'timeout'", JSON.stringify(d.reason));

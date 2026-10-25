@@ -17,8 +17,8 @@ const os   = require("os");
 const path = require("path");
 const { execSync } = require("child_process");
 
-const { systemdDisable, getFixForProcess } = require("../../lib/process-fix");
-const { getFixForPort } = require("../../nodes/audit-network/modules/network-utils");
+const { desactivarSystemd, solucionProceso } = require("../../lib/process-fix");
+const { solucionPorPuerto } = require("../../nodes/audit-network/modules/network-utils");
 const { PORT_CATALOG }  = require("../../nodes/audit-network/modules/port-catalog");
 
 let failed = 0, passed = 0, skipped = 0;
@@ -28,9 +28,9 @@ function ok(cond, label, detail) {
 }
 
 // ── 1 · La orden de systemd, contra systemctl de verdad ───────────────────────────────────────
-console.log("\n── 1 · systemdDisable(): funciona con y sin .socket ──────────────\n");
+console.log("\n── 1 · desactivarSystemd(): funciona con y sin .socket ──────────────\n");
 
-const cmd = systemdDisable("nginx");
+const cmd = desactivarSystemd("nginx");
 ok(/^sudo systemctl disable --now nginx\.service && \{ sudo systemctl disable --now nginx\.socket 2>\/dev\/null \|\| true; \}$/.test(cmd),
    "el .service va primero y el .socket no puede hacer fallar la línea", cmd);
 
@@ -64,7 +64,7 @@ if (!systemctl || process.platform !== "linux") {
   console.log(`  · ${version}: la forma anterior ${antigua !== 0 && enabled() ? "FALLA y deja el servicio habilitado" : "deshabilita el servicio"}`);
   run(`systemctl --root=${root} enable demo.service`);
 
-  const nueva = run(enRoot(systemdDisable("demo")));
+  const nueva = run(enRoot(desactivarSystemd("demo")));
   ok(nueva === 0 && !enabled(), "la forma nueva, sin .socket, deshabilita el servicio y termina con 0");
 
   fs.writeFileSync(path.join(units, "demo.socket"),
@@ -73,7 +73,7 @@ if (!systemctl || process.platform !== "linux") {
     fs.mkdirSync(path.join(root, "etc/systemd/system", w), { recursive: true });
   }
   run(`systemctl --root=${root} enable demo.service demo.socket`);
-  const conSocket = run(enRoot(systemdDisable("demo")));
+  const conSocket = run(enRoot(desactivarSystemd("demo")));
   const socketOn = linkExists("etc/systemd/system/sockets.target.wants/demo.socket");
   ok(conSocket === 0 && !enabled() && !socketOn, "con .socket, deshabilita las dos unidades");
   fs.rmSync(root, { recursive: true, force: true });
@@ -85,12 +85,12 @@ console.log("\n── 2 · Ninguna recomendación de macOS o Windows usa systemc
 const LINUX_ONLY = /systemctl|\/etc\/mysql|apt |dnf |pacman /;
 for (const plat of ["darwin", "win32"]) {
   const malos = Object.keys(PORT_CATALOG).map(Number)
-    .filter((p) => LINUX_ONLY.test(getFixForPort(p, plat) || ""));
+    .filter((p) => LINUX_ONLY.test(solucionPorPuerto(p, plat) || ""));
   ok(malos.length === 0, `${plat}: ningún puerto del catálogo propone órdenes de Linux`, JSON.stringify(malos));
 }
 for (const proc of ["mysqld", "mariadb", "postgres", "redis", "mongod", "nginx", "smbd", "sshd", "apache"]) {
-  ok(!LINUX_ONLY.test(getFixForProcess(proc, "darwin") || ""), `macOS · ${proc}: sin órdenes de Linux`,
-     getFixForProcess(proc, "darwin"));
+  ok(!LINUX_ONLY.test(solucionProceso(proc, "darwin") || ""), `macOS · ${proc}: sin órdenes de Linux`,
+     solucionProceso(proc, "darwin"));
 }
 
 // ── 3 · El nombre de la unidad según la distribución ──────────────────────────────────────────
@@ -105,29 +105,29 @@ const UNIDADES = [
   ["smbd",    "pacman", /smb\.service/,     /smbd\.service/],
 ];
 for (const [proc, mgr, debe, noDebe] of UNIDADES) {
-  const t = getFixForProcess(proc, "linux", mgr);
+  const t = solucionProceso(proc, "linux", mgr);
   ok(debe.test(t) && !noDebe.test(t), `${proc} con ${mgr}`, t);
 }
-const sinGestor = getFixForProcess("sshd", "linux", null);
+const sinGestor = solucionProceso("sshd", "linux", null);
 ok(/ssh\.service/.test(sinGestor) && /sshd/.test(sinGestor.split("\n")[1] || ""),
    "sin gestor conocido: nombre de Debian y una nota con el de Arch y Fedora", sinGestor);
 
 // ── 4 · Telnet ────────────────────────────────────────────────────────────────────────────────
 console.log("\n── 4 · Telnet ────────────────────────────────────────────────────\n");
 
-const tWin = getFixForPort(23, "win32");
+const tWin = solucionPorPuerto(23, "win32");
 ok(!/cliente Telnet/i.test(tWin) && /netstat -ano \| findstr :23/.test(tWin),
    "Windows: identifica el programa que abre el 23, no el cliente Telnet", tWin);
-ok(/sudo apt remove --purge telnetd/.test(getFixForPort(23, "linux", "apt")) &&
-   !/telnet\.service/.test(getFixForPort(23, "linux", "apt")),
+ok(/sudo apt remove --purge telnetd/.test(solucionPorPuerto(23, "linux", "apt")) &&
+   !/telnet\.service/.test(solucionPorPuerto(23, "linux", "apt")),
    "Debian: desinstala telnetd en vez de una unidad telnet.service inexistente");
-ok(/sudo dnf remove telnet-server/.test(getFixForPort(23, "linux", "dnf")), "Fedora: desinstala telnet-server");
+ok(/sudo dnf remove telnet-server/.test(solucionPorPuerto(23, "linux", "dnf")), "Fedora: desinstala telnet-server");
 
 // ── 5 · SSH: no dejar al usuario fuera ────────────────────────────────────────────────────────
 console.log("\n── 5 · SSH avisa antes de desactivar las contraseñas ─────────────\n");
 
 for (const plat of ["linux", "darwin"]) {
-  const t = getFixForPort(22, plat, "apt");
+  const t = solucionPorPuerto(22, plat, "apt");
   ok(/PasswordAuthentication no/.test(t) && /Sin una clave configurada/.test(t),
      `${plat}: PasswordAuthentication no va con el aviso de quedarse sin acceso`);
   ok(/sshd -T/.test(t), `${plat}: comprueba la configuración efectiva con sshd -T`);

@@ -3,16 +3,16 @@
 /**
  * test-image-audit.js — Test manual del flujo completo de audit-image.
  *
- * Prueba: getDockerInfo → auditDockerConfig → runTrivyImage → normalizeImage → summarize
+ * Prueba: infoDocker → auditarConfigDocker → ejecutarTrivyImagen → normalizarImagen → summarize
  *
  * Uso: node test/manual/test-image-audit.js
  */
 
-const { getDockerInfo }     = require("../../nodes/audit-image/modules/docker-api");
-const { auditDockerConfig } = require("../../nodes/audit-image/modules/config-audit");
-const { runTrivyImage }     = require("../../nodes/audit-image/modules/cve-checker");
-const { normalizeImage }    = require("../../lib/normalizer");
-const { summarize }         = require("../../lib/severity-map");
+const { infoDocker }     = require("../../nodes/audit-image/modules/docker-api");
+const { auditarConfigDocker } = require("../../nodes/audit-image/modules/config-audit");
+const { ejecutarTrivyImagen }     = require("../../nodes/audit-image/modules/cve-checker");
+const { normalizarImagen }    = require("../../lib/normalizer");
+const { resumir }         = require("../../lib/severity-map");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ async function main() {
 
   // 1. Docker info
   sep("1. Docker info");
-  const docker = await getDockerInfo();
+  const docker = await infoDocker();
 
   if (docker.skipped) {
     console.log(`Docker no disponible: ${docker.reason}`);
@@ -68,8 +68,8 @@ async function main() {
   console.log("Ejecutando...");
 
   const [configResult, trivyResult] = await Promise.allSettled([
-    auditDockerConfig(docker),
-    runTrivyImage(docker.images),
+    auditarConfigDocker(docker),
+    ejecutarTrivyImagen(docker.images),
   ]);
 
   // 3. Config-audit findings
@@ -102,7 +102,7 @@ async function main() {
     console.log(`Trivy no disponible: ${trivy ? trivy.reason : "resultado nulo"}`);
   } else {
     console.log(`Imágenes escaneadas: ${trivy.imagesScanned}, saltadas: ${trivy.imagesSkipped}`);
-    trivyFindings = normalizeImage(trivy, "trivy");
+    trivyFindings = normalizarImagen(trivy, "trivy");
     console.log(`Findings de Trivy:   ${trivyFindings.length}`);
 
     const shown = trivyFindings.slice(0, 20);
@@ -121,7 +121,7 @@ async function main() {
   sep("5. Resumen final");
 
   const allFindings = [...configFindings, ...trivyFindings];
-  const summary = summarize(allFindings);
+  const summary = resumir(allFindings);
   const durationMs = Date.now() - startTime;
 
   console.log(`Total findings:  ${allFindings.length}`);

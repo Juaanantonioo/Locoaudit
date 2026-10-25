@@ -64,7 +64,7 @@ const TLS_SERVICES = new Set([
 const TLS_SCRIPTS = new Set(["ssl-cert", "ssl-enum-ciphers", "sslv2"]);
 
 // Igual que el portrule de vulners.nse: basta con versión o con CPE.
-function hasVersion(p) {
+function tieneVersion(p) {
   if (!p) return false;
   if (p.version && String(p.version).trim()) return true;
   if (p.cpe && String(p.cpe).trim()) return true;
@@ -73,17 +73,19 @@ function hasVersion(p) {
 
 // Aproximación propia (no copia los portrule de nmap) para interpretar la ausencia de un <script>.
 // No decide qué se manda a nmap. Devuelve { applies, reason }; reason va al informe.
-function appliesTo(scriptId, p) {
+function aplicaA(scriptId, p) {
   const port    = p && Number(p.port);
   const service = String((p && p.service) || "").toLowerCase();
 
   if (scriptId === "vulners") {
-    return hasVersion(p)
-      ? { applies: true, reason: null }
-      : {
-          applies: false,
-          reason: "El servicio no anunció versión ni CPE: vulners no tiene con qué consultar.",
-        };
+    if (tieneVersion(p)) {
+      return { applies: true, reason: null };
+    } else {
+      return {
+            applies: false,
+            reason: "El servicio no anunció versión ni CPE: vulners no tiene con qué consultar.",
+          };
+    }
   }
 
   if (TLS_SCRIPTS.has(scriptId)) {
@@ -122,8 +124,12 @@ function appliesTo(scriptId, p) {
 }
 
 // 'remote-api' (vulners): su silencio es ambiguo, de ahí el canario. 'target': habla con el propio servicio.
-function sourceKind(scriptId) {
-  return scriptId === "vulners" ? "remote-api" : "target";
+function tipoFuente(scriptId) {
+  if (scriptId === "vulners") {
+    return "remote-api";
+  } else {
+    return "target";
+  }
 }
 
 // Va en la evidencia de NET-TLS-* y NET-SVC-*: ofrecer un algoritmo no es usarlo.
@@ -163,7 +169,7 @@ const SSH_WEAK_ALGOS = {
 };
 
 // Cualquier *-cbc no listado cae a 'low'; el resto es inventario.
-function sshAlgoSeverity(name) {
+function severidadAlgoritmoSsh(name) {
   const n = String(name || "").trim().toLowerCase();
   if (!n) return "info";
   if (SSH_WEAK_ALGOS[n]) return SSH_WEAK_ALGOS[n];
@@ -180,8 +186,8 @@ module.exports = {
   TLS_GRADE_SEVERITY,
   SSH_WEAK_ALGOS,
   OFFERED_NOT_NEGOTIATED,
-  hasVersion,
-  appliesTo,
-  sourceKind,
-  sshAlgoSeverity,
+  tieneVersion,
+  aplicaA,
+  tipoFuente,
+  severidadAlgoritmoSsh,
 };

@@ -5,22 +5,22 @@
 
 const os = require("os");
 const { PORT_CATALOG }            = require("./modules/port-catalog");
-const { runNmap }                 = require("./modules/nmap-wrapper");
-const { checkHostReachable, deriveTargetState } = require("./modules/host-discovery");
-const { enrichPorts, detectFirewall } = require("./modules/service-detect");
-const { isLocalTarget, validateTarget, validatePortSpec, scanTimeoutMs, getFixForPort } = require("./modules/network-utils");
-const { detectPackageManager }   = require("../../lib/pkg-manager");
-const { commandExists }           = require("../../lib/executor");
-const { scriptExists, scriptStates } = require("./modules/nse-scripts");
-const { runCanary, canaryIsOk }   = require("./modules/vulners-canary");
-const { summarizePort }           = require("./modules/nse-extract");
-const { hasVersion }              = require("./modules/nse-catalog");
-const { normalizeNetwork }        = require("../../lib/normalizer");
-const { summarize }               = require("../../lib/severity-map");
-const { createFinding }           = require("../../lib/finding-schema");
+const { ejecutarNmap }                 = require("./modules/nmap-wrapper");
+const { comprobarAlcance, deducirEstadoObjetivo } = require("./modules/host-discovery");
+const { completarPuertos, detectarFirewall } = require("./modules/service-detect");
+const { esObjetivoLocal, validarObjetivo, validarPuertos, tiempoMaximoEscaneo, solucionPorPuerto } = require("./modules/network-utils");
+const { detectarGestor }   = require("../../lib/pkg-manager");
+const { existeComando }           = require("../../lib/executor");
+const { existeScript, estadoScripts } = require("./modules/nse-scripts");
+const { ejecutarCanario, canarioCorrecto }   = require("./modules/vulners-canary");
+const { resumirPuerto }           = require("./modules/nse-extract");
+const { tieneVersion }              = require("./modules/nse-catalog");
+const { normalizarRed }        = require("../../lib/normalizer");
+const { resumir }               = require("../../lib/severity-map");
+const { crearHallazgo }           = require("../../lib/finding-schema");
 
 // Instrucciones concretas por sistema; en Linux van los tres gestores porque no se sondea la distribución.
-function nmapInstallInstructions(platform) {
+function instruccionesNmap(platform) {
   if (platform === "darwin") {
     return "1. Instala Homebrew si no lo tienes: /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n" +
            "2. Instala Nmap: brew install nmap\n" +
@@ -42,24 +42,43 @@ function nmapInstallInstructions(platform) {
 }
 
 module.exports = function (RED) {
-  function AuditNetworkNode(config) {
+  function NodoAuditoriaRed(config) {
     RED.nodes.createNode(this, config);
     const node = this;
 
     // Solo para poder elegir el config desde el editor: el chat lo sirve /locoaudit/chat.
-    node.llmConfig = config.llmConfig ? RED.nodes.getNode(config.llmConfig) : null;
+    if (config.llmConfig) {
+      node.llmConfig = RED.nodes.getNode(config.llmConfig);
+    } else {
+      node.llmConfig = null;
+    }
 
     node.on("input", async function (msg, send, done) {
       node.status({ fill: "blue", shape: "dot", text: "Escaneando..." });
 
       const scanMode       = config.scanMode    || "standard";
       // En modo personalizado lo que llega a nmap es la lista normalizada, nunca el texto del campo.
-      const portCheck      = validatePortSpec(config.customPorts);
-      const customPorts    = portCheck.ok ? portCheck.spec : "";
-      // Quien decide si el objetivo es válido es validateTarget(), no el formulario del editor.
+      const portCheck      = validarPuertos(config.customPorts);
+      let customPorts;
+      if (portCheck.ok) {
+        customPorts = portCheck.spec;
+      } else {
+        customPorts = "";
+      }
+      // Quien decide si el objetivo es válido es validarObjetivo(), no el formulario del editor.
       const wantsCustom    = config.scanTarget === "custom";
-      const targetCheck    = wantsCustom ? validateTarget(config.customTarget) : { ok: true, ip: "127.0.0.1" };
-      const target         = targetCheck.ok ? targetCheck.ip : null;
+      let targetCheck;
+      if (wantsCustom) {
+        targetCheck = validarObjetivo(config.customTarget);
+      } else {
+        targetCheck = { ok: true, ip: "127.0.0.1" };
+      }
+      let target;
+      if (targetCheck.ok) {
+        target = targetCheck.ip;
+      } else {
+        target = null;
+      }
       // Para equipos encendidos que filtran el descubrimiento (-sn).
       const forceScan      = config.forceScan === true || config.forceScan === "true";
 
@@ -71,8 +90,8 @@ module.exports = function (RED) {
       const startTime = Date.now();
 
       // Configuración inválida: un único NET-CFG-ERR y no se lanza nmap. extraMeta solo añade campos.
-      function sendConfigError({ title, evidence, fix, extraMeta = {} }) {
-        const errFinding = createFinding({
+      function enviarErrorConfig({ title, evidence, fix, extraMeta = {} }) {
+        const errFinding = crearHallazgo({
           id:       "NET-CFG-ERR",
           title,
           severity: "medium",
@@ -83,7 +102,7 @@ module.exports = function (RED) {
         });
         msg.payload = {
           findings:  [errFinding],
-          summary:   summarize([errFinding]),
+          summary:   resumir([errFinding]),
           source:    "audit-network",
           auditType: "network",
           host: { hostname: os.hostname(), platform: process.platform },
@@ -99,10 +118,22 @@ module.exports = function (RED) {
       try {
         if (!targetCheck.ok) {
           // Texto libre del usuario: se recorta porque acaba en el panel y en el informe.
-          const escrito = String(config.customTarget == null ? "" : config.customTarget).trim().slice(0, 80);
-          sendConfigError({
+          let valor;
+          if (config.customTarget == null) {
+            valor = "";
+          } else {
+            valor = config.customTarget;
+          }
+          const escrito = String(valor).trim().slice(0, 80);
+          let sufijo;
+          if (escrito) {
+            sufijo = ` Valor indicado: «${escrito}».`;
+          } else {
+            sufijo = "";
+          }
+          enviarErrorConfig({
             title:    "Configuración incorrecta: la dirección del equipo no es válida",
-            evidence: `${targetCheck.reason}` + (escrito ? ` Valor indicado: «${escrito}».` : "") +
+            evidence: `${targetCheck.reason}` + sufijo +
                       " No se ha escaneado nada: la ausencia de puertos NO significa que el equipo esté protegido.",
             fix:      "Indica en el nodo audit-network la dirección IPv4 de un único equipo. Ejemplo: 192.168.1.10\n" +
                       "Para auditar este mismo equipo, elige \"Este equipo\" en Objetivo.",
@@ -114,13 +145,13 @@ module.exports = function (RED) {
         // La lista acaba en la línea de nmap: si no es válida, no se escanea.
         if (scanMode === "custom" && !portCheck.ok) {
           if (portCheck.empty) {
-            sendConfigError({
+            enviarErrorConfig({
               title:    "Configuración incorrecta: lista de puertos vacía",
               evidence: "El modo personalizado requiere una lista de puertos.",
               fix:      "Configura los puertos en el nodo audit-network. Ejemplo: 22,80,443",
             });
           } else {
-            sendConfigError({
+            enviarErrorConfig({
               title:    "Configuración incorrecta: la lista de puertos no es válida",
               evidence: `${portCheck.reason} No se ha escaneado nada: la ausencia de puertos NO ` +
                         "significa que el equipo esté protegido.",
@@ -147,16 +178,22 @@ module.exports = function (RED) {
         let nseCanary       = null;   // { state, detail, probed, evidence }
 
         // El escaneo va con -Pn y siempre dice "host up": si el objetivo existe lo decide este paso.
-        const targetIsLocal = isLocalTarget(target);
-        node.status({ fill: "blue", shape: "dot", text: targetIsLocal ? "Escaneando..." : "Comprobando el equipo..." });
-        const discovery = await checkHostReachable({ target, isLocal: targetIsLocal });
+        const targetIsLocal = esObjetivoLocal(target);
+        let textoInicial;
+        if (targetIsLocal) {
+          textoInicial = "Escaneando...";
+        } else {
+          textoInicial = "Comprobando el equipo...";
+        }
+        node.status({ fill: "blue", shape: "dot", text: textoInicial });
+        const discovery = await comprobarAlcance({ target, isLocal: targetIsLocal });
         if (discovery.method === "nmap-sn") {
           modulesRun.push("host-discovery");
           node.log(`[audit-network] descubrimiento: ${discovery.detail}`);
         }
 
         // Con 'unknown' se escanea igual y se avisa: mejor un escaneo de más que cancelar por error.
-        const targetState = deriveTargetState(discovery);
+        const targetState = deducirEstadoObjetivo(discovery);
 
         // Sin forzar no se escanea: cero hallazgos aquí es "no analizado", no "limpio".
         const skipScan = targetState === "unreachable" && !forceScan;
@@ -168,17 +205,29 @@ module.exports = function (RED) {
           try {
             node.status({ fill: "blue", shape: "dot", text: "Escaneando..." });
             // No se usa --host-timeout: cortaría antes de los puertos altos y daría un falso 0.
-            const nmapTimeout = scanTimeoutMs(scanMode, portCheck.ok ? portCheck.count : 0) +
-                                (nseEnabled ? nseTimeout : 0);
+            let puertosPedidos;
+            if (portCheck.ok) {
+              puertosPedidos = portCheck.count;
+            } else {
+              puertosPedidos = 0;
+            }
+            let extraNse;
+            if (nseEnabled) {
+              extraNse = nseTimeout;
+            } else {
+              extraNse = 0;
+            }
+            const nmapTimeout = tiempoMaximoEscaneo(scanMode, puertosPedidos) +
+                                extraNse;
 
             // Un script inexistente aborta todo el escaneo, así que solo se piden los instalados.
             // Si no se puede preguntar, se escanea sin scripts y checked=false llega al informe.
             let nseScripts = [];
             if (nseEnabled) {
               node.status({ fill: "blue", shape: "dot", text: "Comprobando scripts..." });
-              const nmapPath = await commandExists("nmap");
+              const nmapPath = await existeComando("nmap");
               if (nmapPath) {
-                nseAvailability = await scriptExists(nmapPath);
+                nseAvailability = await existeScript(nmapPath);
                 nseScripts = [...nseAvailability.available];
                 if (nseAvailability.missing.length) {
                   node.warn(`[audit-network] scripts NSE no instalados: ${nseAvailability.missing.join(", ")}`);
@@ -191,7 +240,7 @@ module.exports = function (RED) {
             }
 
             node.status({ fill: "blue", shape: "dot", text: "Escaneando..." });
-            const nmapResult = await runNmap({ target, scanMode, customPorts, timeout: nmapTimeout, nseScripts });
+            const nmapResult = await ejecutarNmap({ target, scanMode, customPorts, timeout: nmapTimeout, nseScripts });
             if (!nmapResult.skipped) {
               openPorts  = nmapResult.ports;
               portSource = "nmap";
@@ -218,7 +267,7 @@ module.exports = function (RED) {
         let ports = openPorts;
         if (openPorts.length > 0 && targetIsLocal) {
           try {
-            ports = await enrichPorts(openPorts);
+            ports = await completarPuertos(openPorts);
             modulesRun.push("service-detect");
           } catch (err) {
             node.warn(`[audit-network] service-detect falló: ${err.message}`);
@@ -228,9 +277,9 @@ module.exports = function (RED) {
         // El gestor decide el nombre de la unidad systemd del fix (ssh en Debian, sshd en Arch/Fedora).
         let pkgManager = null;
         if (targetIsLocal && process.platform === "linux" && ports.length > 0) {
-          try { pkgManager = await detectPackageManager("linux"); } catch (_) { pkgManager = null; }
+          try { pkgManager = await detectarGestor("linux"); } catch (_) { pkgManager = null; }
           for (const p of ports) {
-            const guia = getFixForPort(p.port, process.platform, pkgManager);
+            const guia = solucionPorPuerto(p.port, process.platform, pkgManager);
             if (guia) p.fix = guia;
           }
         }
@@ -239,7 +288,7 @@ module.exports = function (RED) {
         let firewall = null;
         if (targetIsLocal && openPorts.length > 0) {
           try {
-            firewall = await detectFirewall();
+            firewall = await detectarFirewall();
           } catch (err) {
             // No tumba la auditoría, pero tampoco puede leerse como "sin cortafuegos".
             firewall = { name: null, active: null, error: String((err && err.message) || err) };
@@ -249,76 +298,95 @@ module.exports = function (RED) {
         // Primero el canario sobre todos los puertos (es del escaneo entero) y luego el resumen por puerto.
         if (nseEnabled) {
           // Sin escaneo el canario debe quedar 'not-run', no "no hacía falta".
-          nseCanary = runCanary(ports, { hasVersion, nseEnabled: !skipScan });
-          const canaryOk = canaryIsOk(nseCanary.state);
+          nseCanary = ejecutarCanario(ports, { hasVersion: tieneVersion, nseEnabled: !skipScan });
+          const canaryOk = canarioCorrecto(nseCanary.state);
           for (const p of ports) {
-            p.nseSummary = summarizePort(p, { canaryOk, states: scriptStates(p, nseAvailability) });
+            p.nseSummary = resumirPuerto(p, { canaryOk, states: estadoScripts(p, nseAvailability) });
           }
           node.log(`[audit-network] canario de vulners: ${nseCanary.state}`);
         }
 
-        const findings = normalizeNetwork(ports, "nmap", {
+        let nse;
+        if (nseEnabled) {
+          nse = {
+            enabled: true,
+            availability: nseAvailability && {
+              checked: nseAvailability.checked,
+              missing: nseAvailability.missing,
+              reason:  nseAvailability.reason || null,
+            },
+            canary: nseCanary,
+          };
+        } else {
+          nse = { enabled: false };
+        }
+        const findings = normalizarRed(ports, "nmap", {
           firewall, targetIsLocal, target, pkgManager,
-          nse: nseEnabled
-            ? {
-                enabled: true,
-                availability: nseAvailability && {
-                  checked: nseAvailability.checked,
-                  missing: nseAvailability.missing,
-                  reason:  nseAvailability.reason || null,
-                },
-                canary: nseCanary,
-              }
-            : { enabled: false },
+          nse,
         });
 
         // Sin nmap el resultado vacío no es "sin puertos": el hallazgo va delante para no pintar verde.
         if (nmapMissing || nmapError) {
-          findings.unshift(createFinding({
-            id:       "NET-DEP-NMAP",
-            title:    nmapMissing
-              ? "Nmap no está instalado: no se ha podido escanear ningún puerto"
-              : "Nmap falló: no se ha podido completar el escaneo",
-            severity: "high",
-            evidence: nmapMissing
-              ? "audit-network requiere Nmap para descubrir puertos abiertos y no se ha encontrado " +
+          let titulo;
+          let evidencia;
+          if (nmapMissing) {
+            titulo = "Nmap no está instalado: no se ha podido escanear ningún puerto";
+            evidencia = "audit-network requiere Nmap para descubrir puertos abiertos y no se ha encontrado " +
                 "el comando `nmap` en el PATH del sistema. El resultado vacío NO significa que no " +
-                "haya puertos abiertos: significa que no se ha escaneado nada."
-              : `Nmap está instalado pero la ejecución falló: ${nmapError}. ` +
-                "El resultado vacío NO significa que no haya puertos abiertos.",
-            fix:      nmapInstallInstructions(process.platform),
+                "haya puertos abiertos: significa que no se ha escaneado nada.";
+          } else {
+            titulo = "Nmap falló: no se ha podido completar el escaneo";
+            evidencia = `Nmap está instalado pero la ejecución falló: ${nmapError}. ` +
+                "El resultado vacío NO significa que no haya puertos abiertos.";
+          }
+          findings.unshift(crearHallazgo({
+            id:       "NET-DEP-NMAP",
+            title:    titulo,
+            severity: "high",
+            evidence: evidencia,
+            fix:      instruccionesNmap(process.platform),
             category: "network",
             source:   "native",
           }));
         }
 
         // Cero puertos solo vale si el objetivo existe (targetState) y el escaneo terminó (scanStatus).
-        let scanStatus = skipScan ? "not-run" : "ok";
+        let scanStatus;
+        if (skipScan) {
+          scanStatus = "not-run";
+        } else {
+          scanStatus = "ok";
+        }
 
         if (targetState === "unreachable") {
           // 'info' porque es ausencia de auditoría, no riesgo; el estado neutro lo pinta targetState.
-          findings.unshift(createFinding({
+          let aviso;
+          let consejo;
+          if (skipScan) {
+            aviso = "No se ha escaneado ningún puerto: la ausencia de hallazgos NO significa " +
+                          "que el equipo esté seguro, significa que no se ha podido analizar.";
+            consejo = "Si sabes que está encendido y solo filtra el descubrimiento, activa " +
+                          "\"Escanear aunque el equipo no responda\" en el nodo audit-network.";
+          } else {
+            aviso = "Se ha escaneado de todas formas porque está activada la opción " +
+                          "\"Escanear aunque el equipo no responda\", pero el resultado puede " +
+                          "estar incompleto.";
+            consejo = "Si el equipo está encendido, revisa su cortafuegos: está filtrando " +
+                          "tanto el descubrimiento como el escaneo.";
+          }
+          findings.unshift(crearHallazgo({
             id:       "NET-HOST-UNREACHABLE",
             title:    `No se ha podido contactar con ${target}: la auditoría no se ha realizado`,
             severity: "info",
             evidence: `${discovery.detail} ` +
-                      (skipScan
-                        ? "No se ha escaneado ningún puerto: la ausencia de hallazgos NO significa " +
-                          "que el equipo esté seguro, significa que no se ha podido analizar."
-                        : "Se ha escaneado de todas formas porque está activada la opción " +
-                          "\"Escanear aunque el equipo no responda\", pero el resultado puede " +
-                          "estar incompleto."),
+                      aviso,
             // Sin numerar: la lista del dashboard ya numera. Las líneas "$ " se pintan como orden.
             fix:      "Comprueba que el equipo está encendido y conectado a la red.\n" +
                       `Verifica que la dirección IP es correcta: ${target}\n` +
                       "Si usas VPN, comprueba que no desvía por el túnel el tráfico de tu red local.\n" +
                       "Prueba a contactarlo desde una terminal:\n" +
                       `$ ping ${target}\n` +
-                      (skipScan
-                        ? "Si sabes que está encendido y solo filtra el descubrimiento, activa " +
-                          "\"Escanear aunque el equipo no responda\" en el nodo audit-network."
-                        : "Si el equipo está encendido, revisa su cortafuegos: está filtrando " +
-                          "tanto el descubrimiento como el escaneo."),
+                      consejo,
             category: "network",
             source:   "nmap",
             target,
@@ -326,7 +394,7 @@ module.exports = function (RED) {
           }));
         } else if (scanInconclusive) {
           scanStatus = "inconclusive";
-          findings.unshift(createFinding({
+          findings.unshift(crearHallazgo({
             id:       "NET-SCAN-WARN",
             title:    "Escaneo no concluyente: el resultado NO garantiza que no haya puertos abiertos",
             severity: "medium",
@@ -340,7 +408,7 @@ module.exports = function (RED) {
           }));
         } else if (targetState === "unknown" && !targetIsLocal && !nmapMissing) {
           // No se supo si el objetivo existe; se escaneó igual, pero no se pinta verde.
-          findings.unshift(createFinding({
+          findings.unshift(crearHallazgo({
             id:       "NET-SCAN-WARN",
             title:    "No se ha podido comprobar si el equipo está accesible",
             severity: "medium",
@@ -352,8 +420,59 @@ module.exports = function (RED) {
           }));
         }
 
-        const summary    = summarize(findings);
+        const summary    = resumir(findings);
         const durationMs = Date.now() - startTime;
+
+        let filtrados;
+        let motivoFiltrado;
+        let nombreHost;
+        if (nmapScan) {
+          filtrados = nmapScan.filteredCount;
+          motivoFiltrado = nmapScan.filteredReason;
+          nombreHost = nmapScan.hostname;
+        } else {
+          filtrados = null;
+          motivoFiltrado = null;
+          nombreHost = null;
+        }
+        let rango;
+        if (nmapScan && nmapScan.portSpec) {
+          rango = nmapScan.portSpec;
+        } else if (scanMode === "custom") {
+          rango = customPorts.trim();
+        } else {
+          rango = `1-1024 + catálogo (${Object.keys(PORT_CATALOG).length} puertos conocidos)`;
+        }
+        let objetivoPropio;
+        if (target !== "127.0.0.1") {
+          objetivoPropio = target;
+        } else {
+          objetivoPropio = null;
+        }
+        let pedidos;
+        let ausentes;
+        let comprobado;
+        if (nseAvailability) {
+          pedidos = [...nseAvailability.available].sort();
+          ausentes = nseAvailability.missing;
+          comprobado = nseAvailability.checked;
+        } else {
+          pedidos = [];
+          ausentes = [];
+          comprobado = null;
+        }
+        let canario;
+        if (nseCanary) {
+          canario = { state: nseCanary.state, probed: nseCanary.probed, detail: nseCanary.detail };
+        } else {
+          canario = null;
+        }
+        let tiempoNse;
+        if (nseEnabled) {
+          tiempoNse = nseTimeout;
+        } else {
+          tiempoNse = 0;
+        }
 
         msg.payload = {
           findings,
@@ -387,34 +506,28 @@ module.exports = function (RED) {
             forceScan,
             scanStatus,
             // Sin --open para que nmap emita <extraports>.
-            filteredPorts:  nmapScan ? nmapScan.filteredCount  : null,
-            filteredReason: nmapScan ? nmapScan.filteredReason : null,
+            filteredPorts:  filtrados,
+            filteredReason: motivoFiltrado,
             // PTR del objetivo; null si no tiene, y el dashboard no pinta la píldora.
-            hostname:       nmapScan ? nmapScan.hostname : null,
+            hostname:       nombreHost,
             // Objetivo y rango exactos para reproducirlo (un `nmap` a mano usa otro conjunto).
             target,
             portRange:
-              nmapScan && nmapScan.portSpec
-                ? nmapScan.portSpec
-                : scanMode === "custom"
-                ? customPorts.trim()
-                : `1-1024 + catálogo (${Object.keys(PORT_CATALOG).length} puertos conocidos)`,
-            customTarget: target !== "127.0.0.1" ? target : null,
+              rango,
+            customTarget: objetivoPropio,
             // Duplica a propósito los hallazgos de omisión para el dashboard y el JSON exportado.
             nse: {
               enabled: nseEnabled,
               // Array ordenado porque un Set se serializa a {}. Vacío con enabled=true es un hueco.
-              scriptsRequested: nseAvailability ? [...nseAvailability.available].sort() : [],
-              scriptsMissing:   nseAvailability ? nseAvailability.missing : [],
+              scriptsRequested: pedidos,
+              scriptsMissing:   ausentes,
               // false = ni siquiera se pudo preguntar qué hay instalado.
-              availabilityChecked: nseAvailability ? nseAvailability.checked : null,
+              availabilityChecked: comprobado,
               availabilityReason:  (nseAvailability && nseAvailability.reason) || null,
               // probed es siempre false: LoCoAudit no consulta vulners.com por su cuenta.
-              canary: nseCanary
-                ? { state: nseCanary.state, probed: nseCanary.probed, detail: nseCanary.detail }
-                : null,
+              canary: canario,
               // Tiempo extra de los scripts, para poder explicar un timeout.
-              timeoutMs: nseEnabled ? nseTimeout : 0,
+              timeoutMs: tiempoNse,
             },
           },
           raw: { ports },
@@ -422,27 +535,54 @@ module.exports = function (RED) {
         };
 
         const maxSev = summary.maxSeverity || "info";
-        const statusColor =
-          maxSev === "critical" || maxSev === "high" ? "red"
-          : maxSev === "medium"                      ? "yellow"
-          :                                            "green";
+        let statusColor;
+        if (maxSev === "critical" || maxSev === "high") {
+          statusColor = "red";
+        } else if (maxSev === "medium") {
+          statusColor = "yellow";
+        } else {
+          statusColor = "green";
+        }
 
         // No puede decir "0 puertos · riesgo: info" cuando no se auditó nada: mismo falso verde.
+        let color;
+        if (nmapMissing) {
+          color = "red";
+        } else if (targetState === "unreachable") {
+          color = "grey";
+        } else if (targetState === "unknown") {
+          color = "yellow";
+        } else {
+          color = statusColor;
+        }
+        let forma;
+        if (nmapMissing || targetState !== "reachable") {
+          forma = "ring";
+        } else {
+          forma = "dot";
+        }
+        let textoEstado;
+        if (nmapMissing) {
+          textoEstado = "Nmap no instalado (requisito)";
+        } else if (targetState === "unreachable") {
+          textoEstado = `${target} no accesible — sin auditar`;
+        } else if (scanStatus === "inconclusive") {
+          textoEstado = "escaneo no concluyente";
+        } else if (targetState === "unknown") {
+          textoEstado = `${openPorts.length} puertos · accesibilidad sin confirmar`;
+        } else {
+          let etiqueta;
+          if (openPorts.length === 1) {
+            etiqueta = "puerto abierto";
+          } else {
+            etiqueta = "puertos abiertos";
+          }
+          textoEstado = `${openPorts.length} ${etiqueta} · riesgo: ${maxSev}`;
+        }
         node.status({
-          fill:  nmapMissing ? "red"
-               : targetState === "unreachable" ? "grey"
-               : targetState === "unknown"     ? "yellow"
-               : statusColor,
-          shape: nmapMissing || targetState !== "reachable" ? "ring" : "dot",
-          text:  nmapMissing
-            ? "Nmap no instalado (requisito)"
-            : targetState === "unreachable"
-            ? `${target} no accesible — sin auditar`
-            : scanStatus === "inconclusive"
-            ? "escaneo no concluyente"
-            : targetState === "unknown"
-            ? `${openPorts.length} puertos · accesibilidad sin confirmar`
-            : `${openPorts.length} ${openPorts.length === 1 ? "puerto abierto" : "puertos abiertos"} · riesgo: ${maxSev}`,
+          fill:  color,
+          shape: forma,
+          text:  textoEstado,
         });
 
         send(msg);
@@ -454,5 +594,5 @@ module.exports = function (RED) {
     });
   }
 
-  RED.nodes.registerType("audit-network", AuditNetworkNode);
+  RED.nodes.registerType("audit-network", NodoAuditoriaRed);
 };

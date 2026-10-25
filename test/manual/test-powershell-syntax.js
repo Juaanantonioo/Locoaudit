@@ -46,13 +46,13 @@ const SCRIPTS = [
   { nombre: "pending-updates · WINDOWS_PS_SCRIPT", texto: winUpdate.texto },
   { nombre: "executor · PS_UTF8_PRELUDE", texto: PS_UTF8_PRELUDE },
 ];
-if (typeof secModule.buildWinEventsScript === "function") {
+if (typeof secModule.scriptEventosWindows === "function") {
   SCRIPTS.push({
-    nombre: "security-events · buildWinEventsScript(24)",
-    texto: secModule.buildWinEventsScript(24),
+    nombre: "security-events · scriptEventosWindows(24)",
+    texto: secModule.scriptEventosWindows(24),
   });
 } else {
-  console.log("  (buildWinEventsScript no está exportado: no se compila aquí)");
+  console.log("  (scriptEventosWindows no está exportado: no se compila aquí)");
 }
 
 console.log("\n── A · Invariantes estructurales (sin PowerShell) ────────────────\n");

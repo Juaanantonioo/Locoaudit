@@ -9,7 +9,7 @@
  *   3. macOS APFS: NO cambia nada (cada volumen tiene su propio dispositivo).
  *   4. ZFS: los datasets de un pool se agrupan por pool, y dos pools no se mezclan.
  *   5. Degradación sin columna Type (busybox): el deduplicado sigue funcionando.
- *   6. fromDisk() emite exactamente un finding por entrada.
+ *   6. desdeDisco() emite exactamente un finding por entrada.
  *
  * Uso:
  *   node test/manual/test-disk-dedupe.js
@@ -17,8 +17,8 @@
 
 const fs = require("fs");
 const path = require("path");
-const { parseDfOutput } = require("../../nodes/audit-host/modules/disk-storage");
-const { normalizeHost } = require("../../lib/normalizer");
+const { leerDf } = require("../../nodes/audit-host/modules/disk-storage");
+const { normalizarHost } = require("../../lib/normalizer");
 
 const FIX = path.join(__dirname, "..", "fixtures", "df");
 const read = (f) => fs.readFileSync(path.join(FIX, f), "utf8");
@@ -36,7 +36,7 @@ const mounts = (d) => d.map((x) => x.mount).join(", ");
 // ── 1 · btrfs real (contenedor privilegiado, mkfs.btrfs de verdad) ───────────
 console.log("\n── 1 · btrfs real: 7 subvolúmenes, un solo dispositivo ───────────\n");
 
-const real = parseDfOutput(read("linux-btrfs-real-container.txt"), true);
+const real = leerDf(read("linux-btrfs-real-container.txt"), true);
 const btrfsReal = real.filter((d) => d.fsType === "btrfs");
 
 ok(btrfsReal.length === 1, `7 filas btrfs → ${btrfsReal.length} entrada(s)`, "esperado 1");
@@ -51,7 +51,7 @@ ok(!real.some((d) => d.totalGB < 1), "descarta volúmenes < 1 GB (el vfat de 511
 // ── 2 · CachyOS: el recuento que inflaba el dashboard ────────────────────────
 console.log("\n── 2 · CachyOS (btrfs + tmpfs de systemd) ────────────────────────\n");
 
-const cachy = parseDfOutput(read("linux-btrfs-cachyos.txt"), true);
+const cachy = leerDf(read("linux-btrfs-cachyos.txt"), true);
 
 // Recuento de referencia: una entrada por montaje, sin filtrar pseudo-filesystems.
 function countLegacy(stdout) {
@@ -81,7 +81,7 @@ ok(!cachy.some((d) => d.mount === "/efi"), "/efi (511 MB) sigue descartado por t
 // ── 3 · macOS APFS: no-regresión ─────────────────────────────────────────────
 console.log("\n── 3 · macOS APFS: el deduplicado no cambia nada ─────────────────\n");
 
-const mac = parseDfOutput(read("macos-apfs-real.txt"), false);
+const mac = leerDf(read("macos-apfs-real.txt"), false);
 ok(mac.length === 2, `${mac.length} entradas (${mounts(mac)})`, "esperado 2");
 ok(mac.every((d) => d.mounts.length === 1), "ningún volumen APFS se agrupa con otro");
 ok(mac[0].mount === "/" && mac[1].mount === "/System/Volumes/Data",
@@ -94,7 +94,7 @@ ok(mac[0].totalGB === 460.43 && mac[1].usedGB === 351.64,
 // ── 4 · ZFS: agrupa por pool, no por dataset ─────────────────────────────────
 console.log("\n── 4 · ZFS: los datasets comparten el espacio libre del pool ─────\n");
 
-const zfs = parseDfOutput(read("linux-zfs.txt"), true);
+const zfs = leerDf(read("linux-zfs.txt"), true);
 const pools = zfs.filter((d) => d.fsType === "zfs");
 ok(pools.length === 2, `2 pools → ${pools.length} entradas (${mounts(pools)})`, "esperado 2");
 
@@ -114,7 +114,7 @@ ok(zfs.some((d) => d.mount === "/boot" && d.fsType === "ext4"),
 // ── 5 · Sin columna Type (busybox): degradación ──────────────────────────────
 console.log("\n── 5 · df sin -T (busybox): el deduplicado sigue vivo ────────────\n");
 
-const bb = parseDfOutput(read("linux-btrfs-busybox-notype.txt"), false);
+const bb = leerDf(read("linux-btrfs-busybox-notype.txt"), false);
 ok(bb.length === 2, `${bb.length} entradas (${mounts(bb)})`, "esperado 2: / y /boot");
 ok(bb.some((d) => d.mount === "/" && d.mounts.length === 3),
    "los 3 montajes de /dev/nvme0n1p2 se agrupan sin conocer el tipo");
@@ -122,10 +122,10 @@ ok(bb.every((d) => d.fsType === null), "fsType es null cuando df no lo reporta")
 ok(!bb.some((d) => ["/run", "/tmp", "/dev/shm"].includes(d.mount)),
    "los tmpfs se descartan por nombre de dispositivo");
 
-// ── 6 · fromDisk(): un finding por entrada ───────────────────────────────────
-console.log("\n── 6 · normalizeHost: un HOST-DISK-* por sistema de ficheros ─────\n");
+// ── 6 · desdeDisco(): un finding por entrada ───────────────────────────────────
+console.log("\n── 6 · normalizarHost: un HOST-DISK-* por sistema de ficheros ─────\n");
 
-const findings = normalizeHost({ disk: cachy }, "native")
+const findings = normalizarHost({ disk: cachy }, "native")
   .filter((f) => f.category === "disk");
 ok(findings.length === cachy.length,
    `${cachy.length} entradas → ${findings.length} findings HOST-DISK-*`);
