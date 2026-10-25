@@ -26,15 +26,15 @@ const FORMAS = [
   { reason: "trivy not installed",                        kind: "not-installed", fatal: true  },
   { reason: "rootfs solo aplica en Linux",                kind: "unsupported",   fatal: false },
   { reason: "Trivy no soporta pacman",                    kind: "unsupported",   fatal: false },
-  { reason: "trivy failed: exit status 2",                kind: "error",         fatal: true  },
-  { reason: "trivy output is not valid JSON",             kind: "error",         fatal: true  },
-  { reason: "Trivy no pudo recorrer /Users/x/Library…",   kind: "error",         fatal: true, walkError: true },
-  { reason: "no se pudo leer el home /home/x: EACCES",    kind: "error",         fatal: true  },
+  { reason: "trivy failed: exit status 2",                kind: "error",         fatal: false },
+  { reason: "trivy output is not valid JSON",             kind: "error",         fatal: false },
+  { reason: "Trivy no pudo recorrer /Users/x/Library…",   kind: "error",         fatal: false, walkError: true },
+  { reason: "no se pudo leer el home /home/x: EACCES",    kind: "error",         fatal: false },
 ];
 
-// Réplica de la decisión de audit-host.js: por kind, NUNCA por reason.
+// Réplica de la decisión de audit-host.js: por kind, NUNCA por reason. Un fallo deja el módulo como no completado.
 function esFatal(res) {
-  return res.kind === "not-installed" || res.kind === "error";
+  return res.kind === "not-installed";
 }
 
 for (const forma of FORMAS) {

@@ -152,7 +152,7 @@ const CONFIG_BASE = {
        `[${reason}] y NO en amarillo: no es un fallo`, JSON.stringify(r.warns));
   }
 
-  console.log("\n── 2 · 'not-installed' y 'error' SÍ abortan ──────────────────────\n");
+  console.log("\n── 2 · 'not-installed' aborta; un fallo de Trivy no tira el informe ─\n");
 
   trivyStubResult = { skipped: true, kind: "not-installed", reason: "trivy not installed" };
   let r = await ejecutar(CONFIG_BASE);
@@ -166,10 +166,14 @@ const CONFIG_BASE = {
     reason: "Trivy no pudo recorrer /Users/x/Library: operation timed out",
   };
   r = await ejecutar(CONFIG_BASE);
-  ok(r.err !== null, "error → se reporta error");
-  ok(r.msg === null, "error → no se emite payload");
-  ok(r.status && r.status.text === "Carpeta inaccesible",
-     "error de recorrido → estado 'Carpeta inaccesible'", JSON.stringify(r.status));
+  ok(r.err === null && r.msg !== null, "error → el resto del informe se emite igual", r.err && r.err.message);
+  const modTrivy = r.msg && r.msg.payload.scanMeta.modules.find((m) => m.id === "trivy-fs");
+  ok(modTrivy && modTrivy.status === "failed", "error → el módulo queda como no completado", JSON.stringify(modTrivy));
+  const skipCve = r.msg && r.msg.payload.findings.find((f) => f.id === "HOST-CVE-SKIP");
+  ok(skipCve && skipCve.skipped === true && /no pudo recorrer/.test(skipCve.evidence),
+     "error → HOST-CVE-SKIP con el motivo real", JSON.stringify(skipCve && skipCve.evidence));
+  ok(r.status && r.status.fill !== "green" && r.status.shape === "ring" && /módulo sin completar/.test(r.status.text),
+     "error → el nodo no queda en verde y lo dice", JSON.stringify(r.status));
 
   console.log("\n── 3 · scanMeta.systemPackages se emite con el interruptor OFF ───\n");
 
@@ -322,6 +326,9 @@ const CONFIG_BASE = {
 
   ok(r.msg && r.msg.payload.raw.trivy.scan.children.scanned.length === 1,
      "scan.children del home intacto (lo usan las pills del bloque de alcance)");
+  // Los Results ya están en los hallazgos: en el mensaje solo pesarían (megas en un home real).
+  ok(r.msg && !("Results" in r.msg.payload.raw.trivy) && r.msg.payload.raw.trivy.resultsCount >= 1,
+     "raw.trivy viaja sin Results, con su recuento", JSON.stringify(r.msg && Object.keys(r.msg.payload.raw.trivy)));
 
   console.log("\n── 8 · Apagado por el usuario ≠ comprobación caída ───────────────\n");
 

@@ -100,11 +100,11 @@ function resolveUserHome() {
 function resolveScanTarget(configured) {
   const { home, resolvedFrom } = resolveUserHome();
   const raw = String(configured || "").trim();
-  if (!raw) return { target: home, resolvedFrom };
+  if (!raw) return { target: home, resolvedFrom, home };
 
-  if (raw === "~") return { target: home, resolvedFrom: "config" };
-  if (raw.startsWith("~/")) return { target: path.join(home, raw.slice(2)), resolvedFrom: "config" };
-  return { target: raw, resolvedFrom: "config" };
+  if (raw === "~") return { target: home, resolvedFrom: "config", home };
+  if (raw.startsWith("~/")) return { target: path.join(home, raw.slice(2)), resolvedFrom: "config", home };
+  return { target: raw, resolvedFrom: "config", home };
 }
 
 /** Versión de Trivy, guardada con el resultado para diagnosticar cambios en su salida. */
@@ -151,6 +151,17 @@ async function runTrivyCommand(buildCmd, timeoutMs) {
 function walkErrorResult(stderr) {
   // El primer path absoluto del mensaje (un patrón genérico capturaba "traversal").
   const m = stderr.match(/(\/[^\s:]+)/);
+  // Una ruta que no existe no es una unidad colgada: el consejo sería el equivocado.
+  if (/no such file or directory/i.test(stderr)) {
+    return {
+      skipped: true,
+      kind: "error",
+      walkError: true,
+      path: m ? m[1] : null,
+      reason: `Trivy no pudo recorrer ${m ? m[1] : "una carpeta del ámbito"}: la carpeta no existe ` +
+              `o desapareció durante el análisis. Detalle: ${stderr}`,
+    };
+  }
   return {
     skipped: true,
     kind: "error",
@@ -171,15 +182,24 @@ async function runTrivyFs(opts = {}) {
     return { skipped: true, kind: "not-installed", reason: "Trivy no está instalado en este equipo" };
   }
 
-  const { target, resolvedFrom } = resolveScanTarget(opts.target);
+  const { target, resolvedFrom, home } = resolveScanTarget(opts.target);
+  if (resolvedFrom === "config" && !fs.existsSync(target)) {
+    return {
+      skipped: true,
+      kind: "error",
+      reason: `La carpeta indicada en "Carpeta a auditar" no existe: ${target}. ` +
+              "Revisa la ruta en las opciones del nodo; recuerda que ~ es tu carpeta personal.",
+    };
+  }
   const skipDirs = Array.isArray(opts.skipDirs) && opts.skipDirs.length
     ? opts.skipDirs
     : DEFAULT_SKIP_DIRS;
 
   const scanners = opts.scanners || "vuln";
 
-  // Si la carpeta la eligió el usuario, va de una pasada: el ámbito ya lo acotó él.
-  return resolvedFrom === "config"
+  // Una carpeta elegida va de una pasada; el home, aunque se escriba a mano, carpeta a carpeta.
+  const esHome = path.resolve(target) === path.resolve(home);
+  return resolvedFrom === "config" && !esHome
     ? await scanSingle(target, skipDirs, resolvedFrom, scanners)
     : await scanHomeByChildren(target, skipDirs, resolvedFrom, scanners);
 }

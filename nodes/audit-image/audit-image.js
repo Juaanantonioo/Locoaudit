@@ -11,6 +11,7 @@ const { normalizeImage, buildSkippedChecksSummary } = require("../../lib/normali
 const { summarize }          = require("../../lib/severity-map");
 const { createFinding }      = require("../../lib/finding-schema");
 const { commandExists }      = require("../../lib/executor");
+const { withoutResults }     = require("../../lib/utils");
 
 // URL de Docker Hub a referencia de trivy (hub.docker.com/_/nginx → nginx). Si no encaja, se devuelve tal cual.
 function parseImageRef(ref) {
@@ -161,6 +162,7 @@ function buildScanErrorFindings(failed) {
 }
 
 function buildImagePayload(findings, scanMeta, raw, scannedImages) {
+  raw = { ...raw, trivy: withoutResults(raw.trivy) };
   return {
     findings,
     summary:   summarize(findings),
@@ -418,7 +420,7 @@ module.exports = function (RED) {
           },
           // En local el dashboard usa raw.docker.images; en remoto cae a este campo.
           scannedImages: (trivy && trivy.scannedImages) || [],
-          raw: { docker, configFindings, trivy },
+          raw: { docker, configFindings, trivy: withoutResults(trivy) },
           timestamp: new Date().toISOString(),
         };
 

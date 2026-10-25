@@ -15,6 +15,7 @@ const { normalizeHost, esNoAplica, buildSkippedChecksSummary, lynisCoverage } = 
 const { detectPackageManager, managerLabel } = require("../../lib/pkg-manager");
 const { commandExists } = require("../../lib/executor");
 const { summarize } = require("../../lib/severity-map");
+const { withoutResults } = require("../../lib/utils");
 
 /** Avisa de un módulo omitido: log si lo apagó el usuario o no aplica, warn si es un fallo. */
 function avisarOmitido(node, modulo, res) {
@@ -158,21 +159,7 @@ module.exports = function (RED) {
             ));
             return;
           }
-          // Una salida cortada o ilegible es un escaneo fallido, no un límite: así no sale un falso verde.
-          const TRIVY_FATAL = ["error", "timeout", "output-too-large", "invalid-json", "empty-output"];
-          if (TRIVY_FATAL.includes(trivy.kind)) {
-            const label = trivy.walkError
-              ? "Carpeta inaccesible"
-              : trivy.kind === "output-too-large"
-              ? "Salida de Trivy cortada"
-              : trivy.kind === "timeout"
-              ? "Trivy agotó el tiempo"
-              : "Trivy falló";
-            node.status({ fill: "red", shape: "ring", text: label });
-            done(new Error(`Trivy no pudo completar el escaneo. ${trivy.reason}`));
-            return;
-          }
-          // 'unsupported': límite de la plataforma o del gestor; se sigue con el resto.
+          // Un fallo no tira el resto del informe: el módulo queda como no completado y el nodo sin verde.
           avisarOmitido(node, "trivy-fs", trivy);
         }
 
@@ -391,7 +378,13 @@ module.exports = function (RED) {
               ),
             },
           },
-          raw: { ...raw, osInfo },
+          raw: {
+            ...raw,
+            trivy: withoutResults(raw.trivy),
+            trivyRootfs: withoutResults(raw.trivyRootfs),
+            trivySecrets: withoutResults(raw.trivySecrets),
+            osInfo,
+          },
           timestamp: new Date().toISOString(),
         };
 

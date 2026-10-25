@@ -149,8 +149,9 @@ const JOURNAL_OK = {
 
     lanza.runTrivyFs = true;
     r = await ejecutarNodo({ ...BASE, enableTrivy: true });
-    ok(r.err && /Trivy no pudo completar/.test(r.err.message) && r.status.fill === "red",
-       "trivy-fs que lanza → rama TRIVY_FATAL (error y estado rojo)", JSON.stringify([r.err && r.err.message, r.status]));
+    const modT = r.msg && r.msg.payload.scanMeta.modules.find((m) => m.id === "trivy-fs");
+    ok(r.err === null && modT && modT.status === "failed" && r.status.shape === "ring",
+       "trivy-fs que lanza → módulo fallido, el resto del informe sale", JSON.stringify([r.err && r.err.message, modT, r.status]));
     lanza.runTrivyFs = false;
     esc = null;
   }));
@@ -171,7 +172,9 @@ const JOURNAL_OK = {
       "const fs = require('fs');\n" +
       "const a = process.argv.slice(2);\n" +
       "if (a[0] === '--version') { console.log('Version: 0.0.0-fake'); process.exit(0); }\n" +
-      `const malas = fs.readFileSync(${JSON.stringify(modo)}, 'utf8').split(',');\n` +
+      `const modoTxt = fs.readFileSync(${JSON.stringify(modo)}, 'utf8');\n` +
+      "if (modoTxt === 'enoent') { console.error('FATAL walk dir error: lstat /x/etc: no such file or directory'); process.exit(1); }\n" +
+      "const malas = modoTxt.split(',');\n" +
       "const t = a[a.length - 1];\n" +
       "if (malas.some((m) => m && t.endsWith('/' + m))) { console.error('FATAL fake error'); process.exit(1); }\n" +
       "fs.writeFileSync(a[a.indexOf('-o') + 1], JSON.stringify({ Results: [] }));\n",
@@ -200,6 +203,24 @@ const JOURNAL_OK = {
     res = await trivyFs.runTrivyFs({});
     f = normalizer.normalizeHost({ trivy: res }, { platform: "linux" });
     ok(!res.skipped && !f.some((x) => x.skipped), "sin fallos ni skip ni PARTIAL", JSON.stringify(f.map((x) => x.id)));
+
+    console.log("\n── 2b · trivy-fs: carpeta configurada que no existe o que es el home ─\n");
+    fs.writeFileSync(modo, "");
+    res = await trivyFs.runTrivyFs({ target: "~/no-existe" });
+    ok(res.skipped === true && res.kind === "error" && /no existe/.test(res.reason) && !/unidad de red/.test(res.reason),
+       "carpeta configurada inexistente → skipped error que dice que no existe", JSON.stringify(res));
+    res = await trivyFs.runTrivyFs({ target: home });
+    ok(!res.skipped && res.scan && res.scan.mode === "fs-by-children",
+       "el home escrito a mano se analiza carpeta a carpeta, como el de por defecto", JSON.stringify(res.scan && res.scan.mode));
+    res = await trivyFs.runTrivyFs({ target: "~" });
+    ok(!res.skipped && res.scan && res.scan.mode === "fs-by-children", "~ también va carpeta a carpeta");
+    res = await trivyFs.runTrivyFs({ target: path.join(home, "a") });
+    ok(!res.skipped && res.scan && res.scan.mode === "fs", "una subcarpeta concreta sigue yendo de una pasada");
+    fs.writeFileSync(modo, "enoent");
+    res = await trivyFs.runTrivyFs({ target: path.join(home, "a") });
+    ok(res.skipped && res.walkError && /no existe/.test(res.reason) && !/unidad de red/.test(res.reason),
+       "ruta inexistente durante el recorrido → no se culpa a una unidad de red", JSON.stringify(res.reason));
+    fs.writeFileSync(modo, "");
 
     console.log("\n── 7 · trivy-fs: SUDO_USER no pasa por una shell ──────────────────\n");
     const sentinel = path.join(tmp, "SENTINEL");
