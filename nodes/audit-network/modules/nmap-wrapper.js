@@ -1,6 +1,6 @@
 "use strict";
 
-// Escáner de puertos del nodo. Sin nmap devuelve { skipped, kind, reason } y el nodo emite el hallazgo.
+// Escáner de puertos del nodo. Sin nmap devuelve { skipped, kind, reason } y el nodo falla con el error.
 // El "host up" de -Pn no se usa: siempre dice que sí; eso lo decide host-discovery.js.
 
 const os                             = require("os");
