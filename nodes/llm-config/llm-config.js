@@ -174,8 +174,9 @@ function registrarChat(RED) {
       }
       cfg.modelCheck = check;
 
-      // Primer turno o seguimiento lo decide el servidor por el historial, no el cliente.
-      const isFirstTurn = history.length === 0;
+      // Primer turno mientras el modelo no haya respondido: un intento fallido no cuenta,
+      // porque el hallazgo solo viaja en las instrucciones del primer turno.
+      const isFirstTurn = !history.some((m) => m && m.role === "assistant");
       let systemPrompt;
       if (isFirstTurn) {
         systemPrompt = promptDeSistema(finding, context);

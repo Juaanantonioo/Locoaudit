@@ -69,7 +69,7 @@
               {{ etiquetaRiesgo }}
             </span>
             <!-- Texto corto: el mismo recuento que el donut enseña en grande. -->
-            <span class="risk-note">{{ totalDonut }} <template v-if="totalDonut === 1">hallazgo</template><template v-else>hallazgos</template></span>
+            <span class="risk-note"><template v-if="totalDonut > 0">{{ totalDonut + ' requieren tu atención' }}</template><template v-else>Nada que arreglar</template></span>
           </div>
 
           <div class="meta-grid">
@@ -276,8 +276,7 @@
                 <!-- inner disc -->
                 <circle cx="80" cy="80" r="48" :fill="tok.card"></circle>
                 <text x="80" y="74"  text-anchor="middle" class="donut-total">{{ totalDonut }}</text>
-                <text x="80" y="88"  text-anchor="middle" class="donut-sub">hallazgos</text>
-                <text x="80" y="100" text-anchor="middle" class="donut-sub">totales</text>
+                <text x="80" y="90"  text-anchor="middle" class="donut-sub">de {{ totalHallazgos }} · a revisar</text>
               </svg>
               <div class="donut-legend">
                 <div v-for="seg in segmentosDonut" :key="'dl-' + seg.key" class="legend-item">
@@ -755,6 +754,11 @@ export default {
     // Cabeceras de grupo solo con 2+ imágenes con hallazgos.
     mostrarGrupos() {
       return this.gruposHallazgos.filter(function(g) { return g.label !== 'General'; }).length > 1;
+    },
+
+    // Todos los hallazgos, informativos incluidos; el donut solo dibuja los que piden atención.
+    totalHallazgos() {
+      return ((this.auditData && this.auditData.findings) || []).length;
     },
 
     totalDonut() {
@@ -1386,8 +1390,14 @@ export default {
       if (!question || this.chatLoading[findingKey]) return;
 
       var epoch = this.chatEpoch;
-      var history = (this.chatMessages[findingKey] || []).slice().map(function(m) {
-        return { role: m.role, content: m.content };
+      var history = [];
+      (this.chatMessages[findingKey] || []).forEach(function(m) {
+        // Un error no es respuesta del modelo: fuera él y la pregunta que lo provocó.
+        if (m.error) {
+          if (history.length && history[history.length - 1].role === 'user') history.pop();
+          return;
+        }
+        history.push({ role: m.role, content: m.content });
       });
 
       var withUser = (this.chatMessages[findingKey] || []).concat([{ role: 'user', content: question }]);

@@ -383,7 +383,7 @@
             <span class="scope-module" v-for="m in modulos" :key="m.id" :class="'mod-' + m.status">
               <svg class="icon icon-sm scope-module-ico"><use :href="iconoModulo(m)"></use></svg>
               {{ m.label }}
-              <span class="scope-module-state"><template v-if="m.status === 'ok'">analizado</template><template v-else-if="m.status === 'failed'">no se pudo</template><template v-else>no solicitado</template></span>
+              <span class="scope-module-state"><template v-if="m.status === 'ok'">analizado</template><template v-else-if="m.status === 'failed'">no se pudo</template><template v-else-if="m.status === 'not-applicable'">no aplica</template><template v-else>no solicitado</template></span>
             </span>
           </div>
         </div>
@@ -2136,8 +2136,14 @@ export default {
       var epoch = this.chatEpoch;
 
       // Historial previo (sin la pregunta actual; el backend la añade aparte)
-      var history = (this.chatMessages[findingKey] || []).slice().map(function(m) {
-        return { role: m.role, content: m.content };
+      var history = [];
+      (this.chatMessages[findingKey] || []).forEach(function(m) {
+        // Un error no es respuesta del modelo: fuera él y la pregunta que lo provocó.
+        if (m.error) {
+          if (history.length && history[history.length - 1].role === 'user') history.pop();
+          return;
+        }
+        history.push({ role: m.role, content: m.content });
       });
 
       var withUser = (this.chatMessages[findingKey] || []).concat([{ role: 'user', content: question }]);
@@ -2698,7 +2704,8 @@ export default {
     border-color: var(--medium-border); background: var(--medium-bg);
   }
   .scope-module.mod-failed .scope-module-ico { color: var(--medium); }
-  .scope-module.mod-not-requested { opacity: .72; }
+  .scope-module.mod-not-requested,
+  .scope-module.mod-not-applicable { opacity: .72; }
 
   .scope-detail { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 12px; }
   .scope-detail-block + .scope-detail-block { margin-top: 12px; }

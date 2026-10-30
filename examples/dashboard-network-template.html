@@ -799,8 +799,8 @@ export default {
       var defs = [
         { sev: 'high',   label: 'Alto',  color: T.high,   textColor: T.highText },
         { sev: 'medium', label: 'Medio', color: T.medium, textColor: T.mediumText },
-        { sev: 'info',   label: 'Info',  color: T.info,   textColor: T.infoText },
-        { sev: 'low',    label: 'Bajo',  color: T.low,    textColor: T.lowText }
+        { sev: 'low',    label: 'Bajo',  color: T.low,    textColor: T.lowText },
+        { sev: 'info',   label: 'Info',  color: T.info,   textColor: T.infoText }
       ];
       var cols = defs.map(function(d) {
         var matching = ports.filter(function(p) {
@@ -1336,8 +1336,14 @@ export default {
       if (!question || this.chatLoading[findingKey]) return;
 
       var epoch = this.chatEpoch;
-      var history = (this.chatMessages[findingKey] || []).slice().map(function(m) {
-        return { role: m.role, content: m.content };
+      var history = [];
+      (this.chatMessages[findingKey] || []).forEach(function(m) {
+        // Un error no es respuesta del modelo: fuera él y la pregunta que lo provocó.
+        if (m.error) {
+          if (history.length && history[history.length - 1].role === 'user') history.pop();
+          return;
+        }
+        history.push({ role: m.role, content: m.content });
       });
 
       var withUser = (this.chatMessages[findingKey] || []).concat([{ role: 'user', content: question }]);
