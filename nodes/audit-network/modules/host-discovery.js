@@ -112,7 +112,7 @@ async function comprobarAlcance(options = {}) {
     };
   }
 
-  // Sin nmap queda ambiguo; el aviso lo da NET-DEP-NMAP en el nodo.
+  // Sin nmap queda ambiguo; el nodo falla después, al intentar escanear.
   if (!(await existeComando("nmap"))) {
     return {
       reachable:  null,

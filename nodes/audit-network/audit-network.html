@@ -294,8 +294,8 @@
     <h3>Requisito: Nmap</h3>
     <p>
         <a href="https://nmap.org/">Nmap</a> es la única fuente de puertos del nodo
-        (el antiguo escáner nativo se eliminó). Si no está instalado, el nodo no falla:
-        emite el hallazgo <code>NET-DEP-NMAP</code> con el comando de instalación de tu
+        (el antiguo escáner nativo se eliminó). Si no está instalado, el nodo falla y
+        Node-RED muestra el error con el comando de instalación de tu
         sistema — <code>brew install nmap</code>, <code>sudo apt install nmap</code>,
         <code>sudo pacman -S nmap</code>, <code>sudo dnf install nmap</code> o
         <code>winget install -e --id Insecure.Nmap</code>.

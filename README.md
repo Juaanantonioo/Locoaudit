@@ -43,11 +43,11 @@ LoCoAudit aborda tres puntos concretos:
 | Nodo | Qué audita | Herramientas que emplea |
 | --- | --- | --- |
 | `audit-host` | El equipo local: inventario de hardware, almacenamiento, software instalado, endurecimiento del sistema y vulnerabilidades conocidas | Lynis, Trivy (opcionales) |
-| `audit-network` | Puertos abiertos y servicios expuestos, en el propio equipo o en otro de la red | Nmap (opcional) |
+| `audit-network` | Puertos abiertos y servicios expuestos, en el propio equipo o en otro de la red | Nmap |
 | `audit-image` | Imágenes Docker presentes en el equipo | Docker, Trivy |
 | `llm-config` | Nodo de configuración para conectar un modelo de lenguaje local y habilitar el chat de explicación de hallazgos | Ollama (opcional) |
 
-Las herramientas marcadas como opcionales no bloquean la ejecución. Si Nmap no está instalado, `audit-network` lo indica en el propio panel y el resto de módulos sigue funcionando.
+Las herramientas marcadas como opcionales no bloquean la ejecución. Si falta Nmap, Docker o Trivy, el nodo que lo necesita falla: Node-RED muestra el error con cómo instalarlo y el dashboard no recibe resultado. El resto de nodos sigue funcionando.
 
 ---
 

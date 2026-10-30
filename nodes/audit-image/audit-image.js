@@ -1,7 +1,7 @@
 "use strict";
 
 // Nodo audit-image. Modo local: imágenes del daemon. Modo específico: las referencias indicadas.
-// Sin Docker no lanza error: emite un IMG-DOCKER-OFF informativo.
+// Sin Docker o sin Trivy el nodo falla, como audit-host con Lynis: el error sale en Node-RED y no se envía nada al dashboard.
 
 const os = require("os");
 const { infoDocker }      = require("./modules/docker-api");
@@ -106,11 +106,10 @@ function hallazgoCveOmitido(trivy, rejectReason) {
     reason = rejectReason;
   }
   // "nothing-to-scan" no deja nada sin revisar y el fallo de todas ya tiene sus propios hallazgos.
-  if (!["not-installed", "disabled", "error"].includes(kind)) return null;
+  if (!["disabled", "error"].includes(kind)) return null;
   if (kind === "error" && !rejectReason) return null;
 
   const fix = {
-    "not-installed": "Instala Trivy y vuelve a lanzar la auditoría: https://trivy.dev/",
     "disabled":      "Activa el análisis de vulnerabilidades en las opciones del nodo si quieres revisar las imágenes.",
     "error":         "Vuelve a lanzar la auditoría. Si se repite, comprueba que Trivy funciona con 'trivy --version'.",
   }[kind];
@@ -255,25 +254,11 @@ module.exports = function (RED) {
           // Única herramienta necesaria en este modo.
           const trivyAvailable = await existeComando("trivy");
           if (!trivyAvailable) {
-            const findings = [
-              crearHallazgo({
-                id:       "IMG-TRIVY-OFF",
-                title:    "Trivy no disponible",
-                severity: "info",
-                evidence: "Trivy no está instalado en este equipo.",
-                fix:      "Instalar Trivy: https://trivy.dev/",
-                category: "image",
-                source:   "native",
-              }),
-            ];
-            msg.payload = construirPayload(
-              findings,
-              { modulesRun: [], imagesFound: 0, containersFound: 0, containersRunning: 0, durationMs: Date.now() - startTime },
-              { docker: null, configFindings: [], trivy: null }
-            );
-            node.status({ fill: "grey", shape: "dot", text: "Trivy no disponible" });
-            send(msg);
-            done();
+            node.status({ fill: "red", shape: "ring", text: "Trivy no instalado" });
+            done(new Error(
+              "Trivy no se encontró instalado en el sistema y audit-image lo necesita para analizar las imágenes. " +
+              "Instala Trivy (https://trivy.dev/) y vuelve a lanzar la auditoría."
+            ));
             return;
           }
 
@@ -336,40 +321,20 @@ module.exports = function (RED) {
         const docker = await infoDocker();
 
         if (docker.skipped) {
-          const findings = [
-            crearHallazgo({
-              id:       "IMG-DOCKER-OFF",
-              title:    "Docker no disponible",
-              severity: "info",
-              evidence: docker.reason || "Docker no está disponible en este equipo.",
-              fix:      "Instalar Docker Desktop desde https://www.docker.com/products/docker-desktop",
-              category: "image",
-              source:   "native",
-            }),
-          ];
-          const summary    = resumir(findings);
-          const durationMs = Date.now() - startTime;
-
-          msg.payload = {
-            findings,
-            summary,
-            source:    "audit-image",
-            auditType: "image",
-            host: { hostname: os.hostname(), platform: process.platform },
-            scanMeta: {
-              modulesRun:        [],
-              imagesFound:       0,
-              containersFound:   0,
-              containersRunning: 0,
-              durationMs,
-            },
-            raw: { docker, configFindings: [], trivy: null },
-            timestamp: new Date().toISOString(),
-          };
-
-          node.status({ fill: "grey", shape: "dot", text: "Docker no disponible" });
-          send(msg);
-          done();
+          // Por kind, no por reason: el texto lo redacta docker-api según el caso.
+          if (docker.kind === "daemon-down") {
+            node.status({ fill: "red", shape: "ring", text: "Docker no responde" });
+            done(new Error(
+              "Docker está instalado pero su servicio no responde, y el modo de imágenes locales lo necesita. " +
+              "Arranca Docker (Docker Desktop o el servicio del sistema) y vuelve a lanzar la auditoría."
+            ));
+          } else {
+            node.status({ fill: "red", shape: "ring", text: "Docker no instalado" });
+            done(new Error(
+              "Docker no se encontró instalado en el sistema y el modo de imágenes locales lo necesita. " +
+              "Instálalo (https://www.docker.com/products/docker-desktop) o usa el modo de imagen específica."
+            ));
+          }
           return;
         }
 
@@ -421,6 +386,16 @@ module.exports = function (RED) {
         }
         if (trivyResult.status === "rejected") {
           node.warn(`[audit-image] cve-checker falló: ${trivyResult.reason}`);
+        }
+
+        // Por kind, no por reason. Un fallo durante el análisis no tira la auditoría: queda como hallazgo.
+        if (enableTrivy && trivy && trivy.kind === "not-installed") {
+          node.status({ fill: "red", shape: "ring", text: "Trivy no instalado" });
+          done(new Error(
+            "Trivy está activado en la configuración del nodo pero no se encontró instalado en el sistema. " +
+            "Instala Trivy (https://trivy.dev/) o desactiva el módulo en las opciones del nodo."
+          ));
+          return;
         }
 
         let trivyFindings;

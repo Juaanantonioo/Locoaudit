@@ -1,6 +1,6 @@
 "use strict";
 
-// Nodo audit-network. Nmap es obligatorio: si falta se emite NET-DEP-NMAP en vez de fallar.
+// Nodo audit-network. Nmap es obligatorio: si falta o no puede ejecutarse el nodo falla, como audit-host con Lynis.
 // En el equipo local hacen falta proceso, PID y bind para separar loopback de expuesto.
 
 const os = require("os");
@@ -169,7 +169,7 @@ module.exports = function (RED) {
         // Escaneo completo frente a no concluyente; si el host existe lo dice el descubrimiento.
         let nmapScan = null;
         let scanInconclusive = false;
-        // Que falte nmap es una dependencia del SO, no un error del nodo: sale como hallazgo.
+        // Sin nmap no hay escaneo: se avisa al terminar el bloque y el nodo falla sin enviar nada al dashboard.
         let nmapMissing = false;
         let nmapError   = null;
 
@@ -263,6 +263,24 @@ module.exports = function (RED) {
           }
         }
 
+        // Se decide por la causa, no por el texto del error. Un resultado vacío aquí no significaría "sin puertos".
+        if (nmapMissing) {
+          node.status({ fill: "red", shape: "ring", text: "Nmap no instalado" });
+          done(new Error(
+            "Nmap no se encontró instalado en el sistema y audit-network lo necesita para escanear los puertos.\n" +
+            instruccionesNmap(process.platform)
+          ));
+          return;
+        }
+        if (nmapError) {
+          node.status({ fill: "red", shape: "ring", text: "Nmap falló" });
+          done(new Error(
+            `Nmap está instalado pero no pudo completar el escaneo. ${nmapError}\n` +
+            "Ejecútalo a mano contra el objetivo para ver dónde falla y vuelve a lanzar la auditoría."
+          ));
+          return;
+        }
+
         // Solo en local: lsof y netstat miran este equipo, no el objetivo remoto.
         let ports = openPorts;
         if (openPorts.length > 0 && targetIsLocal) {
@@ -325,31 +343,6 @@ module.exports = function (RED) {
           nse,
         });
 
-        // Sin nmap el resultado vacío no es "sin puertos": el hallazgo va delante para no pintar verde.
-        if (nmapMissing || nmapError) {
-          let titulo;
-          let evidencia;
-          if (nmapMissing) {
-            titulo = "Nmap no está instalado: no se ha podido escanear ningún puerto";
-            evidencia = "audit-network requiere Nmap para descubrir puertos abiertos y no se ha encontrado " +
-                "el comando `nmap` en el PATH del sistema. El resultado vacío NO significa que no " +
-                "haya puertos abiertos: significa que no se ha escaneado nada.";
-          } else {
-            titulo = "Nmap falló: no se ha podido completar el escaneo";
-            evidencia = `Nmap está instalado pero la ejecución falló: ${nmapError}. ` +
-                "El resultado vacío NO significa que no haya puertos abiertos.";
-          }
-          findings.unshift(crearHallazgo({
-            id:       "NET-DEP-NMAP",
-            title:    titulo,
-            severity: "high",
-            evidence: evidencia,
-            fix:      instruccionesNmap(process.platform),
-            category: "network",
-            source:   "native",
-          }));
-        }
-
         // Cero puertos solo vale si el objetivo existe (targetState) y el escaneo terminó (scanStatus).
         let scanStatus;
         if (skipScan) {
@@ -406,7 +399,7 @@ module.exports = function (RED) {
             category: "network",
             source:   "nmap",
           }));
-        } else if (targetState === "unknown" && !targetIsLocal && !nmapMissing) {
+        } else if (targetState === "unknown" && !targetIsLocal) {
           // No se supo si el objetivo existe; se escaneó igual, pero no se pinta verde.
           findings.unshift(crearHallazgo({
             id:       "NET-SCAN-WARN",
@@ -546,9 +539,7 @@ module.exports = function (RED) {
 
         // No puede decir "0 puertos · riesgo: info" cuando no se auditó nada: mismo falso verde.
         let color;
-        if (nmapMissing) {
-          color = "red";
-        } else if (targetState === "unreachable") {
+        if (targetState === "unreachable") {
           color = "grey";
         } else if (targetState === "unknown") {
           color = "yellow";
@@ -556,15 +547,13 @@ module.exports = function (RED) {
           color = statusColor;
         }
         let forma;
-        if (nmapMissing || targetState !== "reachable") {
+        if (targetState !== "reachable") {
           forma = "ring";
         } else {
           forma = "dot";
         }
         let textoEstado;
-        if (nmapMissing) {
-          textoEstado = "Nmap no instalado (requisito)";
-        } else if (targetState === "unreachable") {
+        if (targetState === "unreachable") {
           textoEstado = `${target} no accesible — sin auditar`;
         } else if (scanStatus === "inconclusive") {
           textoEstado = "escaneo no concluyente";

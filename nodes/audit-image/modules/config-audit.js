@@ -221,7 +221,7 @@ async function auditarContenedor(container, idx) {
   return findings;
 }
 
-// Sin Docker devuelve []: el aviso de ausencia lo emite el nodo con IMG-DOCKER-OFF.
+// Sin Docker devuelve []: el nodo ya ha fallado antes de llamar aquí.
 async function auditarConfigDocker(dockerInfo) {
   if (!dockerInfo || dockerInfo.skipped) return [];
 
