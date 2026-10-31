@@ -599,6 +599,7 @@
               <svg class="icon group-chevron" :class="{open: openGroups[g.key]}"><use href="#lca-i-chevron"></use></svg>
             </div>
             <div class="group-findings" v-show="openGroups[g.key]">
+              <p v-if="g.key === 'system' && notaSistema" class="group-note" :class="{ 'group-note-warn': notaSistema.pendiente }">{{ notaSistema.texto }}</p>
               <div v-for="(f, fi) in g.items" :key="g.key + '-' + fi">
                 <div class="finding-row" @click="alternarHallazgo(g.key + '-' + fi)">
                   <!-- Declarado: el CVSS no describe este equipo, así que no se pinta su severidad en la fila. -->
@@ -1127,6 +1128,30 @@ export default {
     paquetesSistema() {
       var m = this.auditData && this.auditData.scanMeta;
       return (m && m.systemPackages) || null;
+    },
+
+    // Nota de Sistema & Actualizaciones: si el sistema está al día, lo que queda no tiene parche.
+    notaSistema() {
+      var sp = this.paquetesSistema;
+      if (!sp || sp.status !== 'scanned') return null;
+      var m = this.auditData.scanMeta;
+      var upd = m && m.pendingUpdates;
+      var pendientes = (sp.fixablePackages || 0) > 0 || (upd && upd.total > 0);
+      if (pendientes) {
+        return {
+          pendiente: true,
+          texto: 'Tu sistema tiene actualizaciones pendientes. Actualízalo entero, no paquete a paquete, ' +
+                 'y reinicia si se instala un kernel nuevo. Después vuelve a auditar.'
+        };
+      }
+      if ((sp.unfixedVulns || 0) > 0) {
+        return {
+          pendiente: false,
+          texto: 'Tu sistema está actualizado. Las vulnerabilidades marcadas «sin corrección» todavía no tienen ' +
+                 'parche de tu distribución, así que no puedes hacer nada más que mantener el sistema al día.'
+        };
+      }
+      return null;
     },
 
     // Inventario de sw-inventory: otra herramienta y otra cifra, no se mezcla con paquetesSistema.
@@ -2970,6 +2995,14 @@ export default {
   .group-chevron.open { transform: rotate(180deg); }
 
   .group-findings { border-top: 1px solid var(--border); }
+  .group-note {
+    margin: 0;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--surface);
+    color: var(--text-secondary);
+    font-size: 12.5px;
+  }
+  .group-note-warn { color: var(--text); font-weight: 500; }
   .finding-row {
     display: flex;
     align-items: center;
