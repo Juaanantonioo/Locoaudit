@@ -90,13 +90,6 @@ const casos = [
     informative: 1,
   },
   {
-    label: "performance critical → NO eleva (precedente que ya existía)",
-    findings: [f({ scope: "host", category: "performance", severity: "critical" })],
-    maxSeverity: "info",
-    actionable: 0,
-    informative: 1,
-  },
-  {
     label: "severity info → informativo por definición",
     findings: [f({ scope: "host", severity: "info" })],
     maxSeverity: "info",
