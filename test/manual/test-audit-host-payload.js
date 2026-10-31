@@ -62,7 +62,17 @@ function rootfsOk(extra) {
       cves: [{ id: "CVE-OS-1", severity: "HIGH", title: null }],
     }],
     fixableVulnCount: 1,
-    unfixed: { total: 2, bySeverity: { MEDIUM: 1, LOW: 1 } },
+    unfixed: {
+      total: 2, bySeverity: { MEDIUM: 1, LOW: 1 },
+      groups: [{
+        pkg: "libtiff6", installedVersion: "4.5.0", fixedVersion: null,
+        maxSeverity: "MEDIUM",
+        cves: [
+          { id: "CVE-OS-2", severity: "MEDIUM", title: null, status: "affected" },
+          { id: "CVE-OS-3", severity: "LOW", title: null, status: "will_not_fix" },
+        ],
+      }],
+    },
     scan: { mode: "rootfs", target: "/", skipDirs: [], durationMs: 240000 },
     durationMs: 240000,
   }, extra || {});
@@ -252,14 +262,16 @@ const CONFIG_BASE = {
   ok(sp5 && sp5.requested === true,
      "scanMeta.systemPackages.requested = true (lo pidió el usuario)");
 
-  // Lo no corregible se agrega en un único hallazgo informativo con el total.
-  const unfixed = (r.msg ? r.msg.payload.findings : []).filter((f) => f.id === "HOST-OS-CVE-UNFIXED");
-  ok(unfixed.length === 1, "un ÚNICO finding HOST-OS-CVE-UNFIXED", `encontrados ${unfixed.length}`);
-  ok(unfixed[0] && unfixed[0].severity === "info",
-     "severidad info: no hay acción posible, y la severidad mide urgencia de acción");
-  ok(unfixed[0] && unfixed[0].fix === null, "sin campo fix: no hay nada que ofrecer");
-  ok(unfixed[0] && unfixed[0].title.startsWith("2 vulnerabilidades"),
-     "el título lleva el total real, no un número escrito a mano", unfixed[0] && unfixed[0].title);
+  // Lo no corregible conserva la severidad de Trivy, un finding por paquete.
+  const unfixed = (r.msg ? r.msg.payload.findings : []).filter((f) => f.id.startsWith("HOST-OS-UNFIXED-"));
+  ok(unfixed.length === 1 && unfixed[0].id === "HOST-OS-UNFIXED-libtiff6",
+     "un finding por paquete sin corrección", JSON.stringify(unfixed.map((f) => f.id)));
+  ok(unfixed[0] && unfixed[0].severity === "medium",
+     "severidad de Trivy (la peor del paquete), sin rebajar a info", unfixed[0] && unfixed[0].severity);
+  ok(unfixed[0] && !unfixed[0].aggregate, "no es un resumen: cuenta para el riesgo");
+  ok(unfixed[0] && /sin parche/.test(unfixed[0].evidence) && /no la corregirá/.test(unfixed[0].evidence),
+     "el estado de corrección de cada CVE va en la evidencia", unfixed[0] && unfixed[0].evidence);
+  ok(unfixed[0] && unfixed[0].command === null, "sin comando: no hay actualización");
 
   // Y el corregible, agrupado POR PAQUETE.
   const porPaquete = (r.msg ? r.msg.payload.findings : []).filter((f) => f.id.startsWith("HOST-OS-PKG-"));
@@ -321,8 +333,8 @@ const CONFIG_BASE = {
   ok(skip7.some((f) => f.id === "HOST-OS-CVE-SKIP"),
      "sale un finding HOST-OS-CVE-SKIP con skipped:true",
      JSON.stringify(skip7.map((f) => f.id)));
-  ok(!(r.msg ? r.msg.payload.findings : []).some((f) => f.id === "HOST-OS-CVE-UNFIXED"),
-     "y NO sale el agregado de 'sin corrección': eso afirmaría un cero no medido");
+  ok(!(r.msg ? r.msg.payload.findings : []).some((f) => f.id.startsWith("HOST-OS-UNFIXED-")),
+     "y NO salen hallazgos 'sin corrección': eso afirmaría un cero no medido");
 
   ok(r.msg && r.msg.payload.raw.trivy.scan.children.scanned.length === 1,
      "scan.children del home intacto (lo usan las pills del bloque de alcance)");

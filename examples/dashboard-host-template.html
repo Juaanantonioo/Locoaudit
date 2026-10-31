@@ -1020,7 +1020,7 @@ export default {
       return this.modulos.filter(function(m) { return m.status === 'not-requested'; });
     },
 
-    // Resúmenes no accionables (HOST-CVE-DECLARED, HOST-OS-CVE-UNFIXED), marcados con `aggregate`.
+    // Resúmenes no accionables (HOST-CVE-DECLARED), marcados con `aggregate`.
     hallazgosAgregados() {
       return this.todosLosHallazgos.filter(function(f) { return f.aggregate === true; });
     },
