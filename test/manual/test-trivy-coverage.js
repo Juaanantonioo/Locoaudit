@@ -140,8 +140,8 @@ function runOriginCases() {
     const [f] = findingsFor(trivyFixture({
       target: "usr/lib", type: "arch", cls: "os-pkgs", pkgName: "curl", pkgPath: "/usr/bin/curl",
     }));
-    check("3 · Type arch instalado → sudo pacman -Syu curl",
-      f.origin === "installed" && f.command === "sudo pacman -Syu curl", f.command);
+    check("3 · Type arch instalado → sudo pacman -Syu (todo el sistema)",
+      f.origin === "installed" && f.command === "sudo pacman -Syu", f.command);
     check("3 · installed con comando ⇒ isCommand=true", f.isCommand === true, `isCommand=${f.isCommand}`);
   }
 

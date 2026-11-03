@@ -652,12 +652,12 @@ export default {
     },
 
     etiquetaFuente() {
-      // portSource solo vale 'nmap' o 'none' (Nmap no instalado).
+      // 'none' es que no se escanearon puertos (equipo sin responder): sin Nmap el nodo falla antes.
       var src = this.auditData && this.auditData.scanMeta && this.auditData.scanMeta.portSource;
       if (src === 'nmap') {
         return 'Nmap';
       } else {
-        return 'Nmap no disponible';
+        return 'Nmap, sin escaneo de puertos';
       }
     },
 

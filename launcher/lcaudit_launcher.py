@@ -289,7 +289,7 @@ _DOCKER_SCRIPT = "curl -fsSL https://get.docker.com | sudo sh"
 MANUAL_INSTALL = {
     "node": {
         "Darwin":  "brew install node",
-        "Linux":   "Instala Node.js LTS (>=18) desde https://nodejs.org/en/download/package-manager",
+        "Linux":   "Instala Node.js LTS (>=18) desde https://nodejs.org/en/download",
         "Windows": "winget install --id OpenJS.NodeJS.LTS --source winget -e",
     },
     "npm": {
@@ -1483,7 +1483,7 @@ def paso2_opcionales():
                     _informar_instalacion(cmd, label)
                 # Si falla, instalar() ya ha mostrado el detalle.
             else:
-                aviso(f"Omitiendo {label} — el nodo correspondiente funcionará en modo reducido")
+                aviso(f"Omitiendo {label} — si sus módulos siguen activados, la auditoría que la necesita se detendrá con un error")
 
         elif auto_cmd and is_tty:
             if install_all:
@@ -1522,7 +1522,7 @@ def paso2_opcionales():
                     _informar_instalacion(cmd, label)
                 # Si falla, instalar() ya ha mostrado el detalle.
             else:
-                aviso(f"Omitiendo {label} — el nodo correspondiente funcionará en modo reducido")
+                aviso(f"Omitiendo {label} — si sus módulos siguen activados, la auditoría que la necesita se detendrá con un error")
         else:
             # No auto-install available or non-interactive shell
             consejo(f"Para instalarlo: {MANUAL_INSTALL.get(cmd, {}).get(OS, 'Consulta la documentación oficial')}")
@@ -1542,8 +1542,9 @@ def paso2_opcionales():
         # Solo si alguna falta o no funciona de verdad.
         grupos = _agrupar_herramientas()
         if grupos["missing"] or grupos["not_operational"] or grupos["unsupported"]:
-            consejo("Los nodos que dependen de ellas seguirán funcionando en modo "
-                    "reducido: avisarán en el panel en vez de dar un resultado vacío.")
+            consejo("Si un módulo activado necesita una que falta, la auditoría se detiene con "
+                    "un error que explica cómo instalarla. Las que no existen en este sistema "
+                    "aparecen en el informe como no aplicables.")
         if grupos["unknown"]:
             consejo("No se ha podido comprobar su estado desde el asistente. Si están "
                     "instaladas, los nodos las usarán igualmente: LoCoAudit las busca "

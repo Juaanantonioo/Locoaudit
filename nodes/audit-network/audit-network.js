@@ -429,7 +429,10 @@ module.exports = function (RED) {
           nombreHost = null;
         }
         let rango;
-        if (nmapScan && nmapScan.portSpec) {
+        if (skipScan) {
+          // Sin escaneo no hay rango que mostrar: pintar uno sería afirmar algo que no se hizo.
+          rango = null;
+        } else if (nmapScan && nmapScan.portSpec) {
           rango = nmapScan.portSpec;
         } else if (scanMode === "custom") {
           rango = customPorts.trim();

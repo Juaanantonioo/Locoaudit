@@ -85,7 +85,7 @@
                         <span style="color: #27ae60; font-size: 0.8em; font-weight: normal; margin-left: 4px;">● nativo</span>
                     </label>
                     <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
-                        Analiza el espacio disponible y usado en cada partición del sistema. Alerta si el disco está por encima del 75 %. No requiere ninguna instalación adicional.
+                        Analiza el espacio disponible y usado en cada partición del sistema. Avisa a partir del 85 % de uso (severidad media), del 90 % (alta) y del 95 % (crítica). No requiere ninguna instalación adicional.
                     </div>
                 </div>
             </div>
@@ -111,7 +111,7 @@
                         <span style="color: #e67e22; font-size: 0.8em; font-weight: normal; margin-left: 4px;">◌ opcional · ~2 min</span>
                     </label>
                     <div style="color: #555; font-size: 0.82em; margin-top: 3px; line-height: 1.4;">
-                        Realiza más de 300 comprobaciones de seguridad: configuración de SSH, firewall, permisos de ficheros, cuentas de usuario, etc. Genera un índice de endurecimiento del 0 al 100. Requiere tener <strong>Lynis</strong> instalado; si lo activas y no está disponible, el nodo fallará con un error.
+                        Revisa la configuración de seguridad del sistema: SSH, firewall, permisos de ficheros, cuentas de usuario, etc. Genera un índice de endurecimiento del 0 al 100. Requiere tener <strong>Lynis</strong> instalado; si lo activas y no está disponible, el nodo fallará con un error. En Windows no se ejecuta y aparece como no aplicable.
                     </div>
                 </div>
             </div>
@@ -270,18 +270,19 @@
 
     <h3>Severidades</h3>
     <ul>
-        <li><strong>critical</strong> — disco &gt; 90%</li>
-        <li><strong>high</strong> — disco &gt; 75%, memoria &gt; 90%, Lynis index &lt; 50, CVE crítico</li>
-        <li><strong>medium</strong> — disco &gt; 60%, memoria &gt; 75%, Lynis index &lt; 70</li>
-        <li><strong>low</strong> — memoria &gt; 60%, sugerencias Lynis</li>
-        <li><strong>info</strong> — datos informativos sin riesgo detectado</li>
+        <li><strong>critical</strong> — disco desde el 95 %, vulnerabilidades críticas</li>
+        <li><strong>high</strong> — disco desde el 90 %, memoria desde el 95 %, carga desde 1,5 por núcleo</li>
+        <li><strong>medium</strong> — disco desde el 85 %, memoria desde el 85 %, carga desde 0,8 por núcleo</li>
+        <li><strong>low</strong> — actualizaciones pendientes sin ninguna de seguridad</li>
+        <li><strong>info</strong> — datos informativos sin riesgo detectado. En macOS la memoria es siempre informativa.</li>
     </ul>
 
-    <h3>Herramientas opcionales</h3>
+    <h3>Herramientas externas</h3>
     <p>
-        Si <strong>Lynis</strong> o <strong>Trivy</strong> no están instalados,
-        el módulo devuelve <code>{ skipped: true }</code> y el nodo continúa
-        sin error. Instálalos para obtener más hallazgos.
+        Si un módulo activado necesita <strong>Lynis</strong> o <strong>Trivy</strong> y no
+        están instalados, el nodo se detiene con un error que explica cómo instalarlos o
+        desactivar el módulo. En Windows, Lynis y el análisis de los paquetes del sistema
+        no se ejecutan y aparecen como no aplicables.
     </p>
 
     <h3>Más información</h3>

@@ -223,8 +223,8 @@ ok(sRootfs.actionable.total === rootfsFindings.length, "todos son accionables");
 ok(sRootfs.informative.total === 0, "ninguno cae en informativos");
 
 const cmdOpenssl = rootfsFindings.find((f) => /openssl@/.test(f.title));
-ok(cmdOpenssl && cmdOpenssl.command === "sudo apt update && sudo apt install --only-upgrade openssl",
-   "openssl genera el comando de apt, no la prosa de lockfile",
+ok(cmdOpenssl && cmdOpenssl.command === "sudo apt update && sudo apt upgrade",
+   "openssl propone actualizar el sistema con apt, no la prosa de lockfile",
    cmdOpenssl && cmdOpenssl.command);
 ok(rootfsFindings.every((f) => !/fichero de bloqueo/.test(f.fix || "")),
    "ningún paso de resolución dice ya 'anotado en un fichero de bloqueo'");

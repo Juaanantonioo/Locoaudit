@@ -150,7 +150,7 @@ async function desdeWmic() {
   try {
     const stdout = await ejecutar(cmd, WMIC_TIMEOUT_MS);
     // El CSV de wmic abre con una línea vacía y la cabecera Node,Name,Version.
-    return stdout
+    const programas = stdout
       .trim()
       .split("\n")
       .slice(1)
@@ -166,6 +166,17 @@ async function desdeWmic() {
         }
       })
       .filter(Boolean);
+    // Vacío no es "ningún programa": wmic solo ve lo instalado con Windows Installer (MSI).
+    if (programas.length === 0) {
+      return {
+        skipped: true,
+        kind: "error",
+        reason:
+          "wmic no ha devuelto ningún programa. Solo lista el software instalado con Windows " +
+          "Installer (MSI), así que una lista vacía no significa que no haya software instalado.",
+      };
+    }
+    return programas;
   } catch (err) {
     return omisionPorError(err, cmd, "el software instalado", WMIC_TIMEOUT_MS);
   }
