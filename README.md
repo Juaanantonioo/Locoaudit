@@ -185,7 +185,7 @@ Ninguna es obligatoria para que Node-RED arranque, pero cada módulo necesita la
 
 El asistente de instalación ofrece instalar Nmap, Lynis, Trivy y Docker por ti cuando detecta un gestor de paquetes compatible (Homebrew en macOS; apt, pacman, dnf o zypper en Linux; winget en Windows). Si no lo encuentra, muestra el comando exacto para que lo hagas a mano.
 
-Una vez en marcha, cuando falta una herramienta el nodo correspondiente lo señala en el propio panel con la instrucción de instalación concreta, en lugar de fallar sin explicación.
+Una vez en marcha, si falta una herramienta que el nodo tiene activada, el nodo se detiene con un error que indica cómo instalarla o qué opción desactivar, y su estado en el editor lo resume (por ejemplo, «Nmap no instalado»). El panel no recibe resultado de esa ejecución. La excepción es Lynis en Windows: el nodo lo registra como límite de la plataforma y continúa con el resto de módulos.
 
 ---
 
@@ -197,7 +197,7 @@ Una vez en marcha, cuando falta una herramienta el nodo correspondiente lo seña
 4. **Despliega** y pulsa el botón del `inject`.
 5. **Abre el panel** en `http://127.0.0.1:1880/dashboard` y consulta los resultados.
 
-La primera ejecución de `audit-host` puede tardar varios minutos: Lynis recorre más de doscientos controles y Trivy descarga su base de datos de vulnerabilidades. Las siguientes son considerablemente más rápidas gracias a la caché.
+La primera ejecución de `audit-host` puede tardar varios minutos: Lynis recorre todos sus controles y Trivy descarga su base de datos de vulnerabilidades. Las siguientes son considerablemente más rápidas gracias a la caché.
 
 ### Auditar otro equipo de la red
 
@@ -346,4 +346,4 @@ LoCoAudit es el resultado de un Trabajo Fin de Grado del Grado en Ingeniería In
 
 ## Licencia
 
-Pendiente de definir.
+LoCoAudit se distribuye bajo la licencia MIT. El texto completo está en el fichero [`LICENSE`](LICENSE).
