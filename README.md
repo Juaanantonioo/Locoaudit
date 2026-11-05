@@ -77,7 +77,7 @@ En Windows, sustituye `python3` por `python`.
 El asistente recorre seis pasos:
 
 1. **Dependencias requeridas.** Verifica Node.js (versión 18 o superior) y npm. Si falta alguno, indica el comando de instalación para tu sistema operativo y se detiene. Si Node-RED falta, se incorpora al lote de instalaciones del paso siguiente.
-2. **Instalaciones automáticas.** Ofrece instalar Node-RED junto con Docker, Nmap, Lynis y Trivy cuando existe un comando automático para tu sistema. Si no hay instalación automática o dices que no, los nodos opcionales funcionan en modo reducido; Node-RED debe quedar disponible para continuar.
+2. **Instalaciones automáticas.** Ofrece instalar Node-RED junto con Docker, Nmap, Lynis y Trivy cuando existe un comando automático para tu sistema. Si no hay instalación automática o dices que no, Algunos módulos de los nodos no estarán disponibles. Node-RED debe quedar disponible para continuar.
 3. **Registro de la extensión.** Instala LoCoAudit dentro del directorio de Node-RED para que sus nodos aparezcan en la paleta.
 4. **Dependencias de Node-RED.** Instala `@flowfuse/node-red-dashboard` si no está presente.
 5. **Flujos de demostración.** Copia el flujo de ejemplo con los tres nodos ya conectados a sus paneles. Si ya tenías flujos propios en Node-RED, no los sobrescribe: te indica cómo importarlo manualmente.
