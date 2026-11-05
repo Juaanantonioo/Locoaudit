@@ -250,7 +250,7 @@ Cada panel tiene botones para descargar el informe en HTML (un único fichero co
 
 ---
 
-## Asistente de IA (opcional)
+## Asistente de IA 
 
 Con un nodo `llm-config` apuntando a una instancia de [Ollama](https://ollama.com), aparece el botón **Preguntar a la IA** en cada hallazgo. Permite pedir explicaciones en lenguaje llano sobre qué significa un hallazgo y cómo resolverlo.
 
