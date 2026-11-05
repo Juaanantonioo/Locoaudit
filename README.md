@@ -42,7 +42,7 @@ LoCoAudit aborda tres puntos concretos:
 
 | Nodo | Qué audita | Herramientas que emplea |
 | --- | --- | --- |
-| `audit-host` | El equipo local: inventario de hardware, almacenamiento, software instalado, endurecimiento del sistema y vulnerabilidades conocidas | Lynis, Trivy (opcionales) |
+| `audit-host` | El equipo local: inventario de hardware, almacenamiento, software instalado, endurecimiento del sistema y vulnerabilidades conocidas | Lynis, Trivy |
 | `audit-network` | Puertos abiertos y servicios expuestos, en el propio equipo o en otro de la red | Nmap |
 | `audit-image` | Imágenes Docker presentes en el equipo | Docker, Trivy |
 | `llm-config` | Nodo de configuración para conectar un modelo de lenguaje local y habilitar el chat de explicación de hallazgos | Ollama (opcional) |
