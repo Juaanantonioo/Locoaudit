@@ -26,7 +26,7 @@ LoCoAudit añade nodos que puedes arrastrar a un flujo de Node-RED, conectar y e
 
 ## Qué problema resuelve
 
-Las herramientas de auditoría de seguridad existentes son potentes pero están pensadas para especialistas. Producen salidas extensas en la terminal, con vocabulario técnico y sin indicar qué requiere acción y qué es meramente informativo. Ejecutarlas de forma periódica y comparar resultados exige montar scripts propios.
+Las herramientas de auditoría de seguridad existentes son potentes pero están pensadas para personas con conocimiento en ciberseguridad. Producen salidas extensas en la terminal, con vocabulario técnico y sin indicar qué requiere acción y qué es meramente informativo. Ejecutarlas de forma periódica y comparar resultados exige montar scripts propios.
 
 LoCoAudit aborda tres puntos concretos:
 
