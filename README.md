@@ -47,7 +47,6 @@ LoCoAudit aborda tres puntos concretos:
 | `audit-image` | Imágenes Docker presentes en el equipo o Docker hub | Docker, Trivy |
 | `llm-config` | Nodo de configuración para conectar un modelo de lenguaje local y habilitar el chat de explicación de hallazgos | Ollama |
 
-Las herramientas marcadas como opcionales no bloquean la ejecución. Si falta Nmap, Docker o Trivy, el nodo que lo necesita falla: Node-RED muestra el error con cómo instalarlo y el dashboard no recibe resultado. El resto de nodos sigue funcionando.
 
 ---
 
