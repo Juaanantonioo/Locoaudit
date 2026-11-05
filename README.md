@@ -303,10 +303,13 @@ nodes/
   audit-network/         Nodo y módulos de auditoría de red
   audit-image/           Nodo y módulos de auditoría de imágenes Docker
   llm-config/            Nodo de configuración del asistente de IA
+  */icons/               Icono de cada nodo en la paleta de Node-RED
+docs/
+  LoCoAudit-manual-de-usuario.pdf
 examples/
   flows.json             Flujo de ejemplo listo para importar
   dashboard-*.html       Plantillas Vue de los paneles
-scripts/                 Utilidades de verificación del repositorio
+scripts/                 Construcción de los paneles y validación de extremo a extremo
 test/
   manual/                Pruebas ejecutables con node, sin framework
   fixtures/              Salidas reales capturadas de las herramientas
@@ -325,7 +328,10 @@ Las pruebas no necesitan Nmap, Trivy ni Lynis instalados. Usan salidas reales ca
 ```bash
 node scripts/build-dashboards.js --check    # las plantillas coinciden con flows.json
 node scripts/export-parity.js               # cableado y sincronía de los paneles
+node scripts/validate-all.js                # validación de extremo a extremo de los tres paneles
 ```
+
+`validate-all.js` arranca Node-RED y un navegador sin interfaz, lanza una auditoría real desde cada panel y comprueba el resultado, el informe exportado y el contraste de los textos (`contrast-audit.js`).
 
 ### Esquema de hallazgo
 
