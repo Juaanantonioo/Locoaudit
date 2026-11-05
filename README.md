@@ -1,6 +1,6 @@
 # LoCoAudit
 
-Extensión de bajo código para Node-RED que automatiza auditorías de seguridad locales y presenta los resultados en paneles comprensibles para personas sin formación técnica en seguridad.
+Extensión de bajo código para Node-RED que automatiza auditorías de seguridad y presenta los resultados en dashboards comprensibles para personas sin formación técnica en ciberseguridad.
 
 LoCoAudit añade nodos que se arrastran a un flujo de Node-RED, se conectan y se ejecutan. Cada nodo lanza herramientas de auditoría reconocidas (Nmap, Lynis y Trivy), normaliza sus salidas a un formato común y las convierte en hallazgos con evidencia, severidad y pasos de resolución.
 
