@@ -2,7 +2,7 @@
 <script type="text/javascript">
     RED.nodes.registerType("audit-image", {
         category: "locoaudit",
-        color: "#5ae08a",
+        color: "#87A980",
         defaults: {
             llmConfig:    { value: "", type: "llm-config", required: false },
             scanMode:     { value: "local" },
@@ -12,7 +12,7 @@
         },
         inputs: 1,
         outputs: 1,
-        icon: "audit-image.svg",
+        icon: "lcaudit-image.svg",
         label: function () { return "audit-image"; },
         oneditprepare: function () {
             $("#node-input-imageRef").typedInput({

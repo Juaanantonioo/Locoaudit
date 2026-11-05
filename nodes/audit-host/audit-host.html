@@ -1,7 +1,7 @@
 <script type="text/javascript">
     RED.nodes.registerType("audit-host", {
         category: "locoaudit",
-        color: "#e05a5a",
+        color: "#E9967A",
         defaults: {
             name:         { value: "" },
             enableCpu:    { value: true },
@@ -22,7 +22,7 @@
         },
         inputs: 1,
         outputs: 1,
-        icon: "font-awesome/fa-shield",
+        icon: "lcaudit-host.svg",
         paletteLabel: "audit-host",
         label: function () {
             return this.name || "audit-host";
