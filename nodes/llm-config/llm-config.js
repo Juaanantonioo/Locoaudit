@@ -92,7 +92,7 @@ function registrarChat(RED) {
 
   // El frontend decide aquí si muestra el chat. `available` no depende del modelo: el fallo va aparte.
   RED.httpNode.get("/locoaudit/chat/status", function (req, res) {
-    const cfg = buscarConfigLlm(RED);
+    const cfg = buscarConfigLlm(RED, req.query && req.query.llmConfigId);
     if (!cfg) {
       res.json({ available: false });
       return;
@@ -154,7 +154,7 @@ function registrarChat(RED) {
         return;
       }
 
-      const cfg = buscarConfigLlm(RED);
+      const cfg = buscarConfigLlm(RED, body.llmConfigId);
       if (!cfg) {
         res.status(503).json({
           ok: false,
@@ -215,8 +215,15 @@ function registrarChat(RED) {
   });
 }
 
-/** El primer llm-config del runtime, o null. */
-function buscarConfigLlm(RED) {
+/**
+ * El llm-config elegido en el nodo de auditoría (id que trae el payload), o el primero del runtime.
+ * El id llega sin autenticar: solo se acepta si es un llm-config desplegado; si no, se usa el primero.
+ */
+function buscarConfigLlm(RED, idElegido) {
+  if (typeof idElegido === "string" && idElegido) {
+    const elegido = RED.nodes.getNode(idElegido);
+    if (elegido && elegido.type === "llm-config") return elegido;
+  }
   let found = null;
   RED.nodes.eachNode(function (n) {
     if (found) return;

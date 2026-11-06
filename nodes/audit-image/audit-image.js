@@ -193,12 +193,13 @@ module.exports = function (RED) {
     RED.nodes.createNode(this, config);
     const node = this;
 
-    // Solo para poder elegir el config desde el editor: el chat lo sirve /locoaudit/chat.
+    // El chat lo sirve /locoaudit/chat con el llm-config cuyo id viaja en el payload.
     if (config.llmConfig) {
       node.llmConfig = RED.nodes.getNode(config.llmConfig);
     } else {
       node.llmConfig = null;
     }
+    const llmConfigId = (node.llmConfig && node.llmConfig.id) || null;
 
     node.on("input", async function (msg, send, done) {
       const scanMode     = config.scanMode || "local";
@@ -245,6 +246,7 @@ module.exports = function (RED) {
               { modulesRun: [], imagesFound: 0, containersFound: 0, containersRunning: 0, durationMs: Date.now() - startTime },
               { docker: null, configFindings: [], trivy: null }
             );
+            msg.payload.llmConfigId = llmConfigId;
             node.status({ fill: "grey", shape: "dot", text: "Sin imagen indicada" });
             send(msg);
             done();
@@ -284,6 +286,7 @@ module.exports = function (RED) {
             { docker: null, configFindings: [], trivy },
             scannedImages
           );
+          msg.payload.llmConfigId = llmConfigId;
 
           msg.payload.scanMeta.checksSkipped = resumenOmitidas(findings);
 
@@ -447,6 +450,7 @@ module.exports = function (RED) {
           summary,
           source:    "audit-image",
           auditType: "image",
+          llmConfigId,
           host: { hostname: os.hostname(), platform: process.platform },
           scanMeta: {
             // Mismo resumen que audit-host, sacado de los hallazgos.

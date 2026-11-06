@@ -596,6 +596,7 @@ export default {
       chatInput: {},       // por findingKey: texto en curso
       chatLoading: {},     // por findingKey: esperando respuesta
       chatEpoch: 0,        // se incrementa con cada escaneo: descarta respuestas en vuelo
+      chatModel: {},       // por findingKey: modelo con el que empezó la conversación
       llmAvailable: null,  // null = sin comprobar; true/false tras comprobar
       llmModel: null,      // modelo que responde; /locoaudit/chat/status ya lo devuelve
       openGroups: {},      // por grupo de imagen: desplegado (true) / colapsado (def. false)
@@ -834,6 +835,7 @@ export default {
         this.filterSev    = 'all';
         this.filterType   = 'all';
         this.reiniciarChats();
+        this.consultarEstadoLlm();   // la cabecera del chat muestra el modelo del llm-config de este resultado
       }
     }
   },
@@ -1368,16 +1370,51 @@ export default {
       this.chatMessages = {};
       this.chatInput    = {};
       this.chatLoading  = {};
+      this.chatModel    = {};
     },
 
-    // Cerrar el asistente solo oculta el panel: el historial se conserva.
+    // Estado del asistente para el llm-config de este resultado. Resuelve con la respuesta, o null si falla.
+    consultarEstadoLlm() {
+      var self = this;
+      var id = this.auditData && this.auditData.llmConfigId;
+      var url = '/locoaudit/chat/status';
+      if (id) url += '?llmConfigId=' + encodeURIComponent(id);
+      return fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          self.llmAvailable = !!(d && d.available);
+          self.llmModel = (d && d.model) || null;
+          return d || null;
+        })
+        .catch(function() { return null; });
+    },
+
+    // Cerrar conserva el historial. Al abrir se vuelve a preguntar el modelo: si no es el de la
+    // conversación guardada, se descarta y empieza otra con la pregunta automática.
     alternarChat(findingKey, finding) {
       var willOpen = !this.chatOpen[findingKey];
       this.chatOpen = Object.assign({}, this.chatOpen, { [findingKey]: willOpen });
-      if (willOpen && !(this.chatMessages[findingKey] && this.chatMessages[findingKey].length)) {
-        this.enviarChat(findingKey, finding,
-          'Explícame este hallazgo de forma sencilla: qué significa, por qué importa y cómo lo soluciono.');
-      }
+      if (!willOpen) return;
+      var self = this;
+      var epoch = this.chatEpoch;
+      this.consultarEstadoLlm().then(function(d) {
+        // Escaneo nuevo o panel cerrado mientras se consultaba: no se toca nada.
+        if (epoch !== self.chatEpoch || !self.chatOpen[findingKey]) return;
+        if (d && !d.available) return;
+        // Con una respuesta en vuelo no se borra: acabaría en la conversación nueva.
+        if (self.chatLoading[findingKey]) return;
+        var model = (d && d.model) || null;
+        var prev = self.chatMessages[findingKey];
+        if (d && prev && prev.length && model !== self.chatModel[findingKey]) {
+          self.chatMessages = Object.assign({}, self.chatMessages, { [findingKey]: [] });
+          prev = null;
+        }
+        if (!(prev && prev.length)) {
+          self.chatModel = Object.assign({}, self.chatModel, { [findingKey]: model });
+          self.enviarChat(findingKey, finding,
+            'Explícame este hallazgo de forma sencilla: qué significa, por qué importa y cómo lo soluciono.');
+        }
+      });
     },
 
     async enviarChat(findingKey, finding, presetQuestion) {
@@ -1413,7 +1450,8 @@ export default {
           body: JSON.stringify({
             finding: finding, question: question, history: history,
             auditType: this.auditData && this.auditData.auditType,
-            platform: this.auditData && this.auditData.host && this.auditData.host.platform
+            platform: this.auditData && this.auditData.host && this.auditData.host.platform,
+            llmConfigId: (this.auditData && this.auditData.llmConfigId) || null
           })
         });
         var data = await res.json();
@@ -1470,13 +1508,7 @@ export default {
 
     // Comprueba si hay un llm-config desplegado y qué modelo responde.
     var self = this;
-    fetch('/locoaudit/chat/status')
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        self.llmAvailable = !!(d && d.available);
-        self.llmModel = (d && d.model) || null;
-      })
-      .catch(function() { self.llmAvailable = false; });
+    this.consultarEstadoLlm().then(function(d) { if (!d) self.llmAvailable = false; });
   }
 };
 </script>

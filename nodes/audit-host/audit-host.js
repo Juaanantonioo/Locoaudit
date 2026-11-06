@@ -58,12 +58,13 @@ module.exports = function (RED) {
     RED.nodes.createNode(this, config);
     const node = this;
 
-    // Solo para poder elegir el config desde el editor: el chat lo sirve /locoaudit/chat.
+    // El chat lo sirve /locoaudit/chat con el llm-config cuyo id viaja en el payload.
     if (config.llmConfig) {
       node.llmConfig = RED.nodes.getNode(config.llmConfig);
     } else {
       node.llmConfig = null;
     }
+    const llmConfigId = (node.llmConfig && node.llmConfig.id) || null;
 
     node.on("input", async function (msg, send, done) {
       node.status({ fill: "blue", shape: "dot", text: "Auditando..." });
@@ -488,6 +489,7 @@ module.exports = function (RED) {
           summary,
           source: "audit-host",
           auditType: "host",
+          llmConfigId,
           host: {
             hostname: osInfo.hostname,
             platform: osInfo.platform,
