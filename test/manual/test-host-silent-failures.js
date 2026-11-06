@@ -50,21 +50,35 @@ const trivyFs = require(path.join(ROOT, "nodes/audit-host/modules/trivy-fs"));
 
 // ── stubs de módulos para el nodo audit-host ─────────────────────────────────
 const lanza = {};   // módulo → true si debe rechazar
+let orden = null;  // si es un array, cada stub apunta cuándo se le llama
 function stub(rel, fnName) {
   const p = require.resolve(path.join(ROOT, rel));
   const real = require(p);
   require.cache[p].exports = Object.assign({}, real, {
     [fnName]: (...a) => {
+      if (orden) orden.push(fnName);
       if (lanza[fnName]) return Promise.reject(new Error(`${fnName} reventó`));
       return real[fnName](...a);
     },
   });
 }
-// cpu-memory es síncrono: su stub lanza de forma síncrona, como haría el real.
+// cpu-memory es async (en Windows espera la muestra de CPU). El stub lanza de forma síncrona, el caso
+// más duro para el then de audit-host; con `orden` espera antes de responder y cpuAsync rechaza tras la espera.
 {
   const p = require.resolve(path.join(ROOT, "nodes/audit-host/modules/cpu-memory"));
   const real = require(p);
-  require.cache[p].exports = { ...real, ejecutarModuloSistema: () => { if (lanza.ejecutarModuloSistema) throw new Error("os.cpus reventó"); return real.ejecutarModuloSistema(); } };
+  require.cache[p].exports = { ...real, ejecutarModuloSistema: () => {
+    if (lanza.ejecutarModuloSistema) throw new Error("os.cpus reventó");
+    if (orden) {
+      orden.push("cpu-ini");
+      return new Promise((r) => setTimeout(r, 30)).then(() => {
+        orden.push("cpu-fin");
+        if (lanza.cpuAsync) throw new Error("muestra de CPU reventó");
+        return real.ejecutarModuloSistema();
+      });
+    }
+    return real.ejecutarModuloSistema();
+  } };
 }
 stub("nodes/audit-host/modules/disk-storage", "infoDisco");
 stub("nodes/audit-host/modules/trivy-fs", "ejecutarTrivyFs");
@@ -146,6 +160,22 @@ const JOURNAL_OK = {
     ok(r.status.fill !== "green" && r.status.shape === "ring" && /3 módulos sin completar/.test(r.status.text),
        "con módulos fallidos el nodo queda en anillo y lo dice, no en verde", JSON.stringify(r.status));
     lanza.ejecutarModuloSistema = lanza.infoDisco = lanza.ejecutarEventos = false;
+
+    // La medida de CPU termina antes de lanzar el resto: en Windows no debe medir la propia auditoría.
+    orden = [];
+    r = await ejecutarNodo(BASE);
+    const fin = orden.indexOf("cpu-fin");
+    ok(fin >= 0 && fin < orden.indexOf("infoDisco") && fin < orden.indexOf("ejecutarEventos"),
+       "cpu-memory termina antes de lanzar disco y eventos", JSON.stringify(orden));
+    // Rechazo tras la espera: sigue contando como fallo del módulo y no tumba el nodo.
+    lanza.cpuAsync = true;
+    orden = [];
+    r = await ejecutarNodo(BASE);
+    const m3 = Object.fromEntries(r.msg.payload.scanMeta.modules.map((m) => [m.id, m.status]));
+    ok(r.err === null && m3["cpu-memory"] === "failed" && m3["disk-storage"] === "ok",
+       "cpu que rechaza tras la espera → failed, y el resto se audita", JSON.stringify(m3));
+    lanza.cpuAsync = false;
+    orden = null;
 
     lanza.ejecutarTrivyFs = true;
     r = await ejecutarNodo({ ...BASE, enableTrivy: true });

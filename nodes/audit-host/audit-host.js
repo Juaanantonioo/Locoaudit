@@ -101,6 +101,9 @@ module.exports = function (RED) {
         if (enableCpu) {
           // En un then: si lanza, cuenta como rechazo del módulo y no tumba el nodo entero.
           tareaCpu = Promise.resolve().then(() => ejecutarModuloSistema());
+          // Se espera antes de lanzar el resto: en Windows mide el uso de CPU y no debe medir la propia auditoría.
+          // El catch solo evita el rechazo no gestionado; el resultado lo recoge el allSettled de abajo.
+          await tareaCpu.catch(() => {});
         } else {
           tareaCpu = Promise.resolve(null);
         }

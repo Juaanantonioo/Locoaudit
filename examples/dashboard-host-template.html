@@ -508,6 +508,10 @@
             <div class="metric-figure" v-if="datosCpu.loadAvg">
               ~{{ Math.min(100, Math.round(datosCpu.loadAvg[0] / datosCpu.cores * 100)) }}<span class="metric-figure-unit">%</span>
             </div>
+            <!-- Windows: uso medido, no estimado; sin "~". -->
+            <div class="metric-figure" v-else-if="datosCpu.usagePercent !== null">
+              {{ datosCpu.usagePercent }}<span class="metric-figure-unit">%</span>
+            </div>
             <div class="metric-figure metric-figure-na" v-else>—</div>
             <div class="progress-bar" v-if="datosCpu.loadAvg">
               <div class="progress-fill" :style="{
@@ -515,11 +519,21 @@
                 background: colorBarraCpu(datosCpu.loadAvg[0] / datosCpu.cores)
               }"></div>
             </div>
+            <div class="progress-bar" v-else-if="datosCpu.usagePercent !== null">
+              <div class="progress-fill" :style="{
+                width: datosCpu.usagePercent + '%',
+                background: colorBarraCpu(datosCpu.usagePercent / 100)
+              }"></div>
+            </div>
             <div class="metric-foot">
-              <div class="metric-foot-item">
+              <div class="metric-foot-item" v-if="datosCpu.loadAvg">
                 <span class="metric-foot-key">Estimación</span>
-                <span class="metric-foot-val" v-if="datosCpu.loadAvg">load avg 1m vs. {{ datosCpu.cores }} núcleos</span>
-                <span class="metric-foot-val" v-else>Load avg no disponible</span>
+                <span class="metric-foot-val">load avg 1m vs. {{ datosCpu.cores }} núcleos</span>
+              </div>
+              <div class="metric-foot-item" v-else>
+                <span class="metric-foot-key">Medición</span>
+                <span class="metric-foot-val" v-if="datosCpu.usagePercent !== null">uso durante {{ datosCpu.muestraS }} s</span>
+                <span class="metric-foot-val" v-else>No se pudo medir</span>
               </div>
               <div class="metric-foot-item">
                 <span class="metric-foot-key">Procesador</span>
@@ -1419,10 +1433,22 @@ export default {
       } else {
         carga = null;
       }
+      // Windows trae usagePercent en lugar de carga media; null si no se pudo medir.
+      var uso = cm.cpu.usagePercent;
+      if (typeof uso !== 'number' || !isFinite(uso)) uso = null;
+      var muestraMs = cm.cpu.usageSampleMs;
+      let muestraS;
+      if (typeof muestraMs === 'number' && muestraMs > 0) {
+        muestraS = muestraMs / 1000;
+      } else {
+        muestraS = 1;
+      }
       return {
         model:   cm.cpu.model  || '—',
         cores:   cm.cpu.cores  || 1,
-        loadAvg: carga
+        loadAvg: carga,
+        usagePercent: uso,
+        muestraS: muestraS
       };
     },
 
