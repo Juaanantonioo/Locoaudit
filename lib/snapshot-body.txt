@@ -45,5 +45,6 @@
       return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">'
         + '<meta name="viewport" content="width=device-width,initial-scale=1">'
         + '<title>LoCoAudit — ' + escapar(titleMap[auditType] || 'Auditoria') + ' — ' + escapar(hn) + '</title>'
-        + '<style>' + css + '\n' + extra + '</style></head><body><div class="lca-export">'
+        // Etiqueta style partida: el editor de Node-RED busca bloques style en todo el texto y tomaría esta cadena por CSS.
+        + '<' + 'style>' + css + '\n' + extra + '</style></head><body><div class="lca-export">'
         + clone.innerHTML + '</div><script>' + toggleJs + '<\/script></body></html>';

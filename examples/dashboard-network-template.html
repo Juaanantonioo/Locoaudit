@@ -1093,7 +1093,8 @@ export default {
       return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">'
         + '<meta name="viewport" content="width=device-width,initial-scale=1">'
         + '<title>LoCoAudit — ' + escapar(titleMap[auditType] || 'Auditoria') + ' — ' + escapar(hn) + '</title>'
-        + '<style>' + css + '\n' + extra + '</style></head><body><div class="lca-export">'
+        // Etiqueta style partida: el editor de Node-RED busca bloques style en todo el texto y tomaría esta cadena por CSS.
+        + '<' + 'style>' + css + '\n' + extra + '</style></head><body><div class="lca-export">'
         + clone.innerHTML + '</div><script>' + toggleJs + '<\/script></body></html>';
         // LCA:SNAPSHOT:END
       } catch (e) {
@@ -1168,7 +1169,7 @@ export default {
 
       return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">' +
         '<title>LoCoAudit — ' + escapar(auditTitle) + ' — ' + escapar(host.hostname || '') + '</title>' +
-        '<style>' +
+        '<' + 'style>' +
         'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e1b2e;margin:32px;background:#fff}' +
         'h1{color:#7C3AED;margin:0 0 4px}.sub{color:#666;margin:0 0 20px}' +
         '.meta{font-size:13px;color:#444;margin-bottom:16px}.meta b{color:#1e1b2e}' +
