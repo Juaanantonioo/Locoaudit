@@ -2,13 +2,13 @@
 
 /** Inventario de software instalado. Una fuente que no llega a mirar sale como { skipped, kind, reason }, no como lista vacía. */
 
-const { ejecutar, existeComando } = require("../../../lib/executor");
+const { ejecutar, existeComando, ejecutarPowerShell } = require("../../../lib/executor");
 
 const BREW_TIMEOUT_MS     = 15000;
 const PROFILER_TIMEOUT_MS = 30000;
 const DPKG_TIMEOUT_MS     = 15000;
 const RPM_TIMEOUT_MS      = 15000;
-const WMIC_TIMEOUT_MS     = 30000;
+const REGISTRY_TIMEOUT_MS = 30000;
 
 /** Un timeout se arregla reintentando y un error no: por eso son kinds distintos. */
 function esTimeout(err) {
@@ -135,51 +135,93 @@ async function desdeRpm() {
   }
 }
 
-async function desdeWmic() {
-  // wmic ya no viene en Windows 11 24H2: ausente es lo esperable, no un error.
-  if (!(await existeComando("wmic"))) {
+/** Claves Uninstall del registro, la fuente que documenta Microsoft. Una rama que no existe (WOW6432Node en 32 bits)
+ *  no es error. Se une con saltos de línea y @(...) con -InputObject hace que siempre salga un array JSON. */
+const WINDOWS_SW_PS_SCRIPT = [
+  "$ErrorActionPreference='Stop'",
+  "$rutas = @(",
+  "  'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+  "  'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+  "  'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'",
+  ")",
+  "$p = @(Get-ItemProperty -Path $rutas -ErrorAction SilentlyContinue | " +
+    "Where-Object { $_.DisplayName -and ([string]$_.DisplayName).Trim() } | " +
+    "ForEach-Object { [pscustomobject]@{ name=([string]$_.DisplayName).Trim(); version=[string]$_.DisplayVersion } })",
+  "ConvertTo-Json -Compress -InputObject @($p)",
+].join("\n");
+
+/** JSON del script anterior → paquetes sin duplicados (el mismo programa puede estar en HKLM y HKCU). Lanza si no es JSON. */
+function leerProgramasWindows(stdout) {
+  const data = JSON.parse(String(stdout).replace(/^\uFEFF/, "").trim());
+  // ConvertTo-Json con un solo objeto puede devolver el objeto suelto.
+  let lista;
+  if (Array.isArray(data)) {
+    lista = data;
+  } else if (data && typeof data === "object") {
+    lista = [data];
+  } else {
+    lista = [];
+  }
+  const programas = lista
+    .map((p) => {
+      const name = String((p && p.name) || "").trim();
+      const version = String((p && p.version) || "").trim();
+      if (!name) return null;
+      return { name, version: version || "unknown", source: "registry" };
+    })
+    .filter(Boolean);
+  return quitarDuplicadosYOrdenar(programas);
+}
+
+async function desdeRegistroWindows() {
+  let shell = null;
+  if (await existeComando("powershell")) shell = "powershell";
+  else if (await existeComando("pwsh")) shell = "pwsh";
+
+  if (!shell) {
     return {
       skipped: true,
       kind: "not-installed",
       reason:
-        "No se ha encontrado el comando `wmic`. Windows 11 24H2 y posteriores ya no lo incluyen, " +
-        "así que no se ha podido listar el software instalado.",
+        "LoCoAudit no ha encontrado PowerShell (`powershell` ni `pwsh`), que es la vía que usa " +
+        "para leer del registro el software instalado en Windows.",
     };
   }
-  const cmd = "wmic product get name,version /format:csv";
+
+  // Etiqueta fija para los mensajes, como en pending-updates.
+  const cmdLabel = `${shell} -File <lectura del registro Uninstall>`;
+  let stdout;
   try {
-    const stdout = await ejecutar(cmd, WMIC_TIMEOUT_MS);
-    // El CSV de wmic abre con una línea vacía y la cabecera Node,Name,Version.
-    const programas = stdout
-      .trim()
-      .split("\n")
-      .slice(1)
-      .filter(Boolean)
-      .map((line) => {
-        const parts = line.split(",");
-        const name = (parts[1] || "").trim();
-        const version = (parts[2] || "unknown").trim();
-        if (name) {
-          return { name, version, source: "wmic" };
-        } else {
-          return null;
-        }
-      })
-      .filter(Boolean);
-    // Vacío no es "ningún programa": wmic solo ve lo instalado con Windows Installer (MSI).
-    if (programas.length === 0) {
-      return {
-        skipped: true,
-        kind: "error",
-        reason:
-          "wmic no ha devuelto ningún programa. Solo lista el software instalado con Windows " +
-          "Installer (MSI), así que una lista vacía no significa que no haya software instalado.",
-      };
-    }
-    return programas;
+    stdout = await ejecutarPowerShell(shell, WINDOWS_SW_PS_SCRIPT, REGISTRY_TIMEOUT_MS,
+      { prefix: "lcaudit-swinv-" });
   } catch (err) {
-    return omisionPorError(err, cmd, "el software instalado", WMIC_TIMEOUT_MS);
+    return omisionPorError(err, cmdLabel, "el software instalado", REGISTRY_TIMEOUT_MS);
   }
+
+  let programas;
+  try {
+    programas = leerProgramasWindows(stdout);
+  } catch (parseErr) {
+    return {
+      skipped: true,
+      kind: "error",
+      reason:
+        "PowerShell leyó el registro, pero su salida no es JSON válido, así que no se ha podido " +
+        `listar el software instalado (${parseErr.message}).`,
+    };
+  }
+
+  // Vacío no es "ningún programa": un Windows sin nada en Uninstall no es creíble.
+  if (programas.length === 0) {
+    return {
+      skipped: true,
+      kind: "error",
+      reason:
+        "La lectura del registro (claves Uninstall) no ha devuelto ningún programa. Una lista " +
+        "vacía no significa que no haya software instalado, así que el inventario queda sin hacer.",
+    };
+  }
+  return programas;
 }
 
 /** ¿Este resultado es un skip y no un inventario? */
@@ -265,7 +307,7 @@ async function inventarioSoftware() {
   }
 
   if (platform === "win32") {
-    return desdeWmic();
+    return desdeRegistroWindows();
   }
 
   // En Linux la existencia del gestor se comprueba solo aquí, para que un sistema sin gestor salga 'unsupported'.
@@ -284,4 +326,9 @@ async function inventarioSoftware() {
   };
 }
 
-module.exports = { inventarioSoftware };
+module.exports = {
+  inventarioSoftware,
+  // Sueltos para los tests.
+  leerProgramasWindows,
+  WINDOWS_SW_PS_SCRIPT,
+};

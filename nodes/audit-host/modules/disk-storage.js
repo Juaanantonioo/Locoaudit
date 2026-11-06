@@ -2,7 +2,7 @@
 
 /** Una entrada por sistema de ficheros, no por punto de montaje: btrfs repite el mismo disco en cada subvolumen. */
 
-const { ejecutar } = require("../../../lib/executor");
+const { ejecutar, existeComando, ejecutarPowerShell } = require("../../../lib/executor");
 
 const KB = 1024;
 const GB = KB * KB * KB;
@@ -137,21 +137,46 @@ function leerDf(stdout, hasType) {
   return quitarDuplicados(rows);
 }
 
-/** wmic devuelve las columnas en orden alfabético. En Windows cada letra es un filesystem. */
-function leerWmic(stdout) {
-  const lines = String(stdout).trim().split("\n");
+/** Se une con saltos de línea, como WINDOWS_PS_SCRIPT. @(...) con -InputObject: siempre sale un array JSON. */
+const WINDOWS_DISK_PS_SCRIPT = [
+  "$ErrorActionPreference='Stop'",
+  "$d = @(Get-CimInstance -ClassName Win32_LogicalDisk | Select-Object DeviceID, FreeSpace, Size)",
+  "ConvertTo-Json -Compress -InputObject @($d)",
+].join("\n");
+
+// El arranque de PowerShell ya se lleva unos segundos.
+const WINDOWS_DISK_TIMEOUT_MS = 15000;
+
+/** JSON de Win32_LogicalDisk. En Windows cada letra es un filesystem. Lanza si la salida no es JSON. */
+function leerDiscosWindows(stdout) {
+  let data;
+  try {
+    data = JSON.parse(String(stdout).replace(/^\uFEFF/, "").trim());
+  } catch (err) {
+    throw new Error(
+      "La salida de PowerShell al leer los discos (Win32_LogicalDisk) no es JSON válido: " + err.message
+    );
+  }
+  // ConvertTo-Json con un solo objeto puede devolver el objeto suelto.
+  let lista;
+  if (Array.isArray(data)) {
+    lista = data;
+  } else if (data && typeof data === "object") {
+    lista = [data];
+  } else {
+    lista = [];
+  }
+
   const results = [];
+  for (const d of lista) {
+    if (!d || !d.DeviceID) continue;
+    const totalBytes = Number(d.Size);
+    const freeBytes = Number(d.FreeSpace);
+    // Size nulo o 0: lector óptico o unidad sin medio.
+    if (d.Size == null || !isFinite(totalBytes) || totalBytes === 0) continue;
+    if (!isFinite(freeBytes)) continue;
 
-  for (const line of lines.slice(1)) {
-    const parts = line.trim().split(/\s+/);
-    if (parts.length < 3) continue;
-
-    const caption = parts[0];
-    const freeBytes = parseInt(parts[1], 10);
-    const totalBytes = parseInt(parts[2], 10);
-
-    if (isNaN(totalBytes) || totalBytes === 0) continue;
-
+    const caption = String(d.DeviceID);
     const usedBytes = totalBytes - freeBytes;
     const usedPercent = Math.round((usedBytes / totalBytes) * 100);
 
@@ -172,11 +197,19 @@ function leerWmic(stdout) {
 
 async function infoDisco() {
   if (process.platform === "win32") {
-    const stdout = await ejecutar(
-      "wmic logicaldisk get Caption,FreeSpace,Size",
-      10000
-    );
-    return leerWmic(stdout);
+    let shell = null;
+    if (await existeComando("powershell")) shell = "powershell";
+    else if (await existeComando("pwsh")) shell = "pwsh";
+    if (!shell) {
+      throw new Error(
+        "LoCoAudit no ha encontrado PowerShell (`powershell` ni `pwsh`), que es la vía que usa " +
+        "para leer los discos en Windows."
+      );
+    }
+    // Si falla, la excepción sube y audit-host marca el módulo como fallido.
+    const stdout = await ejecutarPowerShell(shell, WINDOWS_DISK_PS_SCRIPT, WINDOWS_DISK_TIMEOUT_MS,
+      { prefix: "lcaudit-disk-" });
+    return leerDiscosWindows(stdout);
   }
 
   if (process.platform === "linux") {
@@ -196,4 +229,4 @@ async function infoDisco() {
   return leerDf(stdout, false);
 }
 
-module.exports = { infoDisco, leerDf, leerWmic };
+module.exports = { infoDisco, leerDf, leerDiscosWindows, WINDOWS_DISK_PS_SCRIPT };

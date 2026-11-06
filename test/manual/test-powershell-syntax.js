@@ -42,9 +42,15 @@ const winUpdate = scriptFromSource(pendingSrc, "WINDOWS_PS_SCRIPT");
 // security-events.js usa una plantilla multilínea: se le pide el script al propio módulo.
 const secModule = require("../../nodes/audit-host/modules/security-events");
 
+// Discos e inventario de Windows exportan su script: se lee del módulo.
+const { WINDOWS_DISK_PS_SCRIPT } = require("../../nodes/audit-host/modules/disk-storage");
+const { WINDOWS_SW_PS_SCRIPT } = require("../../nodes/audit-host/modules/sw-inventory");
+
 const SCRIPTS = [
   { nombre: "pending-updates · WINDOWS_PS_SCRIPT", texto: winUpdate.texto },
   { nombre: "executor · PS_UTF8_PRELUDE", texto: PS_UTF8_PRELUDE },
+  { nombre: "disk-storage · WINDOWS_DISK_PS_SCRIPT", texto: WINDOWS_DISK_PS_SCRIPT },
+  { nombre: "sw-inventory · WINDOWS_SW_PS_SCRIPT", texto: WINDOWS_SW_PS_SCRIPT },
 ];
 if (typeof secModule.scriptEventosWindows === "function") {
   SCRIPTS.push({
