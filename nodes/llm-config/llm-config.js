@@ -5,13 +5,14 @@
 const {
   conversarConLlm,
   comprobarModelo,
+  modeloRazona,
   listarModelosOllama,
   promptDeSistema,
   promptDeSeguimiento,
 } = require("../../lib/llm-client");
 
-/** Timeout de una consulta al modelo. Interno: no se expone en la UI del nodo. */
-const CHAT_TIMEOUT_MS = 120000;
+/** Timeout de una consulta al modelo, por debajo de los 300 s de headersTimeout del fetch de Node. */
+const CHAT_TIMEOUT_MS = 270000;
 
 /** Topes del turno del chat: la ruta va sobre httpNode, que adminAuth no protege. */
 const MAX_HISTORY = 40;
@@ -30,6 +31,9 @@ module.exports = function (RED) {
 
     // null mientras validarModelo() no haya terminado: sin comprobar, no "sin modelo".
     node.modelCheck = null;
+
+    // Modelo → "razona" / "no-razona", para no preguntar a /api/show en cada turno.
+    node.razonaPorModelo = {};
 
     // Como existeComando(): el modelo se comprueba al desplegar, no en el primer chat.
     validarModelo(node);
@@ -71,6 +75,7 @@ async function validarModelo(node) {
 
   if (result.ok) {
     node.log(`[llm-config] Modelo "${node.model}" disponible en ${node.ollamaUrl}.`);
+    await consultarRazona(node);
     return;
   }
 
@@ -81,6 +86,27 @@ async function validarModelo(node) {
   } else {
     node.error(`[llm-config] No se pudo validar el modelo: ${result.error}`);
   }
+}
+
+/** Lo que se sabe de si el modelo razona. Solo se cachea una respuesta clara; "desconocido" se reintenta. */
+async function consultarRazona(cfg) {
+  const guardado = cfg.razonaPorModelo[cfg.model];
+  if (guardado) {
+    return guardado;
+  }
+  const estado = await modeloRazona({ ollamaUrl: cfg.ollamaUrl, model: cfg.model });
+  if (estado !== "desconocido") {
+    cfg.razonaPorModelo[cfg.model] = estado;
+  }
+  return estado;
+}
+
+/** Valor para el log de tiempos: "?" si Ollama no lo dio. */
+function valorLog(valor, unidad) {
+  if (valor === null || valor === undefined) {
+    return "?";
+  }
+  return `${valor}${unidad}`;
 }
 
 /** Idempotente por un flag en RED: la ruta no se puede registrar dos veces. */
@@ -197,13 +223,29 @@ function registrarChat(RED) {
           `platform=${context.platform || "?"} · system(1ª línea)="${systemPrompt.split("\n")[0]}"`
       );
 
+      const razona = await consultarRazona(cfg);
+
+      const inicio = Date.now();
       const result = await conversarConLlm({
         ollamaUrl: cfg.ollamaUrl,
         model: cfg.model,
         timeoutMs: cfg.timeoutMs,
         systemPrompt,
         messages,
+        razona: razona === "razona",
       });
+      const segundos = Math.round((Date.now() - inicio) / 100) / 10;
+
+      if (result.ok) {
+        const t = result.tiempos || {};
+        cfg.log(
+          `[locoaudit/chat] turno=${turno} total=${segundos}s carga=${valorLog(t.carga_s, "s")} ` +
+            `prompt=${valorLog(t.prompt_tok, " tok")}/${valorLog(t.prompt_s, "s")} ` +
+            `gen=${valorLog(t.gen_tok, " tok")}/${valorLog(t.gen_s, "s")} razona=${razona}`
+        );
+      } else {
+        cfg.warn(`[locoaudit/chat] turno=${turno} falló tras ${segundos}s: ${result.error}`);
+      }
 
       res.json(result);
     } catch (err) {

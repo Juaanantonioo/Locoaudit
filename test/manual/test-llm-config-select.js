@@ -31,6 +31,8 @@ const llamadas = { check: [], chat: [] };
 require.cache[CLIENT_PATH].exports = Object.assign({}, clientReal, {
   comprobarModelo: async (opts) => { llamadas.check.push(opts); return { ok: true }; },
   conversarConLlm: async (opts) => { llamadas.chat.push(opts); return { ok: true, content: "respuesta de " + opts.model }; },
+  // Sin red: el test no debe llamar a /api/show de un Ollama real.
+  modeloRazona: async () => "desconocido",
 });
 
 // ── RED falso: lo que usa llm-config.js ──────────────────────────────────────
@@ -44,6 +46,7 @@ function crearRed() {
         node.id = config.id;
         node.type = config.type;
         node.log = () => {};
+        node.warn = () => {};
         node.error = () => {};
         instancias.set(config.id, node);
       },

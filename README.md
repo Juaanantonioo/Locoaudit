@@ -57,12 +57,12 @@ LoCoAudit aborda tres puntos concretos.
 | Componente | Versión |
 | --- | --- |
 | Node.js | 22 LTS o posterior. Probado con 22.20 |
-| Node-RED | 4.x. Probado con 4.1.5 |
+| Node-RED | 4.x o 5.x. Probado con 4.1.5 y con la versión 5 |
 | Python | 3.10 o posterior, solo para el asistente de instalación |
 
 Node.js y npm se instalan a mano antes de ejecutar el asistente. El asistente comprueba esos requisitos y ofrece instalar Node-RED junto con las herramientas de auditoría cuando el sistema dispone de un comando automático.
 
-**Sobre la versión de Node-RED.** El asistente instala la última versión publicada si Node-RED no está instalado, y hoy es la 5, que necesita Node.js 22.9 o posterior. LoCoAudit se ha probado con Node-RED 4. Para usar esa misma versión, basta con instalarla antes de ejecutar el asistente, que la detecta y no la sustituye:
+**Sobre la versión de Node-RED.** Si Node-RED no está instalado, el asistente instala la última versión publicada, que hoy es la 5 y necesita Node.js 22.9 o posterior. LoCoAudit funciona con Node-RED 4 y 5. La versión de referencia, con la que se hicieron las pruebas de la memoria, es la 4.1.5. Para usarla, basta con instalarla antes de ejecutar el asistente, que la detecta y no la sustituye:
 
 ```bash
 npm install -g node-red@4        # en Linux, con sudo
