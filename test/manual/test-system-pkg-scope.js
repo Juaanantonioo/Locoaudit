@@ -7,7 +7,7 @@
  * Uso: node test/manual/test-system-pkg-scope.js
  */
 
-const { soportePaquetesSistema } = require("../../lib/trivy-rootfs");
+const { soportePaquetesSistema, versionSinAvisos } = require("../../lib/trivy-rootfs");
 
 let failed = 0;
 let passed = 0;
@@ -80,6 +80,43 @@ for (const r of [FALLO, CORTADO, SIN_BIN, NO_OS]) {
     ok(got !== "scanned", `${plat.padEnd(7)} + kind '${r.kind}' → "${got}", nunca 'scanned'`);
   }
 }
+
+console.log("\n── Derivadas de Debian y Ubuntu: versión sin avisos en Trivy ─────\n");
+
+// Trivy lee /etc/debian_version: en Kali da "kali-rolling" y en Mint "trixie/sid", sin avisos en su base de datos.
+const VERSIONES = [
+  // familia, versión que lee Trivy, ¿tiene avisos?, nota
+  ["debian", "13.1",         true,  "Debian 13"],
+  ["debian", "12",           true,  "Debian 12 sin versión menor"],
+  ["debian", "kali-rolling", false, "Kali Linux"],
+  ["debian", "trixie/sid",   false, "Linux Mint, Pop!_OS y otras derivadas de Ubuntu"],
+  ["debian", "forky/sid",    false, "Debian testing"],
+  ["debian", "",             false, "sin versión"],
+  ["ubuntu", "24.04",        true,  "Ubuntu 24.04"],
+  ["ubuntu", "noble",        false, "nombre en clave en lugar de número"],
+  ["alpine", "3.20.3",       true,  "otras familias no se tocan"],
+  ["redhat", "9.4",          true,  "otras familias no se tocan"],
+];
+for (const [family, name, conAvisos, nota] of VERSIONES) {
+  const motivo = versionSinAvisos({ Family: family, Name: name });
+  let esperado;
+  let texto;
+  if (conAvisos) {
+    esperado = motivo === null;
+    texto = "se analiza";
+  } else {
+    esperado = typeof motivo === "string" && motivo.length > 0;
+    texto = "no se da por analizado";
+  }
+  ok(esperado, `${family} «${name}» → ${texto} (${nota})`, `motivo: ${motivo}`);
+}
+
+const KALI = { skipped: true, kind: "os-unsupported", reason: versionSinAvisos({ Family: "debian", Name: "kali-rolling" }),
+               os: { family: "debian", name: "kali-rolling" } };
+ok(soportePaquetesSistema("linux", KALI, { enabled: true }) === "unsupported-manager",
+   "Kali con Trivy ejecutado → 'unsupported-manager', nunca 'scanned'");
+ok(/kali-rolling/.test(KALI.reason) && /cero/.test(KALI.reason),
+   "el motivo dice qué versión leyó Trivy y que un cero no vale");
 
 console.log("\n── Estados que el dashboard debe saber redactar ──────────────────\n");
 

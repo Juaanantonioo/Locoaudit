@@ -1202,12 +1202,20 @@ export default {
         } else {
           consejo = null;
         }
+        // Trivy leyó una versión de Debian o Ubuntu sin avisos (Kali, Mint): se dice qué leyó.
+        let causa;
+        if (sp.osFamily && sp.osName) {
+          causa = 'Trivy ha leído este equipo como ' + sp.osFamily + ' «' + sp.osName + '», una versión ' +
+                  'que no está en su base de datos de avisos de seguridad. Pasa con las derivadas de Debian y ' +
+                  'Ubuntu, como Kali o Linux Mint, y con las versiones en desarrollo. ';
+        } else {
+          causa = 'Trivy ha analizado este equipo y no ha reconocido su base de datos de paquetes' + gestor + '. ';
+        }
         return {
           tone: 'warn', ico: 'alert',
           title: 'Los paquetes del sistema no se han analizado',
           lead: entrada,
-          body: 'Trivy ha analizado este equipo y no ha reconocido su base de datos de paquetes' +
-                gestor + '. ' +
+          body: causa +
                 'Tu carpeta personal sí se ha analizado y los hallazgos de abajo la cubren, pero todo el ' +
                 'software instalado por el sistema ha quedado fuera.',
           warning: 'Esto no quiere decir que esos paquetes estén libres de vulnerabilidades: quiere decir que no se han podido comprobar.',

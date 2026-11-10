@@ -41,11 +41,8 @@ const SECRET_CONCURRENCY = 3;
 /** Por hijo, en la pasada de secretos: lee el contenido de los ficheros y no solo los manifiestos. */
 const SECRET_CHILD_TIMEOUT_MS = 180000;
 
-/** Ficheros de la raíz del home donde suele haber credenciales; la pasada por hijos no los ve. */
-const ROOT_SECRET_FILES = [
-  ".netrc", ".git-credentials", ".npmrc", ".pypirc", ".env",
-  ".bash_history", ".zsh_history", ".psql_history", ".mysql_history",
-];
+/** Ficheros sueltos que la pasada de secretos revisa por carpeta; los que sobran se anotan como no revisados. */
+const MAX_SUELTOS = 300;
 
 /** Error de recorrido del sistema de ficheros (montaje que no responde, permisos). */
 const WALK_ERROR_RE = /walk dir error|fdopendir|operation timed out|permission denied/i;
@@ -313,6 +310,32 @@ function carpetasExcluidas(home, skipDirs) {
   });
 }
 
+/** Ficheros regulares de `dir`, sin enlaces simbólicos y en orden alfabético. Devuelve los MAX_SUELTOS primeros. */
+function ficherosSueltos(dir, prefijo) {
+  let entradas;
+  try {
+    entradas = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (_) {
+    return { items: [], sobran: 0 };
+  }
+  const items = [];
+  for (const e of entradas) {
+    if (!e.isFile()) continue;
+    let nombre;
+    if (prefijo) {
+      nombre = `${prefijo}/${e.name}`;
+    } else {
+      nombre = e.name;
+    }
+    items.push({ name: nombre, child: path.join(dir, e.name) });
+  }
+  items.sort((a, b) => a.name.localeCompare(b.name));
+  if (items.length > MAX_SUELTOS) {
+    return { items: items.slice(0, MAX_SUELTOS), sobran: items.length - MAX_SUELTOS };
+  }
+  return { items, sobran: 0 };
+}
+
 /** Una pasada por hijo de primer nivel: así un directorio que no responde solo falla él (--skip-dirs no lo evita).
  *  Los hijos que no son almacenamiento local se descartan antes con local-fs.js. */
 async function escanearPorCarpetas(home, skipDirs, resolvedFrom, scanners = "vuln") {
@@ -338,7 +361,7 @@ async function escanearPorCarpetas(home, skipDirs, resolvedFrom, scanners = "vul
 
   const pendientes = [];
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;               // los sueltos se quedan sin mirar
+    if (!entry.isDirectory()) continue;               // los sueltos solo los revisa la pasada de secretos
     const child = path.join(home, entry.name);
 
     // Mismo criterio que --skip-dirs, sin llegar a entrar en el hijo.
@@ -371,7 +394,7 @@ async function escanearPorCarpetas(home, skipDirs, resolvedFrom, scanners = "vul
   }
   const porHijo = await escanearEnParalelo(pendientes, skipArgs, scanners, timeout, concurrencia);
 
-  // Secretos: una carpeta que agota el tiempo se reintenta por subcarpetas (sus ficheros sueltos no se miran).
+  // Secretos: una carpeta que agota el tiempo se reintenta por subcarpetas; sus ficheros sueltos van más abajo.
   if (!isVuln) {
     for (const p of pendientes) {
       const hit = porHijo.get(p.name);
@@ -416,20 +439,33 @@ async function escanearPorCarpetas(home, skipDirs, resolvedFrom, scanners = "vul
     scanned.push({ name, results: results.length, durationMs: ms });
   }
 
-  // Solo en la pasada de secretos: los ficheros de credenciales de la raíz, uno a uno.
+  // Solo en la pasada de secretos: los ficheros sueltos de la raíz y de las carpetas divididas, uno a uno.
   const rootFiles = [];
-  if (scanners.includes("secret")) {
-    for (const name of ROOT_SECRET_FILES) {
-      const file = path.join(home, name);
-      let st;
-      try { st = fs.statSync(file); } catch (_) { continue; }
-      if (!st.isFile()) continue;
-      const res = await ejecutarTrivy((out) => argumentosTrivyFs(out, file, [], scanners), CHILD_TIMEOUT_MS);
+  if (!isVuln) {
+    const carpetas = [{ dir: home, prefijo: "" }];
+    for (const p of pendientes) {
+      if (porHijo.get(p.name).split) carpetas.push({ dir: p.child, prefijo: p.name });
+    }
+    const sueltos = [];
+    for (const c of carpetas) {
+      const r = ficherosSueltos(c.dir, c.prefijo);
+      sueltos.push(...r.items);
+      if (r.sobran > 0) {
+        skippedChildren.push({
+          name: c.prefijo,
+          kind: "error",
+          reason: `hay ${r.sobran} ficheros sueltos más del máximo que se revisa por carpeta (${MAX_SUELTOS})`,
+        });
+      }
+    }
+    const porFichero = await escanearEnParalelo(sueltos, [], scanners, CHILD_TIMEOUT_MS, SECRET_CONCURRENCY);
+    for (const { name, child } of sueltos) {
+      const { res } = porFichero.get(name);
       if (res.skipped) {
         skippedChildren.push({ name, kind: "error", reason: res.reason });
         continue;
       }
-      for (const r of res.Results || []) r.__root = home;
+      for (const r of res.Results || []) r.__root = path.dirname(child);
       merged.Results.push(...(res.Results || []));
       rootFiles.push(name);
     }
@@ -463,6 +499,8 @@ async function escanearPorCarpetas(home, skipDirs, resolvedFrom, scanners = "vul
 
 module.exports = {
   ejecutarTrivyFs,
+  ficherosSueltos,
+  MAX_SUELTOS,
   ejecutarTrivySecretos,
   SECRET_SKIP_DIRS,
   resolverHome,

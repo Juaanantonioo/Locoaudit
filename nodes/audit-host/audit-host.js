@@ -409,6 +409,17 @@ module.exports = function (RED) {
           vulnsCorregibles = rootfsResolved.fixableVulnCount;
           vulnsSinParche = rootfsResolved.unfixed.total;
           sinParchePorSeveridad = rootfsResolved.unfixed.bySeverity;
+        } else if (rootfsResolved && rootfsResolved.os) {
+          // Trivy reconoció la familia pero no la versión: se enseña qué leyó, sin cifras.
+          familiaSo = rootfsResolved.os.family;
+          nombreSo = rootfsResolved.os.name;
+          paquetesSo = null;
+          versionTrivy = null;
+          vulnsTotales = null;
+          paquetesCorregibles = null;
+          vulnsCorregibles = null;
+          vulnsSinParche = null;
+          sinParchePorSeveridad = null;
         } else {
           familiaSo = null;
           nombreSo = null;
