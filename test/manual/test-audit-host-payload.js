@@ -28,8 +28,9 @@ let trivyStubOpts = null;      // últimas opciones recibidas: prueba qué se le
 require.cache[TRIVY_PATH].exports = Object.assign({}, trivyReal, {
   ejecutarTrivyFs: async (opts) => { trivyStubOpts = opts; return trivyStubResult; },
   // La pasada de secretos no es lo que se prueba aquí: sin stub ejecutaría el Trivy del equipo que corre el test.
-  ejecutarTrivySecretos: async () => ({ skipped: true, kind: "disabled", reason: "stub" }),
+  ejecutarTrivySecretos: async () => secretosStubResult || { skipped: true, kind: "disabled", reason: "stub" },
 });
+let secretosStubResult = null;
 
 // ── Sustitución de trivy-rootfs ──────────────────────────────────────────────
 // soportePaquetesSistema() es el real: se prueba al mirar scanMeta.systemPackages.
@@ -489,6 +490,33 @@ const CONFIG_BASE = {
   const fLinux = nh({ pendingUpdates: { skipped: false, platform: "linux", manager: "apt",
       source: "apt", total: 0, updates: [], securityDetection: "none" } }, { platform: "linux" })[0];
   ok(/al día/i.test(fLinux.title), "Linux con 0 pendientes sigue diciendo 'al día'", fLinux.title);
+
+  console.log("\n── Fallo parcial de secretos y de vulnerabilidades a la vez ──────\n");
+
+  const conCaida = () => ({
+    Results: [],
+    scan: { mode: "fs-by-children", target: "/home/u", skipDirs: [], durationMs: 100, rootFiles: [],
+      children: { scanned: [{ name: "Documentos", results: 0 }],
+        skipped: [{ name: "Proyectos", kind: "error", reason: "timeout" }] } },
+  });
+  trivyStubResult = conCaida();
+  secretosStubResult = conCaida();
+  r = await ejecutar(Object.assign({}, CONFIG_BASE, { enableSecrets: true }));
+  secretosStubResult = null;
+
+  const pl = r.msg && r.msg.payload;
+  const omitidasPl = pl && pl.scanMeta.checksSkipped;
+  const idsOmitidas = ((omitidasPl && omitidasPl.items) || []).filter((i) => i.estado === "failed").map((i) => i.id).sort();
+  ok(r.err === null && pl, "payload emitido con las dos pasadas a medias");
+  ok(pl && pl.findings.filter((f) => f.id === "HOST-SEC-PARTIAL" && f.skipped === true && f.kind === "error").length === 1,
+     "HOST-SEC-PARTIAL llega a findings una vez, como comprobación no realizada",
+     JSON.stringify(pl && pl.findings.map((f) => [f.id, f.skipped, f.kind])));
+  ok(JSON.stringify(idsOmitidas) === JSON.stringify(["HOST-CVE-PARTIAL", "HOST-SEC-PARTIAL"]) &&
+     omitidasPl.failed === 2,
+     "checksSkipped cuenta los dos fallos parciales como fallidos, cada uno una vez", JSON.stringify(idsOmitidas));
+  const accionables = pl.findings.filter((f) => f.severity !== "info").map((f) => f.id);
+  ok(!accionables.some((id) => /-PARTIAL$/.test(id)) && pl.summary.actionable.total === accionables.length,
+     "y no suben el riesgo: siguen siendo informativos", JSON.stringify(accionables));
 
   console.log(`\n${passed} pasados · ${failed} fallidos\n`);
   process.exit(failed > 0 ? 1 : 0);

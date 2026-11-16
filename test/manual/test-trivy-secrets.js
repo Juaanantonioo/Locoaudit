@@ -42,7 +42,7 @@ const EN_CLARO = [
   "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ",
 ];
 
-const { normalizarHost, normalizarImagen, desdeSecretosYConfig } = require("../../lib/normalizer");
+const { normalizarHost, normalizarImagen, desdeSecretosYConfig, resumenOmitidas } = require("../../lib/normalizer");
 const { resumir, esAccionable } = require("../../lib/severity-map");
 
 console.log("\n── 1 · Equipo: secretos y configuraciones del home ───────────────\n");
@@ -221,6 +221,60 @@ const parcial = desdeSecretosYConfig({
 }, { context: "host" });
 ok(parcial.length === 1 && parcial[0].id === "HOST-SEC-PARTIAL" && /Proyectos/.test(parcial[0].evidence),
    "una carpeta que falla deja constancia; una excluida a propósito, no", JSON.stringify(parcial.map((f) => f.evidence)));
+
+// Un fallo parcial es una comprobación no realizada, con el mismo contrato que HOST-CVE-PARTIAL.
+const pasada = (omitidas) => ({
+  Results: [],
+  scan: { mode: "fs-by-children", target: "/home/ana", rootFiles: [],
+    children: { scanned: [{ name: "Documentos", results: 0 }], skipped: omitidas } },
+});
+const caida = (name, reason) => ({ name, kind: "error", reason: reason || "timeout" });
+const parciales = (f) => f.filter((x) => /-PARTIAL$/.test(x.id));
+
+const ninguna = normalizarHost({ trivySecrets: pasada([{ name: "GoogleDrive", kind: "cloud", reason: "nube" }]) }, { platform: "linux" });
+ok(parciales(ninguna).length === 0 && resumenOmitidas(ninguna) === null,
+   "sin carpetas fallidas no hay parcial ni comprobaciones no realizadas", JSON.stringify(ninguna.map((x) => x.id)));
+
+const una = normalizarHost({ trivySecrets: pasada([caida("Proyectos")]) }, { platform: "linux" });
+const parcialUna = parciales(una);
+ok(parcialUna.length === 1 && parcialUna[0].id === "HOST-SEC-PARTIAL" && parcialUna[0].skipped === true && parcialUna[0].kind === "error",
+   "una carpeta fallida → HOST-SEC-PARTIAL con skipped y kind error", JSON.stringify(una.map((x) => [x.id, x.skipped, x.kind])));
+const resumenUna = resumenOmitidas(una);
+ok(resumenUna && resumenUna.total === 1 && resumenUna.failed === 1 && resumenUna.items[0].id === "HOST-SEC-PARTIAL" &&
+   resumenUna.items[0].estado === "failed",
+   "y entra en el resumen de omitidas como fallida", JSON.stringify(resumenUna));
+
+const varias = normalizarHost({ trivySecrets: pasada([caida("a"), caida("b"), caida("c")]) }, { platform: "linux" });
+ok(parciales(varias).length === 1 && /3 carpetas/.test(parciales(varias)[0].title) && resumenOmitidas(varias).failed === 1,
+   "varias carpetas fallidas son un solo aviso, no uno por carpeta", JSON.stringify(parciales(varias).map((x) => x.title)));
+
+// Todas fallidas: el módulo devuelve la pasada entera como omitida.
+const todas = normalizarHost({ trivySecrets: { skipped: true, kind: "error", reason: "Trivy falló en todas las carpetas del home (2)." } },
+  { platform: "linux" });
+const resumenTodas = resumenOmitidas(todas);
+ok(todas.length === 1 && todas[0].id === "HOST-SEC-SKIP" && parciales(todas).length === 0 &&
+   resumenTodas.total === 1 && resumenTodas.failed === 1,
+   "todas fallidas → un único HOST-SEC-SKIP, sin parcial añadido", JSON.stringify(todas.map((x) => [x.id, x.kind])));
+
+// Tope de ficheros sueltos de la raíz: el nombre llega vacío.
+const sueltos = normalizarHost({ trivySecrets: pasada([caida("", "hay 12 ficheros sueltos más del máximo que se revisa por carpeta (300)")]) },
+  { platform: "linux" });
+ok(parciales(sueltos).length === 1 && parciales(sueltos)[0].skipped === true && /~\//.test(parciales(sueltos)[0].evidence) &&
+   resumenOmitidas(sueltos).failed === 1,
+   "el fallo en los ficheros sueltos de la raíz también cuenta como no realizada", JSON.stringify(parciales(sueltos).map((x) => x.evidence)));
+
+// Secretos y vulnerabilidades fallan a la vez: dos avisos, cada uno una vez.
+const ambos = normalizarHost({ trivy: pasada([caida("Proyectos")]), trivySecrets: pasada([caida("Proyectos")]) }, { platform: "linux" });
+const resumenAmbos = resumenOmitidas(ambos);
+const idsAmbos = resumenAmbos.items.map((i) => i.id).sort();
+ok(parciales(ambos).length === 2 && resumenAmbos.total === 2 && resumenAmbos.failed === 2 &&
+   JSON.stringify(idsAmbos) === JSON.stringify(["HOST-CVE-PARTIAL", "HOST-SEC-PARTIAL"]),
+   "fallo de secretos y de vulnerabilidades: los dos avisos, sin taparse ni contarse dos veces", JSON.stringify(idsAmbos));
+const cveParcial = ambos.find((x) => x.id === "HOST-CVE-PARTIAL");
+const secParcial = ambos.find((x) => x.id === "HOST-SEC-PARTIAL");
+ok(cveParcial.skipped === secParcial.skipped && cveParcial.kind === secParcial.kind && cveParcial.isCommand === secParcial.isCommand &&
+   cveParcial.severity === secParcial.severity,
+   "los dos parciales llevan el mismo contrato");
 
 console.log("\n── 4 · Pasada omitida: comprobación no realizada ─────────────────\n");
 
