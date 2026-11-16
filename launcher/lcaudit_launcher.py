@@ -723,9 +723,9 @@ _js_probe_ok: bool | None = None
 
 # Detector en JS, pasado con -e para no dejar ficheros temporales.
 _JS_PROBE = (
-    "const {commandExists}=require(process.argv[1]);"
+    "const {existeComando}=require(process.argv[1]);"
     "(async()=>{const o={};"
-    "for(const t of process.argv.slice(2)) o[t]=(await commandExists(t))||null;"
+    "for(const t of process.argv.slice(2)) o[t]=(await existeComando(t))||null;"
     "process.stdout.write(JSON.stringify(o));})()"
 )
 
