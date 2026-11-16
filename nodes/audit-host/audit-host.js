@@ -15,7 +15,7 @@ const { normalizarHost, esNoAplica, resumenOmitidas, coberturaLynis } = require(
 const { detectarGestor, nombreGestor } = require("../../lib/pkg-manager");
 const { existeComando } = require("../../lib/executor");
 const { resumir } = require("../../lib/severity-map");
-const { sinResultados } = require("../../lib/utils");
+const { sinResultados, sinPaquetes } = require("../../lib/utils");
 
 /** Avisa de un módulo omitido: log si lo apagó el usuario o no aplica, warn si es un fallo. */
 function avisarOmitido(node, modulo, res) {
@@ -618,7 +618,7 @@ module.exports = function (RED) {
           raw: {
             ...raw,
             trivy: sinResultados(raw.trivy),
-            trivyRootfs: sinResultados(raw.trivyRootfs),
+            trivyRootfs: sinPaquetes(raw.trivyRootfs),
             trivySecrets: sinResultados(raw.trivySecrets),
             osInfo,
           },

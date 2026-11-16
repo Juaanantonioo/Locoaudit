@@ -278,6 +278,26 @@ const CONFIG_BASE = {
   ok(porPaquete.length === 1 && porPaquete[0].id === "HOST-OS-PKG-openssl",
      "un finding por PAQUETE, con el nombre en el id", JSON.stringify(porPaquete.map((f) => f.id)));
 
+  // El JSON exportado sale de este payload: raw.trivyRootfs lleva los datos generales y no las listas.
+  const rawRootfs = r.msg && r.msg.payload.raw.trivyRootfs;
+  const textoRootfs = JSON.stringify(rawRootfs || {});
+  ok(rawRootfs && rawRootfs.os.family === "debian" && rawRootfs.os.name === "13.6",
+     "raw.trivyRootfs conserva la familia y el nombre del sistema", textoRootfs.slice(0, 120));
+  ok(rawRootfs && rawRootfs.pkgNum === 2056 && rawRootfs.trivyVersion === "0.74.0" && rawRootfs.durationMs === 240000,
+     "raw.trivyRootfs conserva paquetes, versión de Trivy y duración");
+  ok(rawRootfs && rawRootfs.total === 3 && rawRootfs.fixableVulnCount === 1 && rawRootfs.fixablePackages === 1,
+     "raw.trivyRootfs conserva los recuentos de lo corregible", textoRootfs.slice(0, 200));
+  ok(rawRootfs && rawRootfs.unfixed && rawRootfs.unfixed.total === 2 && rawRootfs.unfixed.bySeverity.MEDIUM === 1,
+     "raw.trivyRootfs conserva los recuentos de lo que no tiene parche");
+  ok(rawRootfs && !("fixable" in rawRootfs) && !("groups" in rawRootfs.unfixed),
+     "raw.trivyRootfs no lleva las listas por paquete", Object.keys(rawRootfs || {}).join(","));
+  ok(!/CVE-/.test(textoRootfs) && !/openssl|libtiff6/.test(textoRootfs),
+     "raw.trivyRootfs no lleva ningún CVE ni nombre de paquete", textoRootfs.slice(0, 200));
+  ok(porPaquete[0] && /CVE-OS-1/.test(JSON.stringify(porPaquete[0])) && /CVE-OS-2/.test(JSON.stringify(unfixed[0])),
+     "los CVE siguen en los hallazgos");
+  ok(rootfsStubResult.fixable.length === 1 && rootfsStubResult.unfixed.groups.length === 1,
+     "el recorte no modifica el resultado que recibió el normalizador");
+
   console.log("\n── 6 · Los dos escaneos son independientes ───────────────────────\n");
 
   // A trivy-fs no le llega ninguna opción del rootfs.
